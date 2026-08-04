@@ -101,7 +101,7 @@ grant tools, or make a manifest executable; those remain M5 responsibilities.
 | `SessionRepositoryPort` | migrations, session CRUD, `append_message`, `recent_messages` | ✅ M1 |
 | `AuditPort` | `append`, `by_task` | ✅ M1 |
 | `ClockPort` | `now` (UTC) | ✅ M1 |
-| `CostPort` | estimate/reserve/reconcile | ◻ M3 |
+| `CostPort` | estimate/reserve/reconcile | ✅ M3 fake ledger; live pricing M5 |
 | `SpecialistProviderPort` | health, execute structured request, cancel-if-supported | ◻ M5 |
 | **`WebResearchProvider`** (**new, DEC-OQ-07**) | `health`, `research(query, budget) -> {answer_text?, citations[]}` | ◻ M4 |
 | `CitationValidator` (**new, DEC-OQ-07**) | `validate(citations[]) -> validated[]` | ◻ M4 |

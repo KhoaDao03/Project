@@ -38,6 +38,7 @@ from ..ports.audit import AuditPort
 from ..ports.clock import ClockPort
 from ..ports.generalist import GeneralistPort
 from ..ports.repository import SessionRepositoryPort
+from ..guardrails.controller import GuardrailController
 from .response_composer import compose_blocked, compose_cancelled, compose_success
 
 
@@ -54,6 +55,7 @@ class ConversationOrchestrator:
         context_window: int,
         model_id: str,
         max_output_tokens: int,
+        guardrails: GuardrailController | None = None,
     ) -> None:
         self._clock = clock
         self._generalist = generalist
@@ -62,6 +64,7 @@ class ConversationOrchestrator:
         self._context_window = context_window
         self._model_id = model_id
         self._max_output_tokens = max_output_tokens
+        self._guardrails = guardrails
 
     # ---- provided helpers (use these; do not re-implement) ----------------
 
@@ -107,6 +110,16 @@ class ConversationOrchestrator:
         response = self._generalist.generate(gen_request)
         return response.text
 
+    def _start_task_record(self, task_id: str, request: TaskRequest) -> None:
+        start = getattr(self._repository, "start_task", None)
+        if callable(start):
+            start(task_id, request.session_id, self._clock.now())
+
+    def _finish_task_record(self, task_id: str, status: TaskStatus) -> None:
+        finish = getattr(self._repository, "finish_task", None)
+        if callable(finish):
+            finish(task_id, status.value, self._clock.now())
+
     # ---- orchestration ----------------------------------------------------
 
     def handle(self, request: TaskRequest) -> ConversationOutcome:
@@ -135,6 +148,7 @@ class ConversationOrchestrator:
             event_type="task.received",
             status=status,
         )
+        self._start_task_record(task_id, request)
 
         # (2) Context is built from PRIOR turns only; build_context appends the
         # current text itself, so we load history BEFORE persisting this turn to
@@ -156,7 +170,15 @@ class ConversationOrchestrator:
         # (4)+(5) Call the model and validate its untrusted output. Any typed
         # EllyError (provider failure OR validation rejection) maps to BLOCKED.
         try:
-            text = self._call_generalist(prompt)
+            if self._guardrails is None:
+                text = self._call_generalist(prompt)
+            else:
+                cancel = getattr(self._generalist, "cancel", None)
+                text = self._guardrails.execute(
+                    lambda: self._call_generalist(prompt),
+                    cancel=cancel if callable(cancel) else None,
+                    output_tokens=self._max_output_tokens,
+                )
             if validation.validate_generalist_text(text) is ValidationStatus.REJECTED:
                 raise MalformedResultError("model returned empty/invalid output")
             assistant_message = Message(
@@ -169,6 +191,7 @@ class ConversationOrchestrator:
                 request=request, task_id=task_id, event_type="task.cancelled",
                 status=cancelled, error_class=exc.error_class, detail=exc.summary,
             )
+            self._finish_task_record(task_id, cancelled)
             return ConversationOutcome(
                 result=compose_cancelled(task_id=task_id, partial_work=exc.partial_work), manifest=manifest,
                 assistant_message=None,
@@ -183,6 +206,7 @@ class ConversationOrchestrator:
                 error_class=exc.error_class,
                 detail=exc.summary,
             )
+            self._finish_task_record(task_id, blocked)
             return ConversationOutcome(
                 result=compose_blocked(task_id=task_id, reason=exc.summary),
                 manifest=manifest,
@@ -198,6 +222,7 @@ class ConversationOrchestrator:
             event_type="task.completed",
             status=result.task_status,
         )
+        self._finish_task_record(task_id, result.task_status)
         return ConversationOutcome(
             result=result, manifest=manifest, assistant_message=assistant_message
         )

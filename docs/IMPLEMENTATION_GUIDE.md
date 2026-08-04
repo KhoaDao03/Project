@@ -1,12 +1,26 @@
-# Elly Implementation Guide — Milestone M2
+# Elly Implementation Guide — Milestone M3
 
-**Objective (M2):** replace the M1 fake in the configured runtime with a real
-localhost Ollama generalist while preserving the port contract, local-only policy,
-typed degradation, and cooperative cancellation.
+**Objective (M3):** enforce application-owned limits, timeout/retry/circuit policy,
+fake cost reservations, typed partial failure, and restart interruption around the
+M2 local conversation path.
 
 Read the code in this order:
 `domain/models.py` → `ports/*` → `adapters/ollama_generalist.py` → `application/conversation.py` →
-`domain/state_machine.py` → `adapters/*` → `presentation/cli.py` → `composition.py`.
+`guardrails/*` → `domain/state_machine.py` → `adapters/*` → `presentation/cli.py` → `composition.py`.
+
+## M3 guardrail runtime path
+
+`composition.build` constructs a `GuardrailController` from validated `[limits]`
+configuration. `ConversationOrchestrator.handle` reserves a step and provider call
+before invoking `GeneralistPort.generate`. The controller applies the configured
+timeout, retries only `TransientProviderError`, records circuit failures, reserves
+fake cost before execution, and reconciles it afterward. Limit, timeout, permanent,
+malformed, and circuit errors become blocked results; cancellation becomes a
+cancelled result with any received partial work.
+
+SQLite task records are marked `running` before provider work and completed with the
+terminal status. Startup calls `mark_interrupted_tasks`; it marks stale running
+tasks `interrupted` and never replays them.
 
 ---
 

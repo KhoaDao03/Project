@@ -8,11 +8,11 @@ Security/privacy: error messages must be SAFE FOR DISPLAY/LOG — never include
 secrets, raw prompts, message bodies, or chain-of-thought (SEC-004, SEC-007).
 Callers construct these with short, non-sensitive summaries only.
 
-Status: Scaffolded (M1). Only the M1-reachable subset is instantiated by M1 code;
-see `enums.ErrorClass` for which classes are reserved for later milestones.
+Status: Implemented for the M3 guardrail path. The taxonomy remains extensible for
+later provider capabilities; see `enums.ErrorClass` for the complete classification.
 
-Non-responsibilities: no retry/backoff logic (that is NFR-002 / M3); these are
-pure data-carrying exceptions.
+Non-responsibilities: retry/backoff policy is owned by the guardrail controller;
+these classes remain pure data-carrying exceptions.
 """
 
 from __future__ import annotations
@@ -61,6 +61,18 @@ class StorageFailureError(EllyError):
     error_class = ErrorClass.STORAGE_FAILURE
 
 
+class LimitExceededError(EllyError):
+    """A configured resource or budget ceiling was reached."""
+
+    error_class = ErrorClass.LIMIT_EXCEEDED
+
+
+class CircuitOpenError(EllyError):
+    """A dependency circuit is open after repeated transient failures."""
+
+    error_class = ErrorClass.PERMANENT_PROVIDER
+
+
 class MalformedResultError(EllyError):
     """A provider/model result violated its contract (AI-007/AI-011)."""
 
@@ -68,7 +80,7 @@ class MalformedResultError(EllyError):
 
 
 class TransientProviderError(EllyError):
-    """A provider failed in a possibly-retryable way (NFR-002). M1 does not retry."""
+    """A provider failed in a possibly-retryable way (NFR-002)."""
 
     error_class = ErrorClass.TRANSIENT_PROVIDER
 

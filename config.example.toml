@@ -19,6 +19,17 @@ max_input_chars = 20000
 # FR-002 / AI-006 (initial): how many recent in-session messages the context
 # builder may consider. Provisional M1 value; real budgeting lands in M4.
 context_window_messages = 20
+# M3 hard guardrails. These are application-enforced, not model instructions.
+max_steps = 6
+max_provider_calls = 2
+max_retries = 1
+tool_timeout_seconds = 60
+total_timeout_seconds = 120
+max_concurrency = 1
+max_queue_size = 1
+monthly_budget_usd = 10
+# M3 uses deterministic fake pricing; local Ollama defaults to zero cost.
+provider_call_cost_usd = 0
 
 [generalist]
 provider = "ollama"

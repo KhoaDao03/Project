@@ -1,4 +1,4 @@
-"""Configuration loading and validation (OPS-002/M2).
+"""Configuration loading and validation (OPS-002/M3).
 
 Responsibility: assemble validated runtime settings from, in order:
   1. built-in conservative defaults (mirrors config.example.toml),
@@ -34,6 +34,15 @@ class Config:
     ollama_base_url: str
     ollama_timeout_seconds: float
     specialist_manifest_dir: str
+    max_steps: int
+    max_provider_calls: int
+    max_retries: int
+    tool_timeout_seconds: float
+    total_timeout_seconds: float
+    max_concurrency: int
+    max_queue_size: int
+    monthly_budget_usd: float
+    provider_call_cost_usd: float
 
 
 _DEFAULTS: dict[str, object] = {
@@ -48,6 +57,15 @@ _DEFAULTS: dict[str, object] = {
     "ollama_base_url": "http://127.0.0.1:11434",
     "ollama_timeout_seconds": 120.0,
     "specialist_manifest_dir": "config/specialists",
+    "max_steps": 6,
+    "max_provider_calls": 2,
+    "max_retries": 1,
+    "tool_timeout_seconds": 60.0,
+    "total_timeout_seconds": 120.0,
+    "max_concurrency": 1,
+    "max_queue_size": 1,
+    "monthly_budget_usd": 10.0,
+    "provider_call_cost_usd": 0.0,
 }
 
 
@@ -59,6 +77,28 @@ def _as_positive_int(value: object, name: str) -> int:
     if ivalue <= 0:
         raise ConfigInvalidError(f"{name} must be > 0")
     return ivalue
+
+
+def _as_nonnegative_int(value: object, name: str) -> int:
+    try:
+        ivalue = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ConfigInvalidError(f"{name} must be an integer") from exc
+    if ivalue < 0:
+        raise ConfigInvalidError(f"{name} must be >= 0")
+    return ivalue
+
+
+def _as_float(value: object, name: str, *, minimum: float = 0.0, strictly_positive: bool = False) -> float:
+    try:
+        fvalue = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ConfigInvalidError(f"{name} must be a number") from exc
+    if strictly_positive and fvalue <= minimum:
+        raise ConfigInvalidError(f"{name} must be > {minimum}")
+    if not strictly_positive and fvalue < minimum:
+        raise ConfigInvalidError(f"{name} must be >= {minimum}")
+    return fvalue
 
 
 def _from_toml(path: str) -> dict[str, object]:
@@ -83,6 +123,12 @@ def _from_toml(path: str) -> dict[str, object]:
         flat["max_input_chars"] = limits["max_input_chars"]
     if "context_window_messages" in limits:
         flat["context_window_messages"] = limits["context_window_messages"]
+    for key in ("max_steps", "max_provider_calls", "max_retries", "max_concurrency", "max_queue_size"):
+        if key in limits:
+            flat[key] = limits[key]
+    for key in ("tool_timeout_seconds", "total_timeout_seconds", "monthly_budget_usd", "provider_call_cost_usd"):
+        if key in limits:
+            flat[key] = limits[key]
     if "model_id" in generalist:
         flat["generalist_model_id"] = generalist["model_id"]
     if "provider" in generalist:
@@ -113,6 +159,15 @@ def _from_env() -> dict[str, object]:
         "ELLY_OLLAMA_BASE_URL": "ollama_base_url",
         "ELLY_OLLAMA_TIMEOUT_SECONDS": "ollama_timeout_seconds",
         "ELLY_SPECIALIST_MANIFEST_DIR": "specialist_manifest_dir",
+        "ELLY_MAX_STEPS": "max_steps",
+        "ELLY_MAX_PROVIDER_CALLS": "max_provider_calls",
+        "ELLY_MAX_RETRIES": "max_retries",
+        "ELLY_TOOL_TIMEOUT_SECONDS": "tool_timeout_seconds",
+        "ELLY_TOTAL_TIMEOUT_SECONDS": "total_timeout_seconds",
+        "ELLY_MAX_CONCURRENCY": "max_concurrency",
+        "ELLY_MAX_QUEUE_SIZE": "max_queue_size",
+        "ELLY_MONTHLY_BUDGET_USD": "monthly_budget_usd",
+        "ELLY_PROVIDER_CALL_COST_USD": "provider_call_cost_usd",
     }
     out: dict[str, object] = {}
     for env_name, key in env_map.items():
@@ -135,15 +190,22 @@ def load_config(toml_path: str | None = None) -> Config:
     db_path = str(merged["db_path"])
     if not db_path.strip():
         raise ConfigInvalidError("db_path must be non-empty")
-    timeout_seconds = float(merged["ollama_timeout_seconds"])
-    if timeout_seconds <= 0:
-        raise ConfigInvalidError("ollama_timeout_seconds must be > 0")
+    timeout_seconds = _as_float(merged["ollama_timeout_seconds"], "ollama_timeout_seconds", strictly_positive=True)
     ollama_base_url = str(merged["ollama_base_url"]).rstrip("/")
     if not ollama_base_url.startswith("http://127.0.0.1:"):
         raise ConfigInvalidError("ollama_base_url must use localhost HTTP")
     provider = str(merged["generalist_provider"]).lower()
     if provider not in {"fake", "ollama"}:
         raise ConfigInvalidError("generalist_provider must be fake or ollama")
+    max_steps = _as_positive_int(merged["max_steps"], "max_steps")
+    max_provider_calls = _as_positive_int(merged["max_provider_calls"], "max_provider_calls")
+    max_retries = _as_nonnegative_int(merged["max_retries"], "max_retries")
+    max_concurrency = _as_positive_int(merged["max_concurrency"], "max_concurrency")
+    max_queue_size = _as_nonnegative_int(merged["max_queue_size"], "max_queue_size")
+    tool_timeout_seconds = _as_float(merged["tool_timeout_seconds"], "tool_timeout_seconds", strictly_positive=True)
+    total_timeout_seconds = _as_float(merged["total_timeout_seconds"], "total_timeout_seconds", strictly_positive=True)
+    monthly_budget_usd = _as_float(merged["monthly_budget_usd"], "monthly_budget_usd")
+    provider_call_cost_usd = _as_float(merged["provider_call_cost_usd"], "provider_call_cost_usd")
 
     return Config(
         app_name=str(merged["app_name"]),
@@ -161,4 +223,13 @@ def load_config(toml_path: str | None = None) -> Config:
         ollama_base_url=ollama_base_url,
         ollama_timeout_seconds=timeout_seconds,
         specialist_manifest_dir=str(merged["specialist_manifest_dir"]),
+        max_steps=max_steps,
+        max_provider_calls=max_provider_calls,
+        max_retries=max_retries,
+        tool_timeout_seconds=tool_timeout_seconds,
+        total_timeout_seconds=total_timeout_seconds,
+        max_concurrency=max_concurrency,
+        max_queue_size=max_queue_size,
+        monthly_budget_usd=monthly_budget_usd,
+        provider_call_cost_usd=provider_call_cost_usd,
     )

@@ -48,6 +48,14 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+CREATE TABLE IF NOT EXISTS tasks (
+    task_id    TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    status     TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 """
 
 
@@ -140,6 +148,46 @@ class SqliteSessionRepository:
                 )
         except sqlite3.Error as exc:
             raise StorageFailureError(f"append_message failed: {type(exc).__name__}") from exc
+
+    def start_task(self, task_id: str, session_id: str, at: datetime) -> None:
+        """Record an in-flight task; restart reconciliation never replays it."""
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO tasks(task_id, session_id, status, started_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (task_id, session_id, "running", _iso(at), _iso(at)),
+                )
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"start_task failed: {type(exc).__name__}") from exc
+
+    def finish_task(self, task_id: str, status: str, at: datetime) -> None:
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
+                    (status, _iso(at), task_id),
+                )
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"finish_task failed: {type(exc).__name__}") from exc
+
+    def mark_interrupted_tasks(self, at: datetime) -> int:
+        """Mark prior running tasks interrupted; deliberately performs no replay."""
+        try:
+            with self._conn:
+                cursor = self._conn.execute(
+                    "UPDATE tasks SET status='interrupted', updated_at=? WHERE status='running'",
+                    (_iso(at),),
+                )
+                return cursor.rowcount
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"reconcile tasks failed: {type(exc).__name__}") from exc
+
+    def task_status(self, task_id: str) -> str | None:
+        try:
+            row = self._conn.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"task lookup failed: {type(exc).__name__}") from exc
+        return row[0] if row else None
 
     def recent_messages(self, session_id: str, limit: int) -> list[Message]:
         if limit <= 0:

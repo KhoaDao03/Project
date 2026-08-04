@@ -20,7 +20,7 @@ Status legend: ✅ Tested (M1, fake-backed) · ◻ Pending (milestone noted).
 
 | Suite | Intent | Layer | Fixtures needed | Det/Live | Milestone | Status |
 |---|---|---|---|---|---|---|
-| AT-01 | Text interaction, multi-turn, cancellation | E2E/Unit | valid/empty/oversized inputs; delayed-task | Det | M1→M3 | ✅ .1–.5; ◻ .6 cancel (M3) |
+| AT-01 | Text interaction, multi-turn, cancellation | E2E/Unit | valid/empty/oversized inputs; delayed-task | Det | M1→M3 | ✅ .1–.6 cancellation evidence |
 | AT-02 | Local-only operation, no cloud, model swap | Contract/Integration | net-off; missing-model; alt fake | Det | M2 | ✅ .4 swap; ◻ real Ollama (M2) |
 | AT-03 | Deterministic orchestration & extensibility | Unit/Integration | adversarial model output; test specialist | Det | M1→M5 | ✅ .5; ◻ .1–.4 (M5) |
 | AT-04 | Research/coding specialist roles | Integration | role/unrelated tasks; malformed outputs | Det (fake provider) | M5 | ◻ |
@@ -31,10 +31,10 @@ Status legend: ✅ Tested (M1, fake-backed) · ◻ Pending (milestone noted).
 | AT-09 | Privacy & exact consent | Integration | public/private/secret payloads; consent flows | Det | M5 | ◻ |
 | AT-10 | Security & redaction | Security | injection page; SSRF/redirect URLs; canary secrets | Det | M4→M5 | ◻ (M1: redaction .6/.7 partial) |
 | **AT-10.8 (new, DEC-OQ-07)** | **Citation validator** | Security/Unit | provider citations incl. private-IP/non-HTTPS/dupe/unresolvable | Det | M4 | ◻ |
-| AT-11 | Limits, timeout, retry, cost | Unit/Integration | boundary limits; transient/permanent failures | Det | M3 | ◻ |
+| AT-11 | Limits, timeout, retry, cost | Unit/Integration | boundary limits; transient/permanent failures | Det | M3 | ✅ deterministic M3 guardrail suite |
 | AT-12 | Session/profile data controls | Integration | no-store; profile confirm/inferred; corrupt memory | Det | M6 | ◻ (M1: no-store partial) |
 | AT-13 | Audit, health, cost visibility | Integration | one multi-phase task; mock price/usage | Det | M6 | ◻ (M1: correlation/health partial) |
-| AT-14 | Partial failure & recovery | Integration | per-adapter failure injection; restart; backup/restore | Det | M3→M6 | ◻ (M1: fail/interrupt partial) |
+| AT-14 | Partial failure & recovery | Integration | per-adapter failure injection; restart; backup/restore | Det | M3→M6 | ✅ .1/.3 M3; ◻ .4/.5 M6 |
 | AT-15 | Hardware, AI-eval, release gate | Benchmark/Eval/UAT | target machine; pinned model/config; 30-case suite | Live/Det | M0→M7 | ◻ (M0: benchmark pending) |
 
 **AT-10.8 — Citation validator (spec):** given provider citations containing a
@@ -98,7 +98,8 @@ cloud/tool calls; citation support **100%** in fixtures; required abstention/blo
 safety-critical item **<4**; hardware from the NFR-003 benchmark. Fabricated
 citation/action-success events: **0**. Aggregates must not hide individual safety failures.
 
-## 6. Current coverage (M1, fake-backed)
-73 automated tests pass. AT items already exercised: AT-01.1–.5, AT-03.5, AT-02.4-style
-swap, AT-13 (correlation/health, partial), AT-10.6/.7 (redaction, partial), EVAL-003/004.
-Everything else is **pending** at the milestone shown above.
+## 6. Current coverage (M3)
+105 automated tests pass. M3 exercises AT-01.6, AT-02 local adapter contracts,
+AT-11 deterministic limits/retry/circuit/cost, and AT-14.1/.3 interruption/failure
+paths. Web, cloud specialist, profile, backup, and final release-evaluation items
+remain pending at their approved milestones.

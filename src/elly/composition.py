@@ -1,11 +1,11 @@
-"""Composition root — wires config, adapters, registry, and orchestrator (M2).
+"""Composition root — wires config, adapters, guardrails, registry, and orchestrator (M3).
 
 This is the ONE place that knows which concrete adapters back each port. Swapping
 the FakeGeneralist for the real Ollama adapter in M2 happens HERE plus config —
 nothing in domain/application changes (NFR-006). Keeping wiring isolated is what
 makes the ports/adapters boundary real rather than decorative.
 
-Status: Implemented + Tested (M2).
+Status: Implemented + Tested (M3).
 """
 
 from __future__ import annotations
@@ -27,10 +27,11 @@ from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
 from .ports.repository import SessionRepositoryPort
 from .specialists.registry import SpecialistRegistry
+from .guardrails import BoundedTaskExecutor, GuardrailController, LimitPolicy
 
 
 class Application:
-    """Wired M2 application container.
+    """Wired M3 application container.
 
     Holds the composed collaborators and exposes the small surface the CLI needs.
     Construct via `build()`.
@@ -45,6 +46,8 @@ class Application:
         repository: SessionRepositoryPort,
         audit: AuditPort,
         specialist_registry: SpecialistRegistry | None = None,
+        guardrails: GuardrailController | None = None,
+        executor: BoundedTaskExecutor | None = None,
     ) -> None:
         self.config = config
         self.clock = clock
@@ -52,6 +55,8 @@ class Application:
         self.repository = repository
         self.audit = audit
         self.specialist_registry = specialist_registry or SpecialistRegistry()
+        self.guardrails = guardrails
+        self.executor = executor
         self.orchestrator = ConversationOrchestrator(
             clock=clock,
             generalist=generalist,
@@ -60,6 +65,7 @@ class Application:
             context_window=config.context_window_messages,
             model_id=config.generalist_model_id,
             max_output_tokens=config.generalist_max_output_tokens,
+            guardrails=guardrails,
         )
 
     # -- session lifecycle -------------------------------------------------
@@ -84,6 +90,8 @@ class Application:
 
     def close(self) -> None:
         """Release resources (the SQLite connection). Safe to call once at shutdown."""
+        if self.executor is not None:
+            self.executor.shutdown()
         close = getattr(self.repository, "close", None)
         if callable(close):
             close()
@@ -106,9 +114,15 @@ class Application:
         reports.append(HealthReport(component="audit", state=HealthState.HEALTHY))
         return reports
 
+    def submit(self, request):
+        """Submit a conversation through bounded local admission."""
+        if self.executor is None:
+            raise RuntimeError("task executor is not configured")
+        return self.executor.submit(lambda: self.orchestrator.handle(request))
+
 
 def build(toml_path: str | None = None) -> Application:
-    """Build the fully-wired M2 application.
+    """Build the fully-wired M3 application.
 
     Real vs fake in this wiring:
       - generalist: configured fake or real localhost Ollama.
@@ -121,6 +135,22 @@ def build(toml_path: str | None = None) -> Application:
 
     repository = SqliteSessionRepository(config.db_path)
     repository.apply_migrations()
+    repository.mark_interrupted_tasks(SystemClock().now())
+
+    guardrails = GuardrailController(
+        policy=LimitPolicy(
+            max_steps=config.max_steps,
+            max_provider_calls=config.max_provider_calls,
+            max_retries=config.max_retries,
+            max_concurrency=config.max_concurrency,
+            monthly_budget_usd=config.monthly_budget_usd,
+            max_output_tokens=config.generalist_max_output_tokens,
+        ),
+        tool_timeout_seconds=config.tool_timeout_seconds,
+        total_timeout_seconds=config.total_timeout_seconds,
+        provider_call_cost_usd=config.provider_call_cost_usd,
+    )
+    executor = BoundedTaskExecutor(workers=config.max_concurrency, queue_size=config.max_queue_size)
 
     app = Application(
         config=config,
@@ -136,5 +166,7 @@ def build(toml_path: str | None = None) -> Application:
         repository=repository,
         audit=StructuredAuditLog(),
         specialist_registry=SpecialistRegistry.from_directory(config.specialist_manifest_dir),
+        guardrails=guardrails,
+        executor=executor,
     )
     return app

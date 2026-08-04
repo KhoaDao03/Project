@@ -56,3 +56,10 @@ Fake-backed by design (real Ollama = M2); not "Verified" against acceptance test
 - M2 is complete as of 2026-08-04: qwen3:8b performance was owner-approved,
   real CLI smoke passed, and cancellation evidence is recorded. qwen3:14b remains
   explicit opt-in; M7 retains final release evaluation.
+
+### Milestone M3 — Guardrail Spine — **Complete 2026-08-04**
+- Added application-owned atomic limits, bounded retry/backoff, circuit breaking,
+  timeout cancellation, deterministic fake-cost reservation/reconciliation, and
+  restart interruption with no replay.
+- Added deterministic boundary, concurrency, failure, cost, timeout, queue, and
+  recovery tests. Final suite: **105 tests passed**.

@@ -1,6 +1,5 @@
 """Port protocols: the stable contracts adapters implement (DESIGN §6.7).
 
-Only the ports M1 actually uses are defined here. SearchPort, PageReaderPort,
-SpecialistProviderPort, CostPort, etc. are deliberately absent — they belong to
-M3/M4/M5 and must not be scaffolded speculatively.
+The package exposes the stable ports used by the implemented milestones. Ports
+for deferred capabilities remain intentionally absent until their milestones.
 """

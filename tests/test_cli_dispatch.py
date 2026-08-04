@@ -40,6 +40,13 @@ class CliDispatchTests(unittest.TestCase):
         out = self.cli.dispatch("/status")
         self.assertIn("storage(sqlite)", out)
         self.assertIn("Mode:", out)
+        self.assertIn("Limits:", out)
+
+    def test_provider_limit_is_visible_as_blocked_cli_result(self) -> None:
+        self.cli.app.guardrails.ledger.reserve(provider_calls=self.cli.app.config.max_provider_calls)
+        out = self.cli.dispatch("this must be blocked by the guardrail")
+        self.assertIn("blocked", out.lower())
+        self.assertIn("provider call limit", out.lower())
 
     def test_new_no_store_switches_session(self) -> None:
         out = self.cli.dispatch("/new --no-store")

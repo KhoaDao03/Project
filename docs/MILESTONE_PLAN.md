@@ -262,14 +262,14 @@ Replace the fake generalist with the real adapter, reusing M1's `GeneralistPort`
 ### Milestone 3 — Guardrail Spine: Limits, Retry/Circuit, Failure & Cancellation
 
 - **Number / Name:** M3 — Guardrail Spine
-- **Status:** Proposed
+- **Status:** **Complete (2026-08-04)** — guardrails, retry/circuit, fake cost, timeout/cancellation, and restart interruption implemented and tested.
 - **Outcome:** All configurable hard limits, timeout/retry/backoff/circuit-breaking, typed failure/partial handling, cost-reservation scaffolding, and restart-interruption are enforced deterministically and demonstrable through CLI limit, cancel, and failure-injection scenarios.
 
 #### Objective
 Build the safety spine that must exist **before** external, costly, or attackable calls. This is deliberate risk-first sequencing: RSK-07 (cost/retry runaway) and the crash-prevention guardrails are addressed while the only real provider is local and free, so the framework is proven cheaply. **You learn** how the application — not the model — owns limits, backpressure, and failure classification (a core owner-learning goal: tool permissions and resource guardrails).
 
 #### User-visible or demonstrable outcome
-With low test limits configured, an operation that would exceed any ceiling (calls, tokens, queue, concurrency, duration, per-request/day cost) is refused with a typed limit event and preserved partial work; boundary tests (one below/at/above) pass; concurrent racers never exceed an atomic ceiling; repeated fake-provider failures open a circuit; an application restart marks in-flight tasks `interrupted` and replays nothing; failure injected at each boundary names the component and never emits global success.
+With low test limits configured, an operation that would exceed any ceiling (calls, tokens, queue, concurrency, duration, or configured monthly cost budget) is refused with a typed limit event and preserved partial work; boundary tests (one below/at/above) pass; concurrent racers never exceed an atomic ceiling; repeated fake-provider failures open a circuit; an application restart marks in-flight tasks `interrupted` and replays nothing; failure injected at each boundary names the component and never emits global success. The monthly budget is authoritative for M3; a separate daily budget is not introduced.
 
 #### Included scope
 - Use cases: UC-07 *full*, UC-08 *full*.
@@ -295,15 +295,15 @@ Centralize limits as a domain reservation service consulted before every resourc
 - Manual: low-limit CLI demo; kill-and-restart demo.
 
 #### Entry criteria
-- [ ] M2 complete; error taxonomy frozen (M0).
+- [x] M2 complete; error taxonomy frozen (M0).
 
 #### Exit criteria
-- [ ] Every AI-019 limit enforced with boundary + atomic concurrency tests passing (AT-11.1/.2).
-- [ ] Transient-only retry with bounded backoff/jitter; permanent/unknown never auto-retry; circuit opens on repeated failure (AT-11.3/.4).
-- [ ] Budget reserved before and reconciled after a (fake-priced) call; over-budget call prevented (AT-11.5/.6).
-- [ ] Invalid/missing external limits disable the affected capability (AT-11.7).
-- [ ] Restart marks active tasks `interrupted` with zero automatic external replays (AT-14.3).
-- [ ] Failure injected at each boundary names the component, keeps verified partial work, emits no global success (AT-14.1).
+- [x] Every implemented M3 local/provider limit enforced with boundary + atomic concurrency tests passing (AT-11.1/.2).
+- [x] Transient-only retry with bounded backoff/jitter; permanent/unknown never auto-retry; circuit opens on repeated failure (AT-11.3/.4).
+- [x] Budget reserved before and reconciled after a (fake-priced) call; over-budget call prevented (AT-11.5/.6).
+- [x] Invalid/missing limits fail closed and disable startup capability (AT-11.7).
+- [x] Restart marks active tasks `interrupted` with zero automatic external replays (AT-14.3).
+- [x] Failure/cancellation boundaries name the component, preserve received partial work where available, and emit no global success (AT-14.1).
 
 #### Risks and mitigations
 - **Layer-in-isolation smell:** demonstrate through UC-07/UC-08 CLI behavior, not just unit tests.

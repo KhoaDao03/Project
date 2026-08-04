@@ -2,17 +2,17 @@
 
 Elly Research Assistant — a local-first personal AI assistant.
 
-**Current state: Milestone M2 — real Ollama adapter implemented, benchmark gate
-open.** Development and testing default to local `qwen3:8b`; `qwen3:14b` is
+**Current state: Milestone M3 — guardrail spine implemented.** Development and
+testing default to local `qwen3:8b`; `qwen3:14b` is
 opt-in through [config.qwen3-14b.example.toml](config.qwen3-14b.example.toml) or
 `ELLY_GENERALIST_MODEL_ID`. See
 [`docs/MILESTONE_PLAN.md`](docs/MILESTONE_PLAN.md) for the roadmap and
-[`docs/M2_IMPLEMENTATION_STATUS.md`](docs/M2_IMPLEMENTATION_STATUS.md) for exactly
-what is real, tested, benchmarked, and still open.
+[`docs/M3_IMPLEMENTATION_STATUS.md`](docs/M3_IMPLEMENTATION_STATUS.md) for the
+guardrail implementation and verification status.
 
 ## Requirements
 
-Python **≥ 3.11**. **No third-party runtime dependencies** — M2 uses only the
+Python **≥ 3.11**. **No third-party runtime dependencies** — M3 uses only the
 standard library (`sqlite3`, `tomllib`, `dataclasses`, …).
 
 ## Run
@@ -29,10 +29,10 @@ ELLY_DB_PATH=":memory:" PYTHONPATH=src python3 -m elly  # ephemeral database
 |---|---|
 | `<text>` | Ask Elly (local Ollama generalist) |
 | `/new [--no-store]` | Start a new session (optionally no-store) |
-| `/mode local` | Local-only (the only mode in M2) |
+| `/mode local` | Local-only (the only available mode in M3) |
 | `/mode cloud` | **Unavailable in M1** (cloud specialists = M5) |
 | `/status` | Dependency health + active mode |
-| `/cancel` | Full task cancellation UI is deferred; Ctrl+C requests cancellation |
+| `/cancel` | Request cancellation of the active local generation |
 | `/help`, `/exit` | Help / quit |
 
 ## Configuration
@@ -41,6 +41,10 @@ Defaults live in code; override via `config.example.toml` (copy to
 `config.local.toml`) or `ELLY_*` env vars (e.g. `ELLY_DB_PATH`,
 `ELLY_MAX_INPUT_CHARS`, `ELLY_LOG_LEVEL`). M2 sends prompts only to the configured
 localhost Ollama endpoint; no cloud provider or secret is used.
+
+M3 guardrails are configurable through the `[limits]` section or `ELLY_*`
+environment variables: steps, provider calls, retries, concurrency, queue size,
+timeouts, output tokens, and the authoritative monthly budget.
 
 `config/specialists/*.toml` contains declarative specialist manifests. They are
 validated and discovered at startup, but specialist routing/execution is deferred
@@ -65,7 +69,7 @@ PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -
 PYTHONPATH=src python3 -m compileall -q src tests                                    # syntax check
 ```
 
-## Real vs fake dependencies (M2)
+## Real vs fake dependencies (M3)
 
 - **Real:** terminal CLI, deterministic orchestrator, SQLite persistence (honors
   no-store), redacted audit log, config, health.
@@ -74,9 +78,8 @@ PYTHONPATH=src python3 -m compileall -q src tests                               
 
 ## Limitations
 
-The qwen3:14b benchmark and full cancellation/partial-work gate remain open.
-No web/RAG, cloud specialists, memory/profile, or full resource-limit framework —
-those are later milestones. Not for production (personal prototype).
+No web/RAG, cloud specialists, memory/profile, backup/restore, or live cost pricing
+are implemented. Not for production (personal prototype).
 
 ## Layout
 

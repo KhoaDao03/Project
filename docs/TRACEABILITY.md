@@ -53,3 +53,13 @@ ports/adapters.
 | NFR-003 hardware fit | AT-15.1/.2 | [`M2_QWEN3_8B_BENCHMARK.md`](M2_QWEN3_8B_BENCHMARK.md), DEC-M2-03 | qwen3:8b 2450 ms development smoke; owner-approved; qwen3:14b opt-in | Owner approved + Tested; final release gate M7 |
 | AI-001/API-001 model selection | DEC-M2-01 | `config.example.toml`, `config.qwen3-14b.example.toml`, `config.py` | `test_config` | Implemented + Tested |
 | BUS-003 specialist registration | DEC-M2-02, UC-12 | `specialists/manifest.py`, `specialists/registry.py`, `ports/specialist.py` | `test_specialist_registry` | Foundation implemented + Tested; execution deferred M5 |
+
+## M3 implementation addendum
+
+| Req | UC/AT | Source | Tests/evidence | Status |
+|---|---|---|---|---|
+| AI-019 / NFR-001 limits | UC-08, AT-11.1/.2 | `guardrails/limits.py:ReservationLedger`, `guardrails/executor.py:BoundedTaskExecutor` | `test_guardrails`, CLI limit test | Implemented + Tested |
+| NFR-002 retry/circuit/timeout | UC-07/08, AT-11.3/.4 | `guardrails/controller.py`, `guardrails/retry.py` | retry, permanent, circuit, timeout tests | Implemented + Tested |
+| OPS-003 fake cost | UC-08, AT-11.5/.6 | `guardrails/cost.py:FakeCostLedger`, `ports/cost.py:CostPort` | reserve/reconcile/over-budget tests | Implemented + Tested |
+| OPS-004 interruption | UC-08, AT-14.3 | `sqlite_repository.py:tasks`, `mark_interrupted_tasks` | reopen/reconcile tests | Implemented + Tested |
+| FR-005/FR-006 failure/cancel | AT-01.6, AT-14.1 | `conversation.py`, `response_composer.py`, `cli.py` | cancellation, typed failure, no-success tests | Implemented + Tested |

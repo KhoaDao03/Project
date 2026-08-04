@@ -59,6 +59,18 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigInvalidError):
             load_config("/nonexistent/path/elly-config.toml")
 
+    def test_invalid_guardrail_fails_closed(self) -> None:
+        os.environ["ELLY_MAX_RETRIES"] = "-1"
+        self.addCleanup(os.environ.pop, "ELLY_MAX_RETRIES", None)
+        with self.assertRaises(ConfigInvalidError):
+            load_config(None)
+
+    def test_non_numeric_guardrail_fails_closed(self) -> None:
+        os.environ["ELLY_TOOL_TIMEOUT_SECONDS"] = "not-a-number"
+        self.addCleanup(os.environ.pop, "ELLY_TOOL_TIMEOUT_SECONDS", None)
+        with self.assertRaises(ConfigInvalidError):
+            load_config(None)
+
 
 if __name__ == "__main__":
     unittest.main()

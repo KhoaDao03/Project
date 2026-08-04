@@ -1,4 +1,4 @@
-"""Terminal REPL (FR-001 surface, UC-01/UC-10 initial) — M2.
+"""Terminal REPL (FR-001 surface, UC-01/UC-10 initial) — M3.
 
 Design: `Cli.dispatch(line)` maps one input line to output text and is fully
 unit-testable without stdin. `Cli.run()` is the thin interactive loop.
@@ -10,7 +10,7 @@ M1 commands (DESIGN §6.1 subset):
   /mode cloud       INTENTIONALLY UNAVAILABLE in M2 -> explicit denial (M5)
   /status           dependency health + active mode
   /help             list commands
-  /cancel           Ctrl+C requests local cancellation; full task UI is M3
+  /cancel           request cancellation of the active local generation
   /exit             leave
 
 Security: untrusted input is validated before any orchestration (FR-001). Model
@@ -37,14 +37,14 @@ _HELP = """Commands:
   /mode local        set local-only mode
   /mode cloud        (unavailable in M2 — cloud specialists arrive in M5)
   /status            show dependency health and active mode
-  /cancel            (use Ctrl+C to request local cancellation; full UI is M3)
+  /cancel            request cancellation of the active local generation
   /help              show this help
   /exit              quit"""
 
 
 @dataclass
 class Cli:
-    """Interactive terminal for the M1 skeleton."""
+    """Interactive terminal for the M3 guarded local assistant."""
 
     app: Application
     session: SessionRecord
@@ -73,7 +73,13 @@ class Cli:
             return EXIT
         if cmd == "/status":
             active = f"Mode: {self.session.cloud_mode.value} / {self.session.persistence_mode.value}"
-            return render.render_health(self.app.health()) + "\n" + active
+            limits = self.app.config
+            guardrails = (
+                f"Limits: steps={limits.max_steps}, provider_calls={limits.max_provider_calls}, "
+                f"retries={limits.max_retries}, concurrency={limits.max_concurrency}, queue={limits.max_queue_size}, "
+                f"timeout={limits.tool_timeout_seconds:g}s/{limits.total_timeout_seconds:g}s"
+            )
+            return render.render_health(self.app.health()) + "\n" + active + "\n" + guardrails
         if cmd == "/new":
             no_store = "--no-store" in args
             mode = PersistenceMode.NO_STORE if no_store else PersistenceMode.STORE_WITH_RETENTION
@@ -88,7 +94,11 @@ class Cli:
                 return "Cloud mode is unavailable in M2; cloud specialists arrive in M5."
             return "Usage: /mode local | /mode cloud"
         if cmd == "/cancel":
-            return "No separate cancel command yet; press Ctrl+C during local generation."
+            cancel = getattr(self.app.generalist, "cancel", None)
+            if callable(cancel):
+                cancel()
+                return "Cancellation requested."
+            return "No cancellable operation is active."
         return f"Unknown command: {cmd} (try /help)"
 
     def _submit(self, text: str) -> str:
@@ -106,7 +116,10 @@ class Cli:
             submitted_at=self.app.clock.now(),
         )
         try:
-            outcome = self.app.orchestrator.handle(request)
+            if self.app.executor is None:
+                outcome = self.app.orchestrator.handle(request)
+            else:
+                outcome = self.app.submit(request).result()
         except EllyError as exc:
             # A storage/typed failure that reached the boundary — surface as blocked,
             # never a fabricated success (FR-006). Provider/validation failures are
@@ -117,7 +130,7 @@ class Cli:
     # -- interactive loop --------------------------------------------------
 
     def run(self) -> None:  # pragma: no cover - I/O loop
-        print("Elly M2 local assistant. Type /help. (Ollama local generalist)")
+        print("Elly M3 local assistant. Type /help. (Ollama local generalist)")
         while True:
             try:
                 line = input("you> ")

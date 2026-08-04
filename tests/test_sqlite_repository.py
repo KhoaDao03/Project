@@ -6,6 +6,8 @@ Uses ":memory:" for a fast, isolated REAL SQLite database (DATA-001).
 from __future__ import annotations
 
 import unittest
+import tempfile
+import os
 from datetime import datetime, timezone
 
 from elly.adapters.sqlite_repository import SqliteSessionRepository
@@ -72,6 +74,29 @@ class SqliteRepositoryTests(unittest.TestCase):
     def test_append_to_unknown_session_fails(self) -> None:
         with self.assertRaises(StorageFailureError):
             self.repo.append_message("nope", Message("user", "x", UTC))
+
+    def test_restart_marks_running_tasks_interrupted_without_replay(self) -> None:
+        rec = self._session(PersistenceMode.STORE_WITH_RETENTION)
+        self.repo.start_task("task-running", rec.session_id, UTC)
+        self.assertEqual(self.repo.mark_interrupted_tasks(UTC), 1)
+        self.assertEqual(self.repo.task_status("task-running"), "interrupted")
+        self.assertEqual(self.repo.mark_interrupted_tasks(UTC), 0)
+
+    def test_reopen_reconciles_running_task_without_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "elly.db")
+            first = SqliteSessionRepository(path)
+            first.apply_migrations()
+            rec = SessionRecord("persistent", PersistenceMode.STORE_WITH_RETENTION, CloudMode.LOCAL_ONLY, UTC)
+            first.create_session(rec)
+            first.start_task("task-restart", rec.session_id, UTC)
+            first.close()
+
+            second = SqliteSessionRepository(path)
+            second.apply_migrations()
+            self.assertEqual(second.mark_interrupted_tasks(UTC), 1)
+            self.assertEqual(second.task_status("task-restart"), "interrupted")
+            second.close()
 
 
 if __name__ == "__main__":
