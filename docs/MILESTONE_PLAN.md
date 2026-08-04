@@ -207,7 +207,7 @@ Thin vertical slice CLI→orchestrator→port→SQLite→audit. Implement the do
 ### Milestone 2 — Real Local Generalist (Ollama) & Local-Only Operation
 
 - **Number / Name:** M2 — Real Local Generalist & Local-Only Operation
-- **Status:** In progress (implementation complete; benchmark/cancellation evidence open)
+- **Status:** **Complete (2026-08-04)** — qwen3:8b owner-approved for development/testing; cancellation and CLI evidence passed. qwen3:14b remains explicit opt-in.
 - **Outcome:** Real Ollama multi-turn conversation in enforced `local_only` mode on the benchmarked machine, with cancellation, honest degradation, and provably no silent cloud fallback.
 
 #### Objective
@@ -239,14 +239,14 @@ Replace the fake generalist with the real adapter, reusing M1's `GeneralistPort`
 - Manual: network-disabled demo; model-swap demo.
 
 #### Entry criteria
-- [ ] M1 complete; benchmarked model + targets approved (M0/NFR-003).
+- [x] M1 complete; qwen3:8b benchmark evidence and owner approval recorded (M0/NFR-003/DEC-M2-03).
 
 #### Exit criteria
-- [~] Real adapter answers through development default `qwen3:8b`; qwen3:14b is explicit opt-in and not required for routine development evidence (AT-15.1/.2).
+- [x] Real adapter answers through development default `qwen3:8b`; qwen3:14b is explicit opt-in (AT-15.1/.2 partial; final release evaluation remains M7).
 - [x] Local-only composition uses no cloud/search path; Ollama health and adapter contract are verified (AT-02.1/.2).
 - [x] Missing Ollama/model maps to a distinct typed error; no fallback path exists (AT-02.3).
 - [x] Model swap is configuration-only; fake and HTTP adapter contract tests pass (AT-02.4).
-- [~] Cooperative cancellation maps to `CANCELLED`; full interactive partial-work evidence remains open (AT-01.6).
+- [x] Cooperative cancellation maps to `CANCELLED`, preserves streamed partial work, and emits cancellation evidence (AT-01.6).
 
 #### Risks and mitigations
 - **RSK-01 residual:** if real-loop performance disappoints, downsize/quantize or revise targets by owner decision (configuration-driven).

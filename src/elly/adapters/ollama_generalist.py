@@ -53,7 +53,7 @@ class OllamaGeneralist:
             with response:
                 for raw_line in response:
                     if self._cancel.is_set():
-                        raise CancelledError("local generation cancelled")
+                        raise CancelledError("local generation cancelled", partial_work="".join(parts).strip())
                     try:
                         item: dict[str, Any] = json.loads(raw_line)
                     except json.JSONDecodeError as exc:
@@ -66,6 +66,8 @@ class OllamaGeneralist:
                     parts.append(value)
         except CancelledError:
             raise
+        except KeyboardInterrupt as exc:
+            raise CancelledError("local generation cancelled", partial_work="".join(parts).strip()) from exc
         except HTTPError as exc:
             if exc.code == 404:
                 raise PermanentProviderError("Ollama or configured model is unavailable") from exc

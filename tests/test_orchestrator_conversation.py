@@ -30,6 +30,7 @@ from elly.domain.enums import (
     TaskStatus,
     ValidationStatus,
 )
+from elly.domain.errors import CancelledError
 from elly.domain.models import SessionRecord, TaskRequest
 
 UTC = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
@@ -113,6 +114,20 @@ class OrchestratorConversationTests(unittest.TestCase):
         orch.handle(_request(sid, "first"))
         outcome = orch.handle(_request(sid, "second"))
         self.assertGreaterEqual(len(outcome.manifest.included_message_ids), 1)
+
+    def test_cancellation_is_not_success_and_preserves_partial_work(self) -> None:
+        orch, repo, audit, sid = _orchestrator(persistence=PersistenceMode.STORE_WITH_RETENTION)
+
+        class CancelledGeneralist(FakeGeneralist):
+            def generate(self, _request):  # type: ignore[no-untyped-def]
+                raise CancelledError("local generation cancelled", partial_work="received prefix")
+
+        orch._generalist = CancelledGeneralist()  # test-only provider substitution
+        self.addCleanup(repo.close)
+        outcome = orch.handle(_request(sid, "hello"))
+        self.assertIs(outcome.result.task_status, TaskStatus.CANCELLED)
+        self.assertEqual(outcome.result.partial_work, ("received prefix",))
+        self.assertFalse(any(e.task_status is TaskStatus.COMPLETED for e in audit.by_task(outcome.result.task_id)))
 
 
 if __name__ == "__main__":

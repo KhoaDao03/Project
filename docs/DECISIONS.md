@@ -176,6 +176,13 @@ remain M5 scope. Invalid manifests are disabled and never routable.
 
 *Related:* BUS-003, AI-003/005/015, AT-03.3/.4, UC-12.
 
+### DEC-M2-03 — qwen3:8b development performance approval *(Owner-approved, 2026-08-04)*
+
+The owner approves the observed qwen3:8b local performance for development and
+testing. The qwen3:8b live adapter smoke returned non-empty output in 2450 ms;
+the detailed evidence is recorded in `docs/M2_QWEN3_8B_BENCHMARK.md`. This approval
+does not authorize automatic use of qwen3:14b or replace the final M7 evaluation.
+
 ## Provisional ADRs affected by this record
 - **Approved:** ADR-001, ADR-002, ADR-007 (model pinned), ADR-008 (default + labels,
   see reconciliation).

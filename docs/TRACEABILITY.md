@@ -45,11 +45,11 @@ ports/adapters.
 
 | Req | Design | Source | Tests/evidence | Status |
 |---|---|---|---|---|
-| AI-001 / API-001 local generalist | UC-01, §6.7 | `adapters/ollama_generalist.py:OllamaGeneralist` | `test_ollama_generalist`; live qwen3:8b smoke | Implemented + Tested; primary benchmark open |
+| AI-001 / API-001 local generalist | UC-01, §6.7 | `adapters/ollama_generalist.py:OllamaGeneralist` | `test_ollama_generalist`; live qwen3:8b smoke | Implemented + Tested; M2 complete |
 | BUS-002 local-only | DEC-OQ-01/06, AT-02 | `composition.py:build`, localhost URL validation | composition health; no cloud adapter exists | Implemented + Tested |
 | FR-006 typed local failure | §6.8 | `domain/errors.py`, `OllamaGeneralist.generate` | missing-model/malformed adapter tests | Implemented + Tested |
 | FR-005 local cancellation | UC-07, AT-01.6 | `OllamaGeneralist.cancel`, `compose_cancelled` | cancellation error mapping path | Partially implemented |
 | OPS-002 health | UC-10 | `OllamaGeneralist.health` | live health smoke | Implemented + Tested |
-| NFR-003 hardware fit | AT-15.1/.2 | [`M2_QWEN3_8B_BENCHMARK.md`](M2_QWEN3_8B_BENCHMARK.md) | qwen3:8b 2450 ms development smoke; qwen3:14b opt-in benchmark deferred | Open |
+| NFR-003 hardware fit | AT-15.1/.2 | [`M2_QWEN3_8B_BENCHMARK.md`](M2_QWEN3_8B_BENCHMARK.md), DEC-M2-03 | qwen3:8b 2450 ms development smoke; owner-approved; qwen3:14b opt-in | Owner approved + Tested; final release gate M7 |
 | AI-001/API-001 model selection | DEC-M2-01 | `config.example.toml`, `config.qwen3-14b.example.toml`, `config.py` | `test_config` | Implemented + Tested |
 | BUS-003 specialist registration | DEC-M2-02, UC-12 | `specialists/manifest.py`, `specialists/registry.py`, `ports/specialist.py` | `test_specialist_registry` | Foundation implemented + Tested; execution deferred M5 |

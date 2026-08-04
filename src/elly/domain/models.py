@@ -110,6 +110,8 @@ class TaskResult:
         if not self.answer.strip() and self.task_status not in (
             TaskStatus.FAILED,
             TaskStatus.BLOCKED,
+            TaskStatus.CANCELLED,
+            TaskStatus.PARTIAL,
         ):
             raise InputInvalidError("answer may be empty only for a failed/blocked task")
 

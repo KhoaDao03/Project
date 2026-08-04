@@ -133,7 +133,8 @@ application code do not change.
   `StorageFailureError` (an `EllyError`); it reaches `Cli._submit`'s `except
   EllyError` → "Blocked: …" — surfaced, not swallowed.
 - **Cancellation:** Ctrl+C calls the adapter's cooperative `cancel()` and the
-  orchestrator maps the provider signal to `CANCELLED`, never a completed answer.
+  orchestrator maps the provider signal to `CANCELLED`, preserving only streamed
+  output received before cancellation and never a completed answer.
 - **Security/limit scenario:** oversized input (> `max_input_chars`) is rejected at
   the boundary before any model call, naming the limit (`test_cli_dispatch`,
   AT-01.3). `/mode cloud` is denied explicitly (no cloud path exists) — application,

@@ -1,6 +1,6 @@
 # M2 — Real Local Generalist: Implementation Status
 
-**Status:** Implemented, tested, and partially verified; milestone remains open.
+**Status:** Complete — owner-approved 2026-08-04; qwen3:8b development profile.
 
 ## Implemented
 
@@ -21,20 +21,24 @@
 ## Evidence
 
 - Ollama API reachable; `qwen3:14b` and `qwen3:8b` are pulled.
-- Deterministic suite: `82 passed, 0 failed`.
+- Deterministic suite: `90 passed, 0 failed`.
 - Real adapter smoke: `qwen3:8b` returned non-empty text in `2450 ms`, 7 output
   tokens, through `OllamaGeneralist`.
 - Detailed evidence: [`M2_QWEN3_8B_BENCHMARK.md`](M2_QWEN3_8B_BENCHMARK.md).
 - Composition health: Ollama, SQLite, and audit all reported healthy.
 
-## Open exit criteria
+## Deferred / later evidence
 
 - The qwen3:14b benchmark is intentionally deferred/opt-in because other device
   workloads can exhaust VRAM. qwen3:8b is the development/test benchmarked model;
   qwen3:14b remains available for explicit requests.
-- Full interactive cancellation/partial-work evidence remains pending; current
-  cancellation is cooperative and safely prevents a completed result.
+- Cancellation now returns `CANCELLED`, preserves received non-thinking output as
+  partial work, emits `task.cancelled`, and never reports `COMPLETED`.
+- Cancellation evidence: streamed adapter test plus orchestrator integration test
+  in `test_ollama_generalist.py` and `test_orchestrator_conversation.py`.
 
-M2 must remain open until the owner approves the qwen3:8b benchmark thresholds and
-the cancellation evidence.
-No M3 work is included.
+- qwen3:14b benchmarking is intentionally deferred/opt-in because other device
+  workloads can exhaust VRAM; it remains available for explicit requests.
+- Full release evaluation remains an M7 responsibility.
+
+M2 is complete. M3 is eligible to begin, but no M3 work is included here.

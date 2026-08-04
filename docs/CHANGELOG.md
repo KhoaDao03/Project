@@ -44,9 +44,15 @@ Fake-backed by design (real Ollama = M2); not "Verified" against acceptance test
 
 - Implemented the M2 localhost Ollama adapter, health check, typed failures,
   cooperative cancellation, real-model configuration, and deterministic adapter
-  contract tests. M2 remains open pending the primary-model benchmark gate.
+  contract tests. M2 completion is recorded below; qwen3:14b remains opt-in.
 - Set qwen3:8b as the development/testing default; qwen3:14b is explicit opt-in.
 - Added validated, configuration-driven specialist manifest discovery as an M5
   foundation; no specialist execution is enabled in M2.
 - Added [`M2_QWEN3_8B_BENCHMARK.md`](M2_QWEN3_8B_BENCHMARK.md) documenting the
   qwen3:8b live adapter smoke and its evidence limitations.
+- Completed M2 cancellation handling: streamed partial work is preserved, the
+  result is explicitly `CANCELLED`, and cancellation cannot emit global success.
+- Documentation verification is synchronized to `90 passed` tests.
+- M2 is complete as of 2026-08-04: qwen3:8b performance was owner-approved,
+  real CLI smoke passed, and cancellation evidence is recorded. qwen3:14b remains
+  explicit opt-in; M7 retains final release evaluation.

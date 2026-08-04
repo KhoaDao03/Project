@@ -170,7 +170,7 @@ class ConversationOrchestrator:
                 status=cancelled, error_class=exc.error_class, detail=exc.summary,
             )
             return ConversationOutcome(
-                result=compose_cancelled(task_id=task_id), manifest=manifest,
+                result=compose_cancelled(task_id=task_id, partial_work=exc.partial_work), manifest=manifest,
                 assistant_message=None,
             )
         except EllyError as exc:

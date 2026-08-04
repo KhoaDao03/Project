@@ -26,6 +26,8 @@ def render_result(result: TaskResult) -> str:
     lines.append(f"Route: {result.route_summary.value}")
     if result.failures:
         lines.append("Failure: " + "; ".join(result.failures))
+    if result.partial_work:
+        lines.append("Partial work received: " + " ".join(result.partial_work))
     if result.next_actions:
         lines.append("Next: " + ", ".join(result.next_actions))
     return "\n".join(lines)

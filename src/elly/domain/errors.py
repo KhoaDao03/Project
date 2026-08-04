@@ -89,3 +89,7 @@ class CancelledError(EllyError):
     """The owner cancelled an in-flight local operation."""
 
     error_class = ErrorClass.CANCELLED
+
+    def __init__(self, summary: str, *, partial_work: str = "") -> None:
+        super().__init__(summary)
+        self.partial_work = partial_work

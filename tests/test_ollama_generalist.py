@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -41,9 +42,11 @@ class _Handler(BaseHTTPRequestHandler):
         if self.mode == "malformed":
             self.wfile.write(b"not-json\n")
             return
-        for value in ("local ", "answer"):
+        for index, value in enumerate(("local ", "answer")):
             self.wfile.write((json.dumps({"response": value, "thinking": "secret reasoning"}) + "\n").encode())
             self.wfile.flush()
+            if self.mode == "slow" and index == 0:
+                time.sleep(0.2)
 
 
 class OllamaGeneralistTests(unittest.TestCase):
@@ -95,6 +98,24 @@ class OllamaGeneralistTests(unittest.TestCase):
         self.adapter.cancel()
         with self.assertRaises(CancelledError):
             self.adapter.generate(self.request)
+
+    def test_stream_cancellation_preserves_received_partial_work(self) -> None:
+        _Handler.mode = "slow"
+        result: list[object] = []
+
+        def run() -> None:
+            try:
+                self.adapter.generate(self.request)
+            except Exception as exc:  # test captures the typed boundary result
+                result.append(exc)
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        time.sleep(0.05)
+        self.adapter.cancel()
+        worker.join(timeout=2)
+        self.assertIsInstance(result[0], CancelledError)
+        self.assertEqual(result[0].partial_work, "local")  # type: ignore[union-attr]
 
 
 if __name__ == "__main__":

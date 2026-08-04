@@ -52,7 +52,7 @@ def compose_blocked(*, task_id: str, reason: str) -> TaskResult:
     )
 
 
-def compose_cancelled(*, task_id: str) -> TaskResult:
+def compose_cancelled(*, task_id: str, partial_work: str = "") -> TaskResult:
     """Compose an honest owner-cancelled result with no fabricated answer."""
     return TaskResult(
         task_id=task_id,
@@ -61,6 +61,7 @@ def compose_cancelled(*, task_id: str) -> TaskResult:
         validation_status=ValidationStatus.REJECTED,
         answer="",
         route_summary=Route.LOCAL_GENERALIST,
+        partial_work=(partial_work,) if partial_work else (),
         failures=("local generation cancelled",),
         next_actions=("submit a new request",),
     )
