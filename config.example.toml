@@ -1,0 +1,34 @@
+# Elly — example configuration (M1 walking skeleton).
+#
+# Copy to `config.local.toml` (gitignored) and adjust locally.
+# Load order (see src/elly/config.py): built-in defaults -> this TOML -> ELLY_* env vars.
+#
+# M1 contains NO secrets and NO provider credentials. Ollama/OpenAI/Brave
+# configuration is intentionally absent and arrives in M2/M4/M5. Do not add
+# API keys here — secrets belong in the OS/environment mechanism only (SEC-004).
+
+[app]
+name = "elly"
+# Where the SQLite database lives. Relative paths resolve against the working
+# directory; keep it under a gitignored location. ":memory:" is used by tests.
+db_path = "data/elly.db"
+
+[limits]
+# FR-001 / NFR-001 boundary: input larger than this is rejected before any model
+# call. Provisional default from DESIGN §7 (subject to OQ-05 / M0 confirmation).
+max_input_chars = 20000
+# FR-002 / AI-006 (initial): how many recent in-session messages the context
+# builder may consider. Provisional M1 value; real budgeting lands in M4.
+context_window_messages = 20
+
+[generalist]
+# M1 uses a DETERMINISTIC FAKE generalist (no network). This id is a label only;
+# the real Ollama model id is an M2/OQ-03 decision and is NOT set here.
+model_id = "fake-generalist-v1"
+# Advisory max output tokens the fake echoes back in usage metadata.
+max_output_tokens = 512
+
+[log]
+# Structured-log level. Logs are redacted (SEC-007): no message bodies, secrets,
+# or chain-of-thought are ever written.
+level = "INFO"

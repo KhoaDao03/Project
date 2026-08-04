@@ -1,0 +1,20 @@
+# Elly — ignore local runtime artifacts and secrets.
+__pycache__/
+*.pyc
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local data / config that must never be committed (SEC-004: secrets never in VCS).
+*.db
+*.db-wal
+*.db-shm
+/data/
+config.local.toml
+
+# Secrets: ignore .env and any .env.* EXCEPT the committed template .env.example
+.env
+.env.*
+!.env.example

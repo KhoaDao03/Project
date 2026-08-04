@@ -1,0 +1,44 @@
+# Elly Research Assistant — project configuration
+#
+# Milestone: M1 (Walking Skeleton: Deterministic Local Conversation).
+# Status of this file: Scaffolded.
+#
+# RUNTIME DEPENDENCIES: none. The M1 skeleton runs on the Python 3.11+ standard
+# library only (dataclasses, sqlite3, tomllib, logging, argparse, unicodedata).
+# This is deliberate: it keeps the skeleton offline, reviewable, and free of the
+# supply-chain surface that SEC-004/SEC-007 care about. Real providers (Ollama,
+# OpenAI, Brave) and their SDKs arrive in later milestones (M2/M4/M5), not here.
+#
+# DEV dependencies are OPTIONAL. Tests are written with the stdlib `unittest`
+# framework and run with zero installs:  PYTHONPATH=src python -m unittest
+# The [dev] extra only pins the formatter/linter/type-checker/pytest that the
+# team may choose to install later; nothing in M1 requires them.
+
+[project]
+name = "elly"
+version = "0.0.1"
+description = "Elly Research Assistant — local-first personal AI assistant (M1 walking skeleton)."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+elly = "elly.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
