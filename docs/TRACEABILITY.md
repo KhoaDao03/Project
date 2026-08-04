@@ -50,6 +50,6 @@ ports/adapters.
 | FR-006 typed local failure | §6.8 | `domain/errors.py`, `OllamaGeneralist.generate` | missing-model/malformed adapter tests | Implemented + Tested |
 | FR-005 local cancellation | UC-07, AT-01.6 | `OllamaGeneralist.cancel`, `compose_cancelled` | cancellation error mapping path | Partially implemented |
 | OPS-002 health | UC-10 | `OllamaGeneralist.health` | live health smoke | Implemented + Tested |
-| NFR-003 hardware fit | AT-15.1/.2 | benchmark evidence | qwen3:8b 2450 ms development smoke; qwen3:14b opt-in benchmark deferred | Open |
+| NFR-003 hardware fit | AT-15.1/.2 | [`M2_QWEN3_8B_BENCHMARK.md`](M2_QWEN3_8B_BENCHMARK.md) | qwen3:8b 2450 ms development smoke; qwen3:14b opt-in benchmark deferred | Open |
 | AI-001/API-001 model selection | DEC-M2-01 | `config.example.toml`, `config.qwen3-14b.example.toml`, `config.py` | `test_config` | Implemented + Tested |
 | BUS-003 specialist registration | DEC-M2-02, UC-12 | `specialists/manifest.py`, `specialists/registry.py`, `ports/specialist.py` | `test_specialist_registry` | Foundation implemented + Tested; execution deferred M5 |

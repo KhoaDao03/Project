@@ -24,6 +24,7 @@
 - Deterministic suite: `82 passed, 0 failed`.
 - Real adapter smoke: `qwen3:8b` returned non-empty text in `2450 ms`, 7 output
   tokens, through `OllamaGeneralist`.
+- Detailed evidence: [`M2_QWEN3_8B_BENCHMARK.md`](M2_QWEN3_8B_BENCHMARK.md).
 - Composition health: Ollama, SQLite, and audit all reported healthy.
 
 ## Open exit criteria

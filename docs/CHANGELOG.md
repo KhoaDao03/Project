@@ -48,3 +48,5 @@ Fake-backed by design (real Ollama = M2); not "Verified" against acceptance test
 - Set qwen3:8b as the development/testing default; qwen3:14b is explicit opt-in.
 - Added validated, configuration-driven specialist manifest discovery as an M5
   foundation; no specialist execution is enabled in M2.
+- Added [`M2_QWEN3_8B_BENCHMARK.md`](M2_QWEN3_8B_BENCHMARK.md) documenting the
+  qwen3:8b live adapter smoke and its evidence limitations.
