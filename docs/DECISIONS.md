@@ -153,6 +153,29 @@ benchmark.** *Affects:* NFR-003/004, AI-005/008/010/012. *Gates M7.*
 - **OQ-10 — Production threat/legal/incident scope.** Deferred (pre-production only);
   not required for V1 build.
 
+## M2 operating amendments
+
+### DEC-M2-01 — Local model profiles *(Owner-directed, 2026-08-04)*
+
+Use **`qwen3:8b`** for development and testing by default. Use **`qwen3:14b`**
+only for an explicitly selected request/configuration because other device
+workloads can exhaust available VRAM. The active provider/model are configuration
+values (`provider`, `model_id`, or `ELLY_GENERALIST_MODEL_ID`); the application
+never silently upgrades from 8B to 14B. The opt-in example is
+`config.qwen3-14b.example.toml`.
+
+*Related:* AI-001, API-001, NFR-003, AT-02, AT-15. This amends DEC-OQ-03's
+development/default selection without removing qwen3:14b from the approved V1 set.
+
+### DEC-M2-02 — Declarative specialist registry foundation *(Owner-directed, 2026-08-04)*
+
+Specialists are declared through validated TOML manifests and a registry rather
+than hard-coded router branches. M2 implements discovery and validation only;
+execution, routing, consent, provider/tool grants, and specialist result handling
+remain M5 scope. Invalid manifests are disabled and never routable.
+
+*Related:* BUS-003, AI-003/005/015, AT-03.3/.4, UC-12.
+
 ## Provisional ADRs affected by this record
 - **Approved:** ADR-001, ADR-002, ADR-007 (model pinned), ADR-008 (default + labels,
   see reconciliation).

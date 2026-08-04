@@ -1,0 +1,12 @@
+# Opt-in model override for requests that explicitly need qwen3:14b.
+# Use: python -m elly --config config.qwen3-14b.example.toml
+
+[generalist]
+provider = "ollama"
+model_id = "qwen3:14b"
+base_url = "http://127.0.0.1:11434"
+timeout_seconds = 120
+max_output_tokens = 512
+
+[specialists]
+manifest_dir = "config/specialists"

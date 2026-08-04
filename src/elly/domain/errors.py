@@ -77,3 +77,15 @@ class PermanentProviderError(EllyError):
     """A provider failed unrecoverably (e.g., unavailable) (NFR-002)."""
 
     error_class = ErrorClass.PERMANENT_PROVIDER
+
+
+class ProviderTimeoutError(EllyError):
+    """The local provider exceeded its configured call timeout."""
+
+    error_class = ErrorClass.TIMEOUT
+
+
+class CancelledError(EllyError):
+    """The owner cancelled an in-flight local operation."""
+
+    error_class = ErrorClass.CANCELLED

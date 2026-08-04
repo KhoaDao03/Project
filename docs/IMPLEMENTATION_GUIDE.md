@@ -1,12 +1,11 @@
-# Elly Implementation Guide — Milestone M1
+# Elly Implementation Guide — Milestone M2
 
-**Objective (M1):** prove the architecture end-to-end with a local conversation
-answered by a **deterministic fake** generalist — establishing the deterministic
-orchestrator, ports/adapters seams, three-axis status, persistence, and audit,
-before any real provider (Ollama = M2).
+**Objective (M2):** replace the M1 fake in the configured runtime with a real
+localhost Ollama generalist while preserving the port contract, local-only policy,
+typed degradation, and cooperative cancellation.
 
 Read the code in this order:
-`domain/models.py` → `ports/*` → `application/conversation.py` →
+`domain/models.py` → `ports/*` → `adapters/ollama_generalist.py` → `application/conversation.py` →
 `domain/state_machine.py` → `adapters/*` → `presentation/cli.py` → `composition.py`.
 
 ---
@@ -53,15 +52,23 @@ in M1; model output is still treated as data, never executed (SEC-005 seam).
 
 ## 6. How dependencies are selected
 
-`composition.py:build` is the **only** place that binds concrete adapters to ports:
-`FakeGeneralist`, `SqliteSessionRepository`, `StructuredAuditLog`, `SystemClock`.
-Swapping the fake for Ollama in M2 changes this file + config only.
+`composition.py:build` is the **only** place that binds concrete adapters to ports.
+Non-fake model IDs select `OllamaGeneralist`; `fake-*` IDs select the deterministic
+test double. SQLite, audit, and clock remain real adapters.
+
+The built-in and development configuration select `qwen3:8b`. A request that
+explicitly needs the larger model can use `config.qwen3-14b.example.toml` or set
+`ELLY_GENERALIST_MODEL_ID=qwen3:14b`; there is no automatic upgrade.
+
+`specialists/registry.py:SpecialistRegistry` discovers validated manifests from
+`config/specialists`. It records invalid manifests as disabled and grants no
+execution or tool authority. Routing and provider execution are M5 work.
 
 ## 7. Where fakes / real adapters are invoked
 
-Fake: `adapters/fake_generalist.py` (via `GeneralistPort`). Real: SQLite repo, audit
-log, system clock. `FakeGeneralist` is deterministic, offline, and can be
-constructed with a `FailureMode` to exercise typed failures.
+Real: `adapters/ollama_generalist.py` (via `GeneralistPort`), SQLite, audit, and
+system clock. Fake: `adapters/fake_generalist.py`, retained for offline contract
+tests and deterministic failure injection.
 
 ## 8. Persistence & no-store
 
@@ -77,10 +84,9 @@ field) and logs allowlisted fields only; `detail` is single-lined and truncated
 
 ## 10. Errors → structured statuses
 
-Adapters raise typed `EllyError`s (`errors.py`). `handle` catches `EllyError` around
-the model call/validation and maps to `compose_blocked` → `TaskResult`
-(BLOCKED/BLOCKED/REJECTED) with a safe reason; success maps to COMPLETED/INFERRED/
-VALIDATED. No fabricated success ever (FR-006).
+Adapters raise typed `EllyError`s (`errors.py`). `handle` maps provider failures to
+`compose_blocked`; `CancelledError` maps to `compose_cancelled` and `CANCELLED`.
+Success maps to COMPLETED/INFERRED/VALIDATED. No fabricated success ever (FR-006).
 
 ## 11. How results return to the user
 
@@ -119,12 +125,15 @@ application code do not change.
 - **Invalid input:** `""` → `normalize_and_validate` raises `InputInvalidError` →
   `_submit` returns "Input rejected: input is empty" — **no** model call
   (`test_input_validation`, AT-01.2).
-- **Expected dependency failure:** `FakeGeneralist(TRANSIENT)` → `generate` raises
+- **Expected dependency failure:** `FakeGeneralist(TRANSIENT)` or an unavailable
+  Ollama endpoint → `generate` raises
   `TransientProviderError` → `handle` catches → `compose_blocked` (BLOCKED) + audit
   `generalist.failed`; **no** `task.completed` (`test_conversation_integration`).
 - **Unexpected internal failure:** a storage error in `append_message` raises
   `StorageFailureError` (an `EllyError`); it reaches `Cli._submit`'s `except
   EllyError` → "Blocked: …" — surfaced, not swallowed.
+- **Cancellation:** Ctrl+C calls the adapter's cooperative `cancel()` and the
+  orchestrator maps the provider signal to `CANCELLED`, never a completed answer.
 - **Security/limit scenario:** oversized input (> `max_input_chars`) is rejected at
   the boundary before any model call, naming the limit (`test_cli_dispatch`,
   AT-01.3). `/mode cloud` is denied explicitly (no cloud path exists) — application,

@@ -14,7 +14,18 @@ class ConfigTests(unittest.TestCase):
     def test_defaults(self) -> None:
         cfg = load_config(None)
         self.assertEqual(cfg.max_input_chars, 20000)
-        self.assertEqual(cfg.generalist_model_id, "fake-generalist-v1")
+        self.assertEqual(cfg.generalist_model_id, "qwen3:8b")
+        self.assertEqual(cfg.generalist_provider, "ollama")
+        self.assertEqual(cfg.ollama_base_url, "http://127.0.0.1:11434")
+
+    def test_development_config_selects_eight_b(self) -> None:
+        cfg = load_config("config.example.toml")
+        self.assertEqual(cfg.generalist_provider, "ollama")
+        self.assertEqual(cfg.generalist_model_id, "qwen3:8b")
+
+    def test_fourteen_b_is_explicit_opt_in_config(self) -> None:
+        cfg = load_config("config.qwen3-14b.example.toml")
+        self.assertEqual(cfg.generalist_model_id, "qwen3:14b")
 
     def test_toml_overrides(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as fh:

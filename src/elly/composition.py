@@ -1,11 +1,11 @@
-"""Composition root — wires config, adapters, and the orchestrator (M1).
+"""Composition root — wires config, adapters, registry, and orchestrator (M2).
 
 This is the ONE place that knows which concrete adapters back each port. Swapping
 the FakeGeneralist for the real Ollama adapter in M2 happens HERE plus config —
 nothing in domain/application changes (NFR-006). Keeping wiring isolated is what
 makes the ports/adapters boundary real rather than decorative.
 
-Status: Scaffolded + Tested (M1, "Agent implements").
+Status: Implemented + Tested (M2).
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import uuid
 
 from .adapters.audit_log import StructuredAuditLog
 from .adapters.fake_generalist import FakeGeneralist
+from .adapters.ollama_generalist import OllamaGeneralist
 from .adapters.sqlite_repository import SqliteSessionRepository
 from .adapters.system_clock import SystemClock
 from .application.conversation import ConversationOrchestrator
@@ -25,10 +26,11 @@ from .ports.audit import AuditPort
 from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
 from .ports.repository import SessionRepositoryPort
+from .specialists.registry import SpecialistRegistry
 
 
 class Application:
-    """Wired M1 application container.
+    """Wired M2 application container.
 
     Holds the composed collaborators and exposes the small surface the CLI needs.
     Construct via `build()`.
@@ -42,12 +44,14 @@ class Application:
         generalist: GeneralistPort,
         repository: SessionRepositoryPort,
         audit: AuditPort,
+        specialist_registry: SpecialistRegistry | None = None,
     ) -> None:
         self.config = config
         self.clock = clock
         self.generalist = generalist
         self.repository = repository
         self.audit = audit
+        self.specialist_registry = specialist_registry or SpecialistRegistry()
         self.orchestrator = ConversationOrchestrator(
             clock=clock,
             generalist=generalist,
@@ -104,10 +108,10 @@ class Application:
 
 
 def build(toml_path: str | None = None) -> Application:
-    """Build the fully-wired M1 application.
+    """Build the fully-wired M2 application.
 
     Real vs fake in this wiring:
-      - generalist: FakeGeneralist (DETERMINISTIC FAKE; real Ollama is M2).
+      - generalist: configured fake or real localhost Ollama.
       - repository: SqliteSessionRepository (REAL persistence).
       - audit:      StructuredAuditLog (REAL, redacted, non-durable).
       - clock:      SystemClock (REAL).
@@ -121,8 +125,16 @@ def build(toml_path: str | None = None) -> Application:
     app = Application(
         config=config,
         clock=SystemClock(),
-        generalist=FakeGeneralist(model_id=config.generalist_model_id),
+        generalist=(
+            FakeGeneralist(model_id=config.generalist_model_id)
+            if config.generalist_provider == "fake"
+            else OllamaGeneralist(
+                base_url=config.ollama_base_url,
+                timeout_seconds=config.ollama_timeout_seconds,
+            )
+        ),
         repository=repository,
         audit=StructuredAuditLog(),
+        specialist_registry=SpecialistRegistry.from_directory(config.specialist_manifest_dir),
     )
     return app

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ..domain.enums import CloudMode, PersistenceMode
 from ..domain.errors import StorageFailureError
@@ -64,6 +65,8 @@ class SqliteSessionRepository:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         try:
+            if db_path != ":memory:":
+                Path(db_path).parent.mkdir(parents=True, exist_ok=True)
             # check_same_thread=False is safe here: M1 is single-process/single-user
             # and access is serialized by the CLI loop.
             self._conn = sqlite3.connect(db_path, check_same_thread=False)

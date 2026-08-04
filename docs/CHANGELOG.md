@@ -40,3 +40,11 @@ Fake-backed by design (real Ollama = M2); not "Verified" against acceptance test
   in-session reference resolution are not yet demonstrable.
 - Web/RAG, cloud specialists/consent, memory/profile, and the limits/retry framework
   are later milestones and intentionally unavailable.
+# 2026-08-04
+
+- Implemented the M2 localhost Ollama adapter, health check, typed failures,
+  cooperative cancellation, real-model configuration, and deterministic adapter
+  contract tests. M2 remains open pending the primary-model benchmark gate.
+- Set qwen3:8b as the development/testing default; qwen3:14b is explicit opt-in.
+- Added validated, configuration-driven specialist manifest discovery as an M5
+  foundation; no specialist execution is enabled in M2.

@@ -1,4 +1,4 @@
-"""Terminal REPL (FR-001 surface, UC-01/UC-10 initial) — M1.
+"""Terminal REPL (FR-001 surface, UC-01/UC-10 initial) — M2.
 
 Design: `Cli.dispatch(line)` maps one input line to output text and is fully
 unit-testable without stdin. `Cli.run()` is the thin interactive loop.
@@ -7,10 +7,10 @@ M1 commands (DESIGN §6.1 subset):
   plain text        submit a request in the active session
   /new [--no-store] start a clean session (optionally no-store)
   /mode local       set local-only (the only mode with a path in M1)
-  /mode cloud       INTENTIONALLY UNAVAILABLE in M1 -> explicit denial (M5)
+  /mode cloud       INTENTIONALLY UNAVAILABLE in M2 -> explicit denial (M5)
   /status           dependency health + active mode
   /help             list commands
-  /cancel           INTENTIONALLY UNAVAILABLE in M1 -> explicit notice (M2/M3)
+  /cancel           Ctrl+C requests local cancellation; full task UI is M3
   /exit             leave
 
 Security: untrusted input is validated before any orchestration (FR-001). Model
@@ -35,9 +35,9 @@ _HELP = """Commands:
   <text>             ask Elly (local, M1 fake generalist)
   /new [--no-store]  start a new session
   /mode local        set local-only mode
-  /mode cloud        (unavailable in M1 — cloud specialists arrive in M5)
+  /mode cloud        (unavailable in M2 — cloud specialists arrive in M5)
   /status            show dependency health and active mode
-  /cancel            (unavailable in M1 — cancellation arrives in M2/M3)
+  /cancel            (use Ctrl+C to request local cancellation; full UI is M3)
   /help              show this help
   /exit              quit"""
 
@@ -85,10 +85,10 @@ class Cli:
                 return "Mode: local_only."
             if args == ["cloud"]:
                 # Intentionally-unavailable path fails EXPLICITLY (SEC-005/AI-014).
-                return "Cloud mode is unavailable in M1; cloud specialists arrive in M5."
+                return "Cloud mode is unavailable in M2; cloud specialists arrive in M5."
             return "Usage: /mode local | /mode cloud"
         if cmd == "/cancel":
-            return "Nothing to cancel; cancellation arrives in M2/M3."
+            return "No separate cancel command yet; press Ctrl+C during local generation."
         return f"Unknown command: {cmd} (try /help)"
 
     def _submit(self, text: str) -> str:
@@ -117,13 +117,21 @@ class Cli:
     # -- interactive loop --------------------------------------------------
 
     def run(self) -> None:  # pragma: no cover - I/O loop
-        print("Elly M1 skeleton. Type /help. (fake generalist — not a real model)")
+        print("Elly M2 local assistant. Type /help. (Ollama local generalist)")
         while True:
             try:
                 line = input("you> ")
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print()
                 break
+            except KeyboardInterrupt:
+                cancel = getattr(self.app.generalist, "cancel", None)
+                if callable(cancel):
+                    cancel()
+                    print("Cancellation requested.")
+                else:
+                    print()
+                continue
             out = self.dispatch(line)
             if out == EXIT:
                 break

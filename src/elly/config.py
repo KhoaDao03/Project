@@ -1,4 +1,4 @@
-"""Configuration loading and validation (OPS-002 initial).
+"""Configuration loading and validation (OPS-002/M2).
 
 Responsibility: assemble validated runtime settings from, in order:
   1. built-in conservative defaults (mirrors config.example.toml),
@@ -7,8 +7,7 @@ Responsibility: assemble validated runtime settings from, in order:
 Invalid configuration fails closed with ConfigInvalidError (never a silent
 default substitution for a bad value) — OPS-002 / NFR-001 intent.
 
-M1 carries NO secrets and NO provider credentials (SEC-004): there is nothing to
-resolve for Ollama/OpenAI/Brave here.
+M2 carries no credentials: Ollama is localhost-only (SEC-004).
 """
 
 from __future__ import annotations
@@ -22,15 +21,19 @@ from .domain.errors import ConfigInvalidError
 
 @dataclass(frozen=True, slots=True)
 class Config:
-    """Validated M1 settings."""
+    """Validated runtime settings."""
 
     app_name: str
     db_path: str
     max_input_chars: int
     context_window_messages: int
     generalist_model_id: str
+    generalist_provider: str
     generalist_max_output_tokens: int
     log_level: str
+    ollama_base_url: str
+    ollama_timeout_seconds: float
+    specialist_manifest_dir: str
 
 
 _DEFAULTS: dict[str, object] = {
@@ -38,9 +41,13 @@ _DEFAULTS: dict[str, object] = {
     "db_path": "data/elly.db",
     "max_input_chars": 20000,
     "context_window_messages": 20,
-    "generalist_model_id": "fake-generalist-v1",
+    "generalist_model_id": "qwen3:8b",
+    "generalist_provider": "ollama",
     "generalist_max_output_tokens": 512,
     "log_level": "INFO",
+    "ollama_base_url": "http://127.0.0.1:11434",
+    "ollama_timeout_seconds": 120.0,
+    "specialist_manifest_dir": "config/specialists",
 }
 
 
@@ -78,8 +85,17 @@ def _from_toml(path: str) -> dict[str, object]:
         flat["context_window_messages"] = limits["context_window_messages"]
     if "model_id" in generalist:
         flat["generalist_model_id"] = generalist["model_id"]
+    if "provider" in generalist:
+        flat["generalist_provider"] = generalist["provider"]
     if "max_output_tokens" in generalist:
         flat["generalist_max_output_tokens"] = generalist["max_output_tokens"]
+    if "base_url" in generalist:
+        flat["ollama_base_url"] = generalist["base_url"]
+    if "timeout_seconds" in generalist:
+        flat["ollama_timeout_seconds"] = generalist["timeout_seconds"]
+    specialists = raw.get("specialists", {})
+    if "manifest_dir" in specialists:
+        flat["specialist_manifest_dir"] = specialists["manifest_dir"]
     if "level" in log:
         flat["log_level"] = log["level"]
     return flat
@@ -91,8 +107,12 @@ def _from_env() -> dict[str, object]:
         "ELLY_MAX_INPUT_CHARS": "max_input_chars",
         "ELLY_CONTEXT_WINDOW_MESSAGES": "context_window_messages",
         "ELLY_GENERALIST_MODEL_ID": "generalist_model_id",
+        "ELLY_GENERALIST_PROVIDER": "generalist_provider",
         "ELLY_GENERALIST_MAX_OUTPUT_TOKENS": "generalist_max_output_tokens",
         "ELLY_LOG_LEVEL": "log_level",
+        "ELLY_OLLAMA_BASE_URL": "ollama_base_url",
+        "ELLY_OLLAMA_TIMEOUT_SECONDS": "ollama_timeout_seconds",
+        "ELLY_SPECIALIST_MANIFEST_DIR": "specialist_manifest_dir",
     }
     out: dict[str, object] = {}
     for env_name, key in env_map.items():
@@ -115,6 +135,15 @@ def load_config(toml_path: str | None = None) -> Config:
     db_path = str(merged["db_path"])
     if not db_path.strip():
         raise ConfigInvalidError("db_path must be non-empty")
+    timeout_seconds = float(merged["ollama_timeout_seconds"])
+    if timeout_seconds <= 0:
+        raise ConfigInvalidError("ollama_timeout_seconds must be > 0")
+    ollama_base_url = str(merged["ollama_base_url"]).rstrip("/")
+    if not ollama_base_url.startswith("http://127.0.0.1:"):
+        raise ConfigInvalidError("ollama_base_url must use localhost HTTP")
+    provider = str(merged["generalist_provider"]).lower()
+    if provider not in {"fake", "ollama"}:
+        raise ConfigInvalidError("generalist_provider must be fake or ollama")
 
     return Config(
         app_name=str(merged["app_name"]),
@@ -124,8 +153,12 @@ def load_config(toml_path: str | None = None) -> Config:
             merged["context_window_messages"], "context_window_messages"
         ),
         generalist_model_id=str(merged["generalist_model_id"]),
+        generalist_provider=provider,
         generalist_max_output_tokens=_as_positive_int(
             merged["generalist_max_output_tokens"], "generalist_max_output_tokens"
         ),
         log_level=log_level,
+        ollama_base_url=ollama_base_url,
+        ollama_timeout_seconds=timeout_seconds,
+        specialist_manifest_dir=str(merged["specialist_manifest_dir"]),
     )

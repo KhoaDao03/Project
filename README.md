@@ -2,16 +2,17 @@
 
 Elly Research Assistant — a local-first personal AI assistant.
 
-**Current state: Milestone M1 (Walking Skeleton) — implemented, fake-backed by
-design.** Ordinary local conversation runs end-to-end through a deterministic
-**fake** generalist (the real Ollama model is Milestone M2). See
+**Current state: Milestone M2 — real Ollama adapter implemented, benchmark gate
+open.** Development and testing default to local `qwen3:8b`; `qwen3:14b` is
+opt-in through [config.qwen3-14b.example.toml](config.qwen3-14b.example.toml) or
+`ELLY_GENERALIST_MODEL_ID`. See
 [`docs/MILESTONE_PLAN.md`](docs/MILESTONE_PLAN.md) for the roadmap and
-[`docs/M1_IMPLEMENTATION_STATUS.md`](docs/M1_IMPLEMENTATION_STATUS.md) for exactly
-what is real vs fake vs unavailable.
+[`docs/M2_IMPLEMENTATION_STATUS.md`](docs/M2_IMPLEMENTATION_STATUS.md) for exactly
+what is real, tested, benchmarked, and still open.
 
 ## Requirements
 
-Python **≥ 3.11**. **No third-party runtime dependencies** — M1 uses only the
+Python **≥ 3.11**. **No third-party runtime dependencies** — M2 uses only the
 standard library (`sqlite3`, `tomllib`, `dataclasses`, …).
 
 ## Run
@@ -26,20 +27,24 @@ ELLY_DB_PATH=":memory:" PYTHONPATH=src python3 -m elly  # ephemeral database
 
 | Command | Effect |
 |---|---|
-| `<text>` | Ask Elly (local, fake generalist) |
+| `<text>` | Ask Elly (local Ollama generalist) |
 | `/new [--no-store]` | Start a new session (optionally no-store) |
-| `/mode local` | Local-only (the only mode in M1) |
+| `/mode local` | Local-only (the only mode in M2) |
 | `/mode cloud` | **Unavailable in M1** (cloud specialists = M5) |
 | `/status` | Dependency health + active mode |
-| `/cancel` | **Unavailable in M1** (cancellation = M2/M3) |
+| `/cancel` | Full task cancellation UI is deferred; Ctrl+C requests cancellation |
 | `/help`, `/exit` | Help / quit |
 
 ## Configuration
 
 Defaults live in code; override via `config.example.toml` (copy to
 `config.local.toml`) or `ELLY_*` env vars (e.g. `ELLY_DB_PATH`,
-`ELLY_MAX_INPUT_CHARS`, `ELLY_LOG_LEVEL`). The M1 runtime uses **no secrets** (the
-generalist is a fake).
+`ELLY_MAX_INPUT_CHARS`, `ELLY_LOG_LEVEL`). M2 sends prompts only to the configured
+localhost Ollama endpoint; no cloud provider or secret is used.
+
+`config/specialists/*.toml` contains declarative specialist manifests. They are
+validated and discovered at startup, but specialist routing/execution is deferred
+to M5.
 
 **Secrets (`.env`).** For later cloud use (and the M0 OpenAI feasibility smoke), copy
 `.env.example` to `.env` and paste your key:
@@ -60,19 +65,18 @@ PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -
 PYTHONPATH=src python3 -m compileall -q src tests                                    # syntax check
 ```
 
-## Real vs fake dependencies (M1)
+## Real vs fake dependencies (M2)
 
 - **Real:** terminal CLI, deterministic orchestrator, SQLite persistence (honors
   no-store), redacted audit log, config, health.
-- **Fake:** the generalist model (`FakeGeneralist`) — deterministic, offline; the
-  real Ollama adapter arrives in M2.
+- **Real:** the local generalist (`OllamaGeneralist`) for non-`fake-*` model IDs.
+- **Fake:** `FakeGeneralist`, retained for deterministic contract and unit tests.
 
 ## Limitations
 
-Fake-backed conversation only (no real model, so no genuine answer quality or
-in-session reference resolution yet). No web/RAG, cloud specialists, memory/profile,
-or resource-limit framework — those are later milestones. Not for production
-(personal prototype).
+The qwen3:14b benchmark and full cancellation/partial-work gate remain open.
+No web/RAG, cloud specialists, memory/profile, or full resource-limit framework —
+those are later milestones. Not for production (personal prototype).
 
 ## Layout
 

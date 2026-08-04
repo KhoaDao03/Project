@@ -3,9 +3,9 @@
 Responsibility: abstract "produce text from a bounded prompt" so the application
 never depends on a concrete model runtime.
 
-M1 real vs fake:
-- REAL adapter (Ollama) arrives in M2 and will implement THIS EXACT protocol.
-- M1 ships only `adapters.fake_generalist.FakeGeneralist`, a deterministic fake.
+Runtime adapters:
+- `adapters.ollama_generalist.OllamaGeneralist` is the real localhost adapter.
+- `adapters.fake_generalist.FakeGeneralist` is retained for deterministic tests.
 
 Replacement strategy: because callers depend only on this Protocol, swapping the
 fake for the Ollama adapter in M2 is a composition-root change plus config — no

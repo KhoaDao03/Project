@@ -1,11 +1,10 @@
-# Elly — example configuration (M1 walking skeleton).
+# Elly — development configuration (M2 real local generalist).
 #
 # Copy to `config.local.toml` (gitignored) and adjust locally.
 # Load order (see src/elly/config.py): built-in defaults -> this TOML -> ELLY_* env vars.
 #
-# M1 contains NO secrets and NO provider credentials. Ollama/OpenAI/Brave
-# configuration is intentionally absent and arrives in M2/M4/M5. Do not add
-# API keys here — secrets belong in the OS/environment mechanism only (SEC-004).
+# M2 uses only local Ollama. Do not add API keys here — secrets belong in the
+# OS/environment mechanism only (SEC-004).
 
 [app]
 name = "elly"
@@ -22,11 +21,15 @@ max_input_chars = 20000
 context_window_messages = 20
 
 [generalist]
-# M1 uses a DETERMINISTIC FAKE generalist (no network). This id is a label only;
-# the real Ollama model id is an M2/OQ-03 decision and is NOT set here.
-model_id = "fake-generalist-v1"
-# Advisory max output tokens the fake echoes back in usage metadata.
+provider = "ollama"
+# qwen3:8b is the development/testing default. qwen3:14b is opt-in only.
+model_id = "qwen3:8b"
+base_url = "http://127.0.0.1:11434"
+timeout_seconds = 120
 max_output_tokens = 512
+
+[specialists]
+manifest_dir = "config/specialists"
 
 [log]
 # Structured-log level. Logs are redacted (SEC-007): no message bodies, secrets,

@@ -25,7 +25,7 @@ from __future__ import annotations
 from ..domain import validation
 from ..domain.context import build_context
 from ..domain.enums import ErrorClass, Route, TaskStatus, ValidationStatus
-from ..domain.errors import EllyError, MalformedResultError
+from ..domain.errors import CancelledError, EllyError, MalformedResultError
 from ..domain.models import (
     AuditEvent,
     ConversationOutcome,
@@ -38,7 +38,7 @@ from ..ports.audit import AuditPort
 from ..ports.clock import ClockPort
 from ..ports.generalist import GeneralistPort
 from ..ports.repository import SessionRepositoryPort
-from .response_composer import compose_blocked, compose_success
+from .response_composer import compose_blocked, compose_cancelled, compose_success
 
 
 class ConversationOrchestrator:
@@ -163,6 +163,16 @@ class ConversationOrchestrator:
                 role="assistant", content=text, created_at=self._clock.now()
             )
             self._repository.append_message(request.session_id, assistant_message)
+        except CancelledError as exc:
+            cancelled = ensure_transition(status, TaskStatus.CANCELLED)
+            self._emit(
+                request=request, task_id=task_id, event_type="task.cancelled",
+                status=cancelled, error_class=exc.error_class, detail=exc.summary,
+            )
+            return ConversationOutcome(
+                result=compose_cancelled(task_id=task_id), manifest=manifest,
+                assistant_message=None,
+            )
         except EllyError as exc:
             blocked = ensure_transition(status, TaskStatus.BLOCKED)
             self._emit(

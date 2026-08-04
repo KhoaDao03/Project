@@ -1,9 +1,9 @@
-"""FakeGeneralist — DETERMINISTIC FAKE generalist adapter (M1).
+"""FakeGeneralist — DETERMINISTIC FAKE generalist adapter (test support).
 
 ⚠️ THIS IS A TEST/DEVELOPMENT FAKE, NOT A PRODUCTION CAPABILITY. It does no
 inference and no network I/O. It exists so the M1 walking skeleton can exercise
 the full path (CLI -> orchestrator -> port -> storage/audit) without depending on
-Ollama, which arrives in M2. The real Ollama adapter will implement the same
+Ollama. The real Ollama adapter implements the same
 `GeneralistPort` and replace this via the composition root + config.
 
 Determinism: given the same GeneralistRequest, `generate` returns the same

@@ -1,0 +1,13 @@
+[specialist]
+id = "stock_analysis"
+version = "1.0"
+description = "Evaluates public companies and financial securities."
+capabilities = ["financial_statement_analysis", "valuation", "market_data_retrieval", "risk_analysis"]
+accepted_inputs = ["text", "ticker"]
+requires_current_data = true
+preferred_runtime = "cloud"
+risk_level = "financial_guidance"
+estimated_cost = "medium"
+timeout_seconds = 90
+enabled = true
+allowed_tools = []

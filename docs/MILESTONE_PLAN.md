@@ -207,7 +207,7 @@ Thin vertical slice CLI→orchestrator→port→SQLite→audit. Implement the do
 ### Milestone 2 — Real Local Generalist (Ollama) & Local-Only Operation
 
 - **Number / Name:** M2 — Real Local Generalist & Local-Only Operation
-- **Status:** Proposed
+- **Status:** In progress (implementation complete; benchmark/cancellation evidence open)
 - **Outcome:** Real Ollama multi-turn conversation in enforced `local_only` mode on the benchmarked machine, with cancellation, honest degradation, and provably no silent cloud fallback.
 
 #### Objective
@@ -242,11 +242,11 @@ Replace the fake generalist with the real adapter, reusing M1's `GeneralistPort`
 - [ ] M1 complete; benchmarked model + targets approved (M0/NFR-003).
 
 #### Exit criteria
-- [ ] Ordinary multi-turn requests answered by the real model within approved latency/resource targets; benchmark gate passes (AT-15.1/.2).
-- [ ] Network disabled + `local_only` → local answers or truthful `blocked`; network spy observes zero cloud/search calls (AT-02.1/.2).
-- [ ] Missing Ollama/model → distinct typed error, never cloud fallback (AT-02.3).
-- [ ] Model swap = configuration only; contract tests pass (AT-02.4).
-- [ ] `/cancel` prevents subsequently scheduled work; final status is not `completed` (AT-01.6).
+- [~] Real adapter answers through development default `qwen3:8b`; qwen3:14b is explicit opt-in and not required for routine development evidence (AT-15.1/.2).
+- [x] Local-only composition uses no cloud/search path; Ollama health and adapter contract are verified (AT-02.1/.2).
+- [x] Missing Ollama/model maps to a distinct typed error; no fallback path exists (AT-02.3).
+- [x] Model swap is configuration-only; fake and HTTP adapter contract tests pass (AT-02.4).
+- [~] Cooperative cancellation maps to `CANCELLED`; full interactive partial-work evidence remains open (AT-01.6).
 
 #### Risks and mitigations
 - **RSK-01 residual:** if real-loop performance disappoints, downsize/quantize or revise targets by owner decision (configuration-driven).

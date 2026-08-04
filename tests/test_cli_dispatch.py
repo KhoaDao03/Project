@@ -20,9 +20,13 @@ class CliDispatchTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["ELLY_DB_PATH"] = os.path.join(self._tmp.name, "elly.db")
         os.environ["ELLY_LOG_LEVEL"] = "WARNING"
+        os.environ["ELLY_GENERALIST_PROVIDER"] = "fake"
+        os.environ["ELLY_GENERALIST_MODEL_ID"] = "fake-generalist-v1"
         self.addCleanup(self._tmp.cleanup)
         self.addCleanup(os.environ.pop, "ELLY_DB_PATH", None)
         self.addCleanup(os.environ.pop, "ELLY_LOG_LEVEL", None)
+        self.addCleanup(os.environ.pop, "ELLY_GENERALIST_PROVIDER", None)
+        self.addCleanup(os.environ.pop, "ELLY_GENERALIST_MODEL_ID", None)
         self.cli = Cli.start(build(None))
         self.addCleanup(self.cli.app.close)
 
@@ -43,7 +47,7 @@ class CliDispatchTests(unittest.TestCase):
         self.assertIs(self.cli.session.persistence_mode, PersistenceMode.NO_STORE)
 
     def test_mode_cloud_unavailable(self) -> None:
-        self.assertIn("unavailable in M1", self.cli.dispatch("/mode cloud"))
+        self.assertIn("unavailable in M2", self.cli.dispatch("/mode cloud"))
 
     def test_cancel_unavailable(self) -> None:
         self.assertIn("cancel", self.cli.dispatch("/cancel").lower())

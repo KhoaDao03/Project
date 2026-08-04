@@ -67,7 +67,7 @@ validation** (see §7). Full `content_hash` returns when a local-reader provider
 `claim_id`, response span/text, `support_status` (`direct`|`indirect`|`conflicted`|`unsupported`),
 evidence ids, validation rule/version, display-safe notes. A `known` claim ≠ `unsupported`.
 
-## 5. Specialist contracts — ◻ M5 (DESIGN §6.3)
+## 5. Specialist contracts — foundation ✅ M2; execution ◻ M5 (DESIGN §6.3)
 
 - `SpecialistManifest`: id + contract version, role (`research`|`coding`), capability +
   exclusions, input schema, `SpecialistResult` schema version, provider/model id, prompt
@@ -78,6 +78,10 @@ evidence ids, validation rule/version, display-safe notes. A `known` claim ≠ `
   secret, no tool-authority token.
 - `SpecialistResult`: `status` (Epistemic), `answer` (bounded), `key_evidence` (ids),
   `sources` (ids), `assumptions`, `uncertainties`, `recommended_action?` (AI-007/008).
+
+M2 adds `SpecialistManifest` validation and `SpecialistRegistry` discovery from
+`config/specialists/*.toml`. The registry does not route tasks, invoke providers,
+grant tools, or make a manifest executable; those remain M5 responsibilities.
 
 ## 6. Consent contract — ◻ M5 (DESIGN §6.5, DEC-OQ-06)
 
