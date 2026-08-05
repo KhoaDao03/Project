@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from ..domain.enums import HealthState
@@ -22,11 +24,22 @@ class OllamaGeneralist:
     """
 
     def __init__(self, *, base_url: str = "http://127.0.0.1:11434", timeout_seconds: float = 120.0) -> None:
-        if not base_url.startswith("http://127.0.0.1:"):
-            raise ValueError("Ollama must bind to localhost")
+        parsed = urlsplit(base_url)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("Ollama URL has an invalid port") from exc
+        if (
+            parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or port is None
+            or parsed.username is not None or parsed.password is not None
+            or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
+        ):
+            raise ValueError("Ollama must use an HTTP origin on 127.0.0.1")
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
         self._cancel = threading.Event()
+        self._response_lock = threading.Lock()
+        self._active_response = None
 
     def health(self) -> HealthReport:
         try:
@@ -38,7 +51,23 @@ class OllamaGeneralist:
             return HealthReport(component="generalist(ollama)", state=HealthState.UNAVAILABLE, detail=type(exc).__name__)
 
     def cancel(self) -> None:
+        """Request cancellation and close an active HTTP response to unblock I/O."""
         self._cancel.set()
+        with self._response_lock:
+            response = self._active_response
+        if response is not None:
+            try:
+                # ``HTTPResponse.close()`` alone may wait for a buffered read in
+                # another thread. Shutting down the owned localhost socket first
+                # makes cooperative cancellation bounded.
+                sock = response.fp.raw._sock  # type: ignore[attr-defined]
+                sock.shutdown(socket.SHUT_RDWR)
+            except (AttributeError, OSError):
+                pass
+            try:
+                response.close()
+            except OSError:
+                pass
 
     def generate(self, request: GeneralistRequest) -> GeneralistResponse:
         if self._cancel.is_set():
@@ -50,20 +79,27 @@ class OllamaGeneralist:
         parts: list[str] = []
         try:
             response = urlopen(Request(self._base_url + "/api/generate", data=payload, headers={"Content-Type": "application/json"}, method="POST"), timeout=self._timeout)
-            with response:
-                for raw_line in response:
-                    if self._cancel.is_set():
-                        raise CancelledError("local generation cancelled", partial_work="".join(parts).strip())
-                    try:
-                        item: dict[str, Any] = json.loads(raw_line)
-                    except json.JSONDecodeError as exc:
-                        raise MalformedResultError("Ollama returned invalid JSON") from exc
-                    if item.get("error"):
-                        self._raise_provider_error(str(item["error"]))
-                    value = item.get("response", "")
-                    if not isinstance(value, str):
-                        raise MalformedResultError("Ollama response field was not text")
-                    parts.append(value)
+            with self._response_lock:
+                self._active_response = response
+            try:
+                with response:
+                    for raw_line in response:
+                        if self._cancel.is_set():
+                            raise CancelledError("local generation cancelled", partial_work="".join(parts).strip())
+                        try:
+                            item: dict[str, Any] = json.loads(raw_line)
+                        except json.JSONDecodeError as exc:
+                            raise MalformedResultError("Ollama returned invalid JSON") from exc
+                        if item.get("error"):
+                            self._raise_provider_error(str(item["error"]))
+                        value = item.get("response", "")
+                        if not isinstance(value, str):
+                            raise MalformedResultError("Ollama response field was not text")
+                        parts.append(value)
+            finally:
+                with self._response_lock:
+                    if self._active_response is response:
+                        self._active_response = None
         except CancelledError:
             raise
         except KeyboardInterrupt as exc:
@@ -74,7 +110,11 @@ class OllamaGeneralist:
             if 500 <= exc.code < 600:
                 raise TransientProviderError("Ollama returned a temporary provider error") from exc
             raise PermanentProviderError("Ollama rejected the local request") from exc
-        except (URLError, ConnectionError, OSError) as exc:
+        except (URLError, ConnectionError, OSError, ValueError, AttributeError) as exc:
+            if self._cancel.is_set():
+                raise CancelledError(
+                    "local generation cancelled", partial_work="".join(parts).strip()
+                ) from exc
             raise PermanentProviderError("Ollama is unavailable") from exc
         except TimeoutError as exc:
             raise ProviderTimeoutError("Ollama generation timed out") from exc

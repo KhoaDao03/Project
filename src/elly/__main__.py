@@ -8,6 +8,7 @@ configuration error it fails closed with a clear message and non-zero exit.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import sys
 
 from .composition import build
@@ -17,15 +18,22 @@ from .presentation.cli import Cli
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Build the configured application, run the CLI, and return a process code."""
     # Load local secrets/env from .env (SEC-004): non-overriding, no-op if absent.
     load_dotenv()
 
-    parser = argparse.ArgumentParser(prog="elly", description="Elly M1 walking skeleton")
-    parser.add_argument("--config", default=None, help="path to a TOML config file (optional)")
+    parser = argparse.ArgumentParser(prog="elly", description="Elly local-first assistant")
+    parser.add_argument(
+        "--config", default=None,
+        help="path to a TOML config file (defaults to ./config.local.toml when present)",
+    )
     args = parser.parse_args(argv)
+    config_path = args.config
+    if config_path is None and Path("config.local.toml").is_file():
+        config_path = "config.local.toml"
 
     try:
-        app = build(args.config)
+        app = build(config_path)
     except (ConfigInvalidError, StorageFailureError) as exc:
         print(f"Startup failed: {exc.summary}", file=sys.stderr)
         return 2

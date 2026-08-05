@@ -10,6 +10,13 @@ from elly.guardrails.cost import FakeCostLedger
 from elly.guardrails.limits import LimitPolicy, ReservationLedger
 from elly.guardrails.retry import CircuitBreaker, RetryPolicy
 from elly.guardrails.executor import BoundedTaskExecutor
+from elly.application.research import ResearchPipeline
+from elly.research.fake_provider import FixtureWebResearchProvider
+
+
+class _Clock:
+    def now(self):
+        return __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
 
 
 class LimitLedgerTests(unittest.TestCase):
@@ -43,6 +50,16 @@ class LimitLedgerTests(unittest.TestCase):
 
 
 class RetryCircuitCostTests(unittest.TestCase):
+    def test_local_override_does_not_reserve_cloud_cost(self) -> None:
+        controller = GuardrailController(
+            policy=LimitPolicy(monthly_budget_usd=1),
+            tool_timeout_seconds=1,
+            total_timeout_seconds=2,
+            provider_call_cost_usd=0.01,
+        )
+        self.assertEqual(controller.execute(lambda: "local", cost_usd=0.0), "local")
+        self.assertEqual(controller.cost.reserved_usd, 0.0)
+
     def test_only_transient_failure_retries_with_bounded_deterministic_delay(self) -> None:
         sleeps: list[float] = []
         attempts = 0
@@ -97,6 +114,37 @@ class RetryCircuitCostTests(unittest.TestCase):
             ledger.reserve(0.01)
         ledger.reconcile(1.0, 0.5)
         self.assertEqual(ledger.reserved_usd, 0.5)
+        self.assertEqual("50%", ledger.warning_level)
+
+    def test_each_retry_attempt_retains_its_conservative_cost(self) -> None:
+        attempts = 0
+
+        def operation() -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TransientProviderError("temporary")
+            return "ok"
+
+        controller = GuardrailController(
+            policy=LimitPolicy(max_provider_calls=2, max_retries=1, monthly_budget_usd=1),
+            tool_timeout_seconds=1, total_timeout_seconds=2,
+            provider_call_cost_usd=0.25, sleep=lambda _delay: None,
+        )
+        self.assertEqual("ok", controller.execute(operation))
+        self.assertEqual(0.5, controller.request_cost_usd)
+        self.assertEqual(0.5, controller.cost.reserved_usd)
+
+    def test_rejected_cost_reservation_does_not_reduce_prior_spend(self) -> None:
+        controller = GuardrailController(
+            policy=LimitPolicy(monthly_budget_usd=0.25),
+            tool_timeout_seconds=1, total_timeout_seconds=1,
+            provider_call_cost_usd=0.25,
+        )
+        self.assertEqual("ok", controller.execute(lambda: "ok"))
+        with self.assertRaises(LimitExceededError):
+            controller.for_request().execute(lambda: "must not run")
+        self.assertEqual(0.25, controller.cost.reserved_usd)
 
     def test_timeout_requests_cancellation_and_returns_typed_failure(self) -> None:
         cancelled = threading.Event()
@@ -112,6 +160,42 @@ class RetryCircuitCostTests(unittest.TestCase):
         with self.assertRaises(ProviderTimeoutError):
             controller.execute(operation, cancel=cancelled.set)
         self.assertTrue(cancelled.is_set())
+
+    def test_total_timeout_caps_a_longer_tool_timeout(self) -> None:
+        cancelled = threading.Event()
+        controller = GuardrailController(
+            policy=LimitPolicy(max_provider_calls=1),
+            tool_timeout_seconds=1,
+            total_timeout_seconds=0.01,
+        )
+        started = time.monotonic()
+        with self.assertRaises(ProviderTimeoutError):
+            controller.execute(lambda: time.sleep(0.1), cancel=cancelled.set)
+        self.assertLess(time.monotonic() - started, 0.05)
+        self.assertTrue(cancelled.is_set())
+
+    def test_timeout_retries_only_with_cancellation_support(self) -> None:
+        attempts = 0
+
+        def timed_out() -> None:
+            nonlocal attempts
+            attempts += 1
+            raise ProviderTimeoutError("timed out")
+
+        controller = GuardrailController(
+            policy=LimitPolicy(max_provider_calls=2, max_retries=1),
+            tool_timeout_seconds=1, total_timeout_seconds=2, sleep=lambda _delay: None,
+        )
+        with self.assertRaises(ProviderTimeoutError):
+            controller.execute(timed_out, cancel=lambda: None)
+        self.assertEqual(2, attempts)
+        self.assertEqual(1, controller.retry_count)
+
+        attempts = 0
+        without_cancel = controller.for_request()
+        with self.assertRaises(ProviderTimeoutError):
+            without_cancel.execute(timed_out)
+        self.assertEqual(1, attempts)
 
     def test_provider_call_ceiling_blocks_the_next_call(self) -> None:
         calls = 0
@@ -151,6 +235,20 @@ class RetryCircuitCostTests(unittest.TestCase):
         self.assertTrue(first.result(timeout=1))
         self.assertEqual(second.result(timeout=1), "queued")
         executor.shutdown()
+
+    def test_nested_research_uses_callers_shared_request_ledger(self) -> None:
+        controller = GuardrailController(
+            policy=LimitPolicy(max_provider_calls=1),
+            tool_timeout_seconds=1, total_timeout_seconds=1,
+        )
+        controller.ledger.reserve(provider_calls=1)
+        pipeline = ResearchPipeline(
+            provider=FixtureWebResearchProvider(), clock=_Clock(),
+            max_results=1, timeout_seconds=1,
+        )
+        with self.assertRaises(LimitExceededError):
+            pipeline.execute("latest public result", request_guardrails=controller)
+        self.assertEqual([], pipeline.provider.calls)
 
 
 if __name__ == "__main__":

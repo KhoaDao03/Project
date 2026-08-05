@@ -17,6 +17,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.generalist_model_id, "qwen3:8b")
         self.assertEqual(cfg.generalist_provider, "ollama")
         self.assertEqual(cfg.ollama_base_url, "http://127.0.0.1:11434")
+        self.assertEqual(cfg.session_retention_days, 30)
+        self.assertEqual(cfg.evidence_retention_days, 7)
+        self.assertEqual(cfg.audit_retention_days, 90)
+        self.assertEqual(cfg.provider_call_cost_usd, 0.01)
+        self.assertEqual(cfg.specialist_provider, "openai")
+        self.assertEqual(cfg.specialist_model_id("coding"), "gpt-5.6-luna")
+        self.assertEqual(cfg.consent_max_cost_usd, 0.25)
+        self.assertEqual(cfg.research_max_output_tokens, 1024)
 
     def test_development_config_selects_eight_b(self) -> None:
         cfg = load_config("config.example.toml")
@@ -38,10 +46,62 @@ class ConfigTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_central_tables_control_all_runtime_choices(self) -> None:
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as fh:
+            fh.write(
+                "[providers]\n"
+                "generalist='fake'\nresearch='fixtures'\nspecialists='fake'\n"
+                "[models]\n"
+                "generalist='local-one'\nresearch='web-one'\n"
+                "specialist_default='cloud-one'\n"
+                "[models.specialists]\ncoding='cloud-code'\n"
+                "[pricing]\nmonthly_budget_usd=7\n"
+                "remote_call_reservation_usd=0.07\nconsent_max_cost_usd=0.4\n"
+            )
+            path = fh.name
+        try:
+            cfg = load_config(path)
+            self.assertEqual(cfg.generalist_provider, "fake")
+            self.assertEqual(cfg.research_provider, "fixtures")
+            self.assertEqual(cfg.specialist_provider, "fake")
+            self.assertEqual(cfg.generalist_model_id, "local-one")
+            self.assertEqual(cfg.research_model_id, "web-one")
+            self.assertEqual(cfg.specialist_model_id("coding"), "cloud-code")
+            self.assertEqual(cfg.specialist_model_id("research"), "cloud-one")
+            self.assertEqual(cfg.monthly_budget_usd, 7)
+            self.assertEqual(cfg.remote_call_reservation_usd, 0.07)
+            self.assertEqual(cfg.consent_max_cost_usd, 0.4)
+        finally:
+            os.unlink(path)
+
+    def test_central_choice_overrides_legacy_duplicate_during_migration(self) -> None:
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as fh:
+            fh.write(
+                "[generalist]\nprovider='ollama'\nmodel_id='legacy-model'\n"
+                "[providers]\ngeneralist='fake'\n"
+                "[models]\ngeneralist='central-model'\n"
+            )
+            path = fh.name
+        try:
+            cfg = load_config(path)
+            self.assertEqual(cfg.generalist_provider, "fake")
+            self.assertEqual(cfg.generalist_model_id, "central-model")
+        finally:
+            os.unlink(path)
+
     def test_env_override(self) -> None:
         os.environ["ELLY_MAX_INPUT_CHARS"] = "42"
         self.addCleanup(os.environ.pop, "ELLY_MAX_INPUT_CHARS", None)
         self.assertEqual(load_config(None).max_input_chars, 42)
+
+    def test_research_output_limit_is_configurable(self) -> None:
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as fh:
+            fh.write("[research]\nmax_output_tokens = 1536\n")
+            path = fh.name
+        try:
+            self.assertEqual(load_config(path).research_max_output_tokens, 1536)
+        finally:
+            os.unlink(path)
 
     def test_invalid_log_level_fails_closed(self) -> None:
         os.environ["ELLY_LOG_LEVEL"] = "LOUD"
@@ -68,6 +128,18 @@ class ConfigTests(unittest.TestCase):
     def test_non_numeric_guardrail_fails_closed(self) -> None:
         os.environ["ELLY_TOOL_TIMEOUT_SECONDS"] = "not-a-number"
         self.addCleanup(os.environ.pop, "ELLY_TOOL_TIMEOUT_SECONDS", None)
+        with self.assertRaises(ConfigInvalidError):
+            load_config(None)
+
+    def test_ollama_url_cannot_smuggle_a_remote_host_in_userinfo(self) -> None:
+        os.environ["ELLY_OLLAMA_BASE_URL"] = "http://127.0.0.1:11434@evil.example"
+        self.addCleanup(os.environ.pop, "ELLY_OLLAMA_BASE_URL", None)
+        with self.assertRaises(ConfigInvalidError):
+            load_config(None)
+
+    def test_empty_model_ids_fail_closed(self) -> None:
+        os.environ["ELLY_RESEARCH_MODEL_ID"] = "   "
+        self.addCleanup(os.environ.pop, "ELLY_RESEARCH_MODEL_ID", None)
         with self.assertRaises(ConfigInvalidError):
             load_config(None)
 

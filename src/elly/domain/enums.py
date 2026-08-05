@@ -37,11 +37,14 @@ class PersistenceMode(str, Enum):
 class Route(str, Enum):
     """Which execution path handled the request (AI-005).
 
-    M1 only ever routes locally. RESEARCH (M4) and CODING (M5) are intentionally
-    absent so the skeleton cannot imply capabilities it does not have.
+    Local conversation and M4 hosted web research are implemented; coding remains
+    deferred to M5.
     """
 
     LOCAL_GENERALIST = "local_generalist"
+    WEB_RESEARCH = "web_research"
+    RESEARCH_SPECIALIST = "research_specialist"
+    CODING_SPECIALIST = "coding_specialist"
 
 
 class TaskStatus(str, Enum):

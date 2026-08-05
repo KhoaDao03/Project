@@ -13,7 +13,9 @@ provider-specific exceptions never cross the port boundary.
 
 Tests point `db_path` at ":memory:" for a fast, isolated real database.
 
-Non-responsibilities: retention/expiry jobs and backups are OPS-004/M6, not here.
+M6 adds profile/session retention, durable redacted audit metadata, and source/task
+metadata. Backup encryption remains in `operations.py` so storage transactions stay
+inside this adapter.
 """
 
 from __future__ import annotations
@@ -24,9 +26,10 @@ from pathlib import Path
 
 from ..domain.enums import CloudMode, PersistenceMode
 from ..domain.errors import StorageFailureError
-from ..domain.models import Message, SessionRecord
+from ..domain.models import AuditEvent, Message, SessionRecord
+from ..memory import ProfileItem
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _MIGRATION_V1 = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -58,6 +61,38 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 """
 
+_MIGRATION_V2 = """
+CREATE TABLE IF NOT EXISTS profile_items (
+    item_id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
+    source TEXT NOT NULL, sensitivity TEXT NOT NULL, confirmed INTEGER NOT NULL CHECK (confirmed=1),
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT
+);
+CREATE TABLE IF NOT EXISTS profile_tombstones (
+    item_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, session_id TEXT NOT NULL,
+    event_type TEXT NOT NULL, at TEXT NOT NULL, route TEXT, task_status TEXT,
+    error_class TEXT, detail TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_task ON audit_events(task_id, id);
+CREATE TABLE IF NOT EXISTS task_sources (
+    task_id TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY(task_id, source)
+);
+"""
+_MIGRATION_V2_STATEMENTS = tuple(statement.strip() for statement in _MIGRATION_V2.split(";") if statement.strip())
+_PROFILE_TABLES = {
+    "profile_items": """CREATE TABLE profile_items (
+        item_id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
+        source TEXT NOT NULL, sensitivity TEXT NOT NULL, confirmed INTEGER NOT NULL CHECK (confirmed=1),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT
+    )""",
+    "profile_tombstones": """CREATE TABLE profile_tombstones (
+        item_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL
+    )""",
+}
+
 
 def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
@@ -85,13 +120,26 @@ class SqliteSessionRepository:
 
     def apply_migrations(self) -> None:
         try:
-            with self._conn:
-                self._conn.executescript(_MIGRATION_V1)
-                row = self._conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()
-                if row is None:
-                    self._conn.execute(
-                        "INSERT INTO schema_meta (id, version) VALUES (1, ?)", (_SCHEMA_VERSION,)
-                    )
+            # V1 creates the original database when needed. V2 is executed one
+            # statement at a time inside an explicit transaction: a failed step
+            # rolls back and the schema_meta version is not advanced.
+            self._conn.executescript(_MIGRATION_V1)
+            row = self._conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()
+            if row is None or row[0] < _SCHEMA_VERSION:
+                self._conn.execute("BEGIN")
+                try:
+                    for statement in _MIGRATION_V2_STATEMENTS:
+                        self._conn.execute(statement)
+                    if row is None:
+                        self._conn.execute(
+                            "INSERT INTO schema_meta (id, version) VALUES (1, ?)", (_SCHEMA_VERSION,)
+                        )
+                    else:
+                        self._conn.execute("UPDATE schema_meta SET version=? WHERE id=1", (_SCHEMA_VERSION,))
+                    self._conn.commit()
+                except sqlite3.Error:
+                    self._conn.rollback()
+                    raise
         except sqlite3.Error as exc:
             raise StorageFailureError(f"migration failed: {type(exc).__name__}") from exc
 
@@ -188,6 +236,194 @@ class SqliteSessionRepository:
         except sqlite3.Error as exc:
             raise StorageFailureError(f"task lookup failed: {type(exc).__name__}") from exc
         return row[0] if row else None
+
+    # ---- M6 profile/data controls ---------------------------------------
+
+    def add_profile_item(self, item: ProfileItem) -> None:
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO profile_items(item_id,key,value,source,sensitivity,confirmed,created_at,updated_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (item.item_id, item.key, item.value, item.source, item.sensitivity, 1, _iso(item.created_at), _iso(item.updated_at), _iso(item.expires_at) if item.expires_at else None),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise StorageFailureError("profile item already exists") from exc
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"add profile failed: {type(exc).__name__}") from exc
+
+    def list_profile_items(self) -> list[ProfileItem]:
+        try:
+            rows = self._conn.execute("SELECT item_id,key,value,source,sensitivity,confirmed,created_at,updated_at,expires_at FROM profile_items ORDER BY key,item_id").fetchall()
+            return [ProfileItem(r[0], r[1], r[2], r[3], r[4], bool(r[5]), _parse(r[6]), _parse(r[7]), _parse(r[8]) if r[8] else None) for r in rows]
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"list profile failed: {type(exc).__name__}") from exc
+
+    def get_profile_item(self, item_id: str) -> ProfileItem | None:
+        return next((item for item in self.list_profile_items() if item.item_id == item_id), None)
+
+    def update_profile_item(self, item: ProfileItem) -> None:
+        try:
+            with self._conn:
+                cursor = self._conn.execute(
+                    "UPDATE profile_items SET key=?,value=?,sensitivity=?,updated_at=?,expires_at=? WHERE item_id=?",
+                    (item.key, item.value, item.sensitivity, _iso(item.updated_at), _iso(item.expires_at) if item.expires_at else None, item.item_id),
+                )
+                if cursor.rowcount != 1:
+                    raise StorageFailureError("profile item not found")
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"update profile failed: {type(exc).__name__}") from exc
+
+    def delete_profile_item(self, item_id: str, at: datetime) -> bool:
+        try:
+            with self._conn:
+                cursor = self._conn.execute("DELETE FROM profile_items WHERE item_id=?", (item_id,))
+                if cursor.rowcount:
+                    self._conn.execute("INSERT OR REPLACE INTO profile_tombstones(item_id,deleted_at) VALUES (?,?)", (item_id, _iso(at)))
+                    return True
+                return False
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"delete profile failed: {type(exc).__name__}") from exc
+
+    def purge_expired_profile(self, now: datetime) -> int:
+        try:
+            with self._conn:
+                cursor = self._conn.execute("DELETE FROM profile_items WHERE expires_at IS NOT NULL AND expires_at <= ?", (_iso(now),))
+                return cursor.rowcount
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"purge profile failed: {type(exc).__name__}") from exc
+
+    def quarantine_profile_store(self, at: datetime) -> str:
+        """Move corrupt profile tables aside and recreate empty profile tables.
+
+        Only profile tables are isolated; sessions, tasks, audit records, and
+        versioned behavior remain available. The quarantine name contains only
+        UTC digits, so it is safe to interpolate as an SQLite identifier.
+        """
+        suffix = at.astimezone(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+        try:
+            with self._conn:
+                for name, create_sql in _PROFILE_TABLES.items():
+                    exists = self._conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+                    ).fetchone()
+                    if exists:
+                        quarantine = f"{name}_quarantine_{suffix}"
+                        self._conn.execute(f'ALTER TABLE "{name}" RENAME TO "{quarantine}"')
+                    self._conn.execute(create_sql)
+            return suffix
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"profile quarantine failed: {type(exc).__name__}") from exc
+
+    def list_sessions(self) -> list[SessionRecord]:
+        try:
+            rows = self._conn.execute("SELECT session_id,persistence_mode,cloud_mode,created_at FROM sessions ORDER BY created_at").fetchall()
+            return [SessionRecord(r[0], PersistenceMode(r[1]), CloudMode(r[2]), _parse(r[3])) for r in rows]
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"list sessions failed: {type(exc).__name__}") from exc
+
+    def delete_session(self, session_id: str) -> bool:
+        try:
+            with self._conn:
+                # Foreign keys are enabled; delete dependents explicitly so
+                # user-requested deletion is complete and transactional.
+                self._conn.execute("DELETE FROM task_sources WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id=?)", (session_id,))
+                self._conn.execute("DELETE FROM audit_events WHERE session_id=?", (session_id,))
+                self._conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
+                self._conn.execute("DELETE FROM tasks WHERE session_id=?", (session_id,))
+                cursor = self._conn.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+                return bool(cursor.rowcount)
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"delete session failed: {type(exc).__name__}") from exc
+
+    def purge_sessions(self, before: datetime) -> int:
+        """Delete expired sessions and all dependent task, source, and audit rows."""
+        try:
+            with self._conn:
+                rows = self._conn.execute("SELECT session_id FROM sessions WHERE created_at < ?", (_iso(before),)).fetchall()
+                for (session_id,) in rows:
+                    self._conn.execute(
+                        "DELETE FROM task_sources WHERE task_id IN "
+                        "(SELECT task_id FROM tasks WHERE session_id=?)", (session_id,)
+                    )
+                    self._conn.execute("DELETE FROM audit_events WHERE session_id=?", (session_id,))
+                    self._conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
+                    self._conn.execute("DELETE FROM tasks WHERE session_id=?", (session_id,))
+                    self._conn.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+                return len(rows)
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"purge sessions failed: {type(exc).__name__}") from exc
+
+    def purge_task_sources(self, before: datetime) -> int:
+        """Delete source/evidence metadata older than DEC-OQ-08 retention."""
+        try:
+            with self._conn:
+                cursor = self._conn.execute(
+                    "DELETE FROM task_sources WHERE created_at < ?", (_iso(before),)
+                )
+                return cursor.rowcount
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"purge sources failed: {type(exc).__name__}") from exc
+
+    def purge_audit_events(self, before: datetime) -> int:
+        """Delete redacted audit metadata older than DEC-OQ-08 retention."""
+        try:
+            with self._conn:
+                cursor = self._conn.execute(
+                    "DELETE FROM audit_events WHERE at < ?", (_iso(before),)
+                )
+                return cursor.rowcount
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"purge audit failed: {type(exc).__name__}") from exc
+
+    def healthcheck(self) -> None:
+        """Verify the connection and every required schema-v2 table without mutation."""
+        required = {
+            "sessions", "messages", "tasks", "profile_items",
+            "audit_events", "task_sources",
+        }
+        try:
+            self._conn.execute("SELECT 1").fetchone()
+            rows = self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"storage healthcheck failed: {type(exc).__name__}") from exc
+        missing = required - {row[0] for row in rows}
+        if missing:
+            raise StorageFailureError("storage healthcheck found an incomplete schema")
+
+    # ---- M6 durable trace/source metadata -------------------------------
+
+    def append_audit(self, event: AuditEvent) -> None:
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO audit_events(task_id,session_id,event_type,at,route,task_status,error_class,detail) VALUES (?,?,?,?,?,?,?,?)",
+                    (event.task_id, event.session_id, event.event_type, _iso(event.at), event.route.value if event.route else None, event.task_status.value if event.task_status else None, event.error_class.value if event.error_class else None, event.detail),
+                )
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"append audit failed: {type(exc).__name__}") from exc
+
+    def audit_by_task(self, task_id: str) -> list[AuditEvent]:
+        try:
+            from ..domain.enums import ErrorClass, Route, TaskStatus
+            rows = self._conn.execute("SELECT task_id,session_id,event_type,at,route,task_status,error_class,detail FROM audit_events WHERE task_id=? ORDER BY id", (task_id,)).fetchall()
+            return [AuditEvent(r[0], r[1], r[2], _parse(r[3]), Route(r[4]) if r[4] else None, TaskStatus(r[5]) if r[5] else None, ErrorClass(r[6]) if r[6] else None, r[7]) for r in rows]
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"query audit failed: {type(exc).__name__}") from exc
+
+    def add_task_source(self, task_id: str, source: str, at: datetime) -> None:
+        try:
+            with self._conn:
+                self._conn.execute("INSERT OR IGNORE INTO task_sources(task_id,source,created_at) VALUES (?,?,?)", (task_id, source, _iso(at)))
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"add source failed: {type(exc).__name__}") from exc
+
+    def task_sources(self, task_id: str) -> tuple[str, ...]:
+        try:
+            return tuple(row[0] for row in self._conn.execute("SELECT source FROM task_sources WHERE task_id=? ORDER BY source", (task_id,)).fetchall())
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"query sources failed: {type(exc).__name__}") from exc
 
     def recent_messages(self, session_id: str, limit: int) -> list[Message]:
         if limit <= 0:

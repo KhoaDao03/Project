@@ -128,6 +128,19 @@ validation).** The
 AI-002/ADR-004 relaxation is a documented, owner-accepted **scoped exception** for the
 web_search tool; app-side validation mitigates SEC-006/DATA-003 as above.
 
+### DEC-M4-02 — Qualified hosted summaries without claim passages *(Owner-approved, 2026-08-05)*
+
+When hosted research returns at least one relevant, application-validated citation
+but no claim-supporting source passage, Elly may display the provider's answer only
+inside an explicit **Unverified provider summary** region. The result is
+`inferred`, carries no verified claim bindings, and separately states that verified
+facts are absent. Conflicting summaries remain `unknown`; invalid/no-source results
+remain `unknown`. Instruction-shaped lines, control characters, and free-form URLs
+are removed, and only application-validated citations render as links. This
+provides a useful qualified response without treating citation metadata as proof.
+
+*Related:* AI-010/011/012, UX-001, DATA-003, DEC-OQ-07.
+
 ### DEC-OQ-08 — Storage / retention / recovery *(Approved)*
 Adopt DESIGN defaults: **SQLite (WAL)** with OS/disk protection; retention —
 **session bodies 30 d, evidence passages 7 d, audit metadata 90 d, confirmed profile
@@ -146,7 +159,33 @@ required abstention/blocked 100%; relevant evidence in top set ≥90%; concision
 avg ≥4/5 with no safety-critical item <4; hardware thresholds from the NFR-003
 benchmark.** *Affects:* NFR-003/004, AI-005/008/010/012. *Gates M7.*
 
+### DEC-M7-01 — Conservative cloud reservation pricing *(Owner-provided rates, applied 2026-08-05)*
+
+The provided remote text rates are input `$0.20/1M tokens`, cached input
+`$0.02/1M tokens`, and output `$1.20/1M tokens`. The shared guardrail ledger
+currently reserves a fixed amount per attempted remote call rather than billing
+provider token usage directly. Configure `[pricing].remote_call_reservation_usd = 0.01` and a
+`$10/month` ceiling as a conservative development reservation. This exceeds the
+token-only estimate for the bounded request envelope and leaves allowance for an
+unspecified tool-call fee. Local Ollama calls remain zero-cost. Once the exact
+search/computer-use fee is known, this reservation must be recalibrated and the
+decision amended; it must not be silently set back to zero.
+
 ---
+
+### DEC-M7-02 — Honest claim support and prototype backup encryption *(Owner-approved, 2026-08-05)*
+
+Research remains conservative: a validated citation URL or provider prose alone
+does not establish claim support. When no selected evidence contains a direct safe
+support passage, the application returns `unknown`, emits no claims, and does not
+upgrade the result to `known`. A claim-support-capable provider response may be
+added later without weakening this fail-closed behavior.
+
+For the personal prototype, the owner accepts the existing basic authenticated
+backup envelope in `operations.py` as sufficient to demonstrate backup/restore.
+A vetted AEAD/key-management dependency is deferred to a later version and remains
+a production prerequisite. This does not represent the prototype construction as
+production-grade cryptography.
 
 ## Still open
 
@@ -154,6 +193,18 @@ benchmark.** *Affects:* NFR-003/004, AI-005/008/010/012. *Gates M7.*
   not required for V1 build.
 
 ## M2 operating amendments
+
+### DEC-M5-01 — Privacy-class mapping for cloud specialists *(Owner-approved, 2026-08-04)*
+
+For M5, map the approved three-tier privacy policy as follows: `local` is treated as
+private/owner-specific and is not sent by default; `remote_allowed` is public/approved
+and may proceed in `cloud_permitted`; `restricted` is secret/highly sensitive and is
+never sent to a cloud provider; `unclassified` fails closed. Local-class payloads
+require one-time exact consent bound to the payload hash, provider, model, purpose,
+categories, expiry, and maximum reserved cost. This resolves the DEC-OQ-06 mapping
+flag without changing the local-only default.
+
+*Related:* AI-014, SEC-001/002/004, AT-09, AT-10.5/.6.
 
 ### DEC-M2-01 — Local model profiles *(Owner-directed, 2026-08-04)*
 

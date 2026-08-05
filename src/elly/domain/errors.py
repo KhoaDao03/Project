@@ -55,6 +55,16 @@ class PermissionDeniedError(EllyError):
     error_class = ErrorClass.PERMISSION_DENIED
 
 
+class ConsentRequiredError(EllyError):
+    """A cloud call is eligible but awaits an exact owner approval."""
+
+    error_class = ErrorClass.PERMISSION_DENIED
+
+    def __init__(self, summary: str, *, proposal: object) -> None:
+        super().__init__(summary)
+        self.proposal = proposal
+
+
 class StorageFailureError(EllyError):
     """Persistence transaction failed; no hidden continuation (DATA-001)."""
 
@@ -73,6 +83,18 @@ class CircuitOpenError(EllyError):
     error_class = ErrorClass.PERMANENT_PROVIDER
 
 
+class UnsafeUrlError(EllyError):
+    """A provider citation failed application-side URL policy (SEC-006)."""
+
+    error_class = ErrorClass.UNSAFE_URL
+
+
+class UnsupportedContentError(EllyError):
+    """A provider returned content outside the approved evidence contract."""
+
+    error_class = ErrorClass.UNSUPPORTED_CONTENT
+
+
 class MalformedResultError(EllyError):
     """A provider/model result violated its contract (AI-007/AI-011)."""
 
@@ -89,6 +111,22 @@ class PermanentProviderError(EllyError):
     """A provider failed unrecoverably (e.g., unavailable) (NFR-002)."""
 
     error_class = ErrorClass.PERMANENT_PROVIDER
+
+
+class AuthenticationProviderError(PermanentProviderError):
+    """Provider credentials are missing, invalid, or unauthorized."""
+
+
+class ModelUnavailableError(PermanentProviderError):
+    """The configured provider model does not exist or is inaccessible."""
+
+
+class ProviderQuotaError(PermanentProviderError):
+    """The account has no usable provider quota; immediate retry is unsafe."""
+
+
+class RateLimitProviderError(TransientProviderError):
+    """The provider rate-limited a call that may be retried under policy."""
 
 
 class ProviderTimeoutError(EllyError):

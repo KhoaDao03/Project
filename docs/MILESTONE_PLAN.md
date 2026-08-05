@@ -262,7 +262,7 @@ Replace the fake generalist with the real adapter, reusing M1's `GeneralistPort`
 ### Milestone 3 — Guardrail Spine: Limits, Retry/Circuit, Failure & Cancellation
 
 - **Number / Name:** M3 — Guardrail Spine
-- **Status:** **Complete (2026-08-04)** — guardrails, retry/circuit, fake cost, timeout/cancellation, and restart interruption implemented and tested.
+- **Status:** **Reopened by independent verification (2026-08-04); owner pricing pending** — shared per-task accounting, retry charging, warnings, and correlated usage traces are repaired. Substantive cloud cost enforcement still requires an owner-approved nonzero price/reservation input (V1-015); V1-016 is resolved for the implemented routes.
 - **Outcome:** All configurable hard limits, timeout/retry/backoff/circuit-breaking, typed failure/partial handling, cost-reservation scaffolding, and restart-interruption are enforced deterministically and demonstrable through CLI limit, cancel, and failure-injection scenarios.
 
 #### Objective
@@ -298,9 +298,9 @@ Centralize limits as a domain reservation service consulted before every resourc
 - [x] M2 complete; error taxonomy frozen (M0).
 
 #### Exit criteria
-- [x] Every implemented M3 local/provider limit enforced with boundary + atomic concurrency tests passing (AT-11.1/.2).
+- [ ] Every approved limit enforced across one correlated task with complete boundary + atomic concurrency evidence (AT-11.1/.2); primitive ledgers pass, nested workflow accounting remains incomplete.
 - [x] Transient-only retry with bounded backoff/jitter; permanent/unknown never auto-retry; circuit opens on repeated failure (AT-11.3/.4).
-- [x] Budget reserved before and reconciled after a (fake-priced) call; over-budget call prevented (AT-11.5/.6).
+- [ ] Budget reserved and reconciled for real cloud calls; the default zero-price estimate does not substantively enforce the monthly budget (AT-11.5/.6).
 - [x] Invalid/missing limits fail closed and disable startup capability (AT-11.7).
 - [x] Restart marks active tasks `interrupted` with zero automatic external replays (AT-14.3).
 - [x] Failure/cancellation boundaries name the component, preserve received partial work where available, and emit no global success (AT-14.1).
@@ -319,52 +319,57 @@ Centralize limits as a domain reservation service consulted before every resourc
 ### Milestone 4 — Web Research, Evidence & Epistemic Honesty
 
 - **Number / Name:** M4 — Web Research, Evidence & Epistemic Honesty
-- **Status:** Proposed
-- **Outcome:** Current-information questions produce claim-linked citations or an honest `unknown`/`blocked`, proven first entirely against **web fixtures** (RAG, SSRF, prompt injection, conflict, freshness) and then confirmed with a small **live Brave + page-reader** smoke.
+- **Status:** **Reopened by independent verification (2026-08-04); live claim contract pending** — deterministic relevance/reliability ranking, freshness, deduplication, token eviction, and conflict abstention are repaired. Hosted annotations still do not provide claim-supporting passages, so the live path honestly returns `unknown` pending an owner provider/contract choice (V1-017).
+- **Outcome:** Current-information questions produce claim-linked, application-validated provider citations or an honest `unknown`/`blocked`, proven against deterministic fixtures and confirmed with a live OpenAI hosted `web_search` smoke.
 
 #### Objective
-Deliver the research value proposition and, more importantly, prove the two hardest correctness/safety areas — RAG grounding (RSK-04: relevant-looking but false/stale content) and untrusted-web defense (RSK-05: SSRF/prompt injection) — under fully deterministic conditions before any live network variability. This is the milestone where epistemic honesty becomes real (evidence-driven `known/inferred/unknown/blocked`). **You learn** retrieval ranking, claim-to-evidence binding, and why the application treats page content as data, never instructions.
+Deliver evidence-grounded status and citation-boundary safety under deterministic conditions before live provider variability. Under DEC-OQ-07, the initial path is hosted OpenAI `web_search`; application-side citation validation remains mandatory while page-body retrieval and full local-reader controls are deferred.
 
 #### User-visible or demonstrable outcome
-Ask a current-information question → the freshness detector routes to research → search + selected-page reads (fixtures) → evidence objects with provenance/freshness → minimum-sufficient evidence selected, duplicates collapsed, conflicts preserved → local generalist synthesizes → material claims bind to evidence IDs → response shows Outcome, Evidence-state, Route=web, numbered clickable Sources, or an honest `unknown`/`blocked`; a fixture page instructing "ignore policy / reveal keys / call a tool" changes nothing; loopback/private/encoded/redirect-to-private URLs are blocked; oversized/unsupported content never becomes evidence. Then: a live Brave query returns real citations in a smoke run.
+Ask a current-information question → explicit cloud-permitted mode → hosted search → application citation validation → evidence state, claim bindings, numbered sources, or honest `unknown`/`blocked`. Timeless questions remain local. Hostile citation metadata and instruction-shaped returned text do not change application policy.
 
 #### Included scope
 - Use cases: UC-02 *full*, UC-05 *full*.
 - Requirements: FR-003 *full*, FR-004 *full*, DATA-003 *full*, AI-009 *full*, AI-006 *full* (P2/P3/P4 evidence ranking + eviction), AI-010 *full*, AI-011 *full*, AI-012 *full*, UX-001 *full* (citations/status), API-003 *full*, API-004 *initial* (web integration declaration), SEC-003 *full*, SEC-006 *full*, SEC-004 *initial* (Brave API key handling), AI-005 *initial* (local-vs-research routing), NFR-002/OPS-003 *applied* to web calls.
-- Architecture: `SearchPort`, `PageReaderPort`, `ContentExtractorPort`; query planner, source selector, URL guard (DNS/IP validation + redirect re-check), passage ranker, claim validator; Brave + safe HTTP reader adapters (live phase).
-- Security: SSRF guard, injection quarantine, HTTPS-only policy, content-type/size limits, secret handling for the search key.
+- Architecture: `WebResearchProvider`, `CitationValidator`, freshness router, evidence/claim models, hosted OpenAI adapter, and deterministic fixture provider; M3 guardrails wrap the provider call.
+- Security: application citation boundary, public-host/private-IP checks, injection quarantine, HTTPS-only policy, and secret handling for the OpenAI key.
 - Documentation: retrieval/claim-validation design as-built; web-safety runbook.
 
 #### Explicitly deferred scope
-- Cloud specialist synthesis of evidence (M5 adds the research **specialist**; here the **local** generalist synthesizes). Crawling, vector/semantic retrieval, long-term memory — Future (deferred).
-- Live web is a **smoke** phase only; deterministic release gates use recorded fixtures (design §8.1).
+- Cloud specialist synthesis of evidence (M5 adds the research **specialist**). Crawling,
+  local page reading, vector/semantic retrieval, long-term memory — Future (deferred).
+- Live hosted web is a **smoke** phase only; deterministic release gates use recorded
+  citation metadata fixtures (design §8.1).
 
 #### Dependencies
-- M3 guardrails (page/byte/time limits, retry/circuit for web); M0 web feasibility + threat model; Brave account/plan.
-- Test data: fixture search results, fixture pages (allowed HTML, private-IP, redirect-to-private, oversized, unsupported-type, conflicting, stale, injection).
+- M3 guardrails (time/retry/circuit for web); M0 web feasibility + threat model; approved OpenAI hosted-search decision.
+- Test data: fixture citation metadata (public, private-IP, duplicate, non-HTTPS,
+  conflicting, stale, and injection-shaped).
 
 #### Implementation approach
-Build and prove the entire pipeline against fixtures first (deterministic 100%-gate security/RAG tests), then swap in live Brave + reader behind the unchanged ports for a small smoke suite. Citations render only from stored provenance — never model-produced URLs. Evidence with missing URL/retrieval-time cannot be cited. Preserve conflicts; weak retrieval → insufficient-evidence status, never a pressured answer.
+Build and prove the hosted-search pipeline against fixtures first, then run a small
+OpenAI smoke behind the unchanged provider port. Citations render only from
+application-validated provider metadata — never model-produced free-form URLs.
+Preserve conflicts; weak retrieval → insufficient-evidence status, never a pressured answer.
 
 #### Verification strategy
 - Unit: URL policy, source-class ranking, dedup, freshness, passage scoring, claim-support classification, redaction of page content.
-- Contract: search/reader/extractor ports (success + each failure class).
-- Integration: full research pipeline on fixtures; live Brave smoke.
-- Security: AT-10.1–.4 (injection, SSRF, redirect, oversized/type).
+- Contract: hosted research/citation-validator ports (success + provider failure classes).
+- Integration: full research pipeline on fixtures; live OpenAI hosted-search smoke.
+- Security: AT-10.1/.2/.8 (injection, unsafe citation hosts, citation validation).
 - Acceptance: AT-06 (all), AT-07 (all), AT-08 (all).
 - Manual: current-question demo + injection/SSRF demo.
 
 #### Entry criteria
-- [ ] M3 complete; threat model + web feasibility approved (M0).
+- [x] M3 complete; threat model + hosted web feasibility/DEC-OQ-07 approved (M0).
 
 #### Exit criteria
-- [ ] Current questions trigger retrieval; timeless questions avoid unnecessary web calls at the approved routing threshold (AT-06.1).
-- [ ] Ten successful current-question fixtures carry claim-linked citations to actually-retrieved pages; model-invented URLs rejected (AT-06.2/.3).
-- [ ] Primary sources outrank comparable secondary; duplicates collapse without erasing conflicts (AT-06.4/.5); unreadable/disallowed sources are named, not cited (AT-06.6).
-- [ ] Context/RAG rules hold: P0/P1 preserved, secrets/expired/duplicates excluded, freshness only when time-sensitive, weak retrieval → insufficient-evidence (AT-07 all).
-- [ ] Epistemic rubric holds across strong/indirect/absent/conflicting/failed evidence; suggestions separated; injected success claims removed (AT-08 all).
-- [ ] Injection, SSRF, redirect-to-private, oversized/unsupported all blocked (AT-10.1–.4).
-- [ ] Live Brave + reader smoke returns real cited evidence.
+- [x] Current questions trigger hosted retrieval; timeless questions remain local (AT-06.1).
+- [ ] Ten distinct deterministic questions and the live path carry claim-linked evidence; current fixtures do not prove the aggregate and live annotations expose citation markers rather than supporting passages.
+- [x] Primary-class metadata is retained first, duplicates collapse, conflicts produce `unknown`, and rejected sources are named rather than cited (AT-06.4/.5/.6 hosted-path subset).
+- [ ] All AT-07/08 context, staleness, conflict, and support cases pass; current implementation now abstains honestly but does not implement the full matrix.
+- [x] HTTPS/private-host citation validation and injection quarantine are covered (AT-10.1/.2/.8; local page checks deferred by DEC-OQ-07).
+- [x] Live OpenAI hosted `web_search` smoke returns a real answer and citation URLs; Brave/page-reader smoke is not applicable to the approved provider.
 
 #### Risks and mitigations
 - **RSK-04 (false/stale RAG):** primary-source ranking, freshness, claim binding, abstention — all fixture-gated at 100% before live.
@@ -381,7 +386,7 @@ Build and prove the entire pipeline against fixtures first (deterministic 100%-g
 ### Milestone 5 — Cloud Specialists, Routing, Privacy & Consent
 
 - **Number / Name:** M5 — Cloud Specialists, Routing, Privacy & Consent
-- **Status:** Proposed
+- **Status:** **Reopened by independent verification (2026-08-04); aggregate evidence pending** — role-scope, fail-closed privacy, distinct provider errors, truncation, shared limits, and trace usage are repaired (V1-018). Closure still depends on approved pricing and M7 aggregate evidence.
 - **Outcome:** Research and coding specialists run through one configurable OpenAI adapter under exact privacy classification, exact consent, secret protection, and depth-one routing — proven with a **fake specialist provider** first, then a small **live OpenAI** smoke.
 
 #### Objective
@@ -417,18 +422,18 @@ Prove routing, schema validation, depth-one, consent, and privacy against a **fa
 - Manual: consent-approve/deny/mutate demo; local-only-vs-cloud demo.
 
 #### Entry criteria
-- [ ] M4 complete; OpenAI model validated (M0); consent/privacy policy (OQ-06) approved.
+- [x] M4 complete; OpenAI model validated (M0); consent/privacy policy (OQ-06) approved and mapped by DEC-M5-01.
 
 #### Exit criteria
-- [ ] Research/coding/unrelated requests route correctly at the approved threshold with 0 unauthorized cloud/tool calls (AT-04.1, AT-03.1).
-- [ ] Each role refuses out-of-scope work; valid Structured Output passes, malformed does not (≤1 repair) (AT-04.2/.3, AT-05.4/.5).
-- [ ] Output/evidence ceilings enforced; truncation → `partial`; assumptions/uncertainties visible (AT-04.4/.5).
-- [ ] OpenAI request carries configured ID, `store:false`, no provider tools, versions, ceilings; failure classes distinct (AT-05.1–.6).
-- [ ] `local_only` → no cloud call; public may proceed under `cloud_permitted`; owner-specific/private requires exact consent; denial/expiry/mutation → no call (AT-09 all).
-- [ ] Depth-one enforced; adversarial proposals execute nothing and are logged (AT-03.2, AT-03.1).
-- [ ] Conforming specialist registers without existing-code change; nonconforming rejected (AT-03.3/.4).
-- [ ] Canary secrets absent from prompts/manifests/DB/logs/errors/traces/exports; high-impact prompts execute no action (AT-10.5/.6).
-- [ ] Live OpenAI smoke returns a valid `SpecialistResult`; usage/cost reconcile within tolerance (OPS-003, AT-13.3).
+- [ ] Research/coding/unrelated routing meets the aggregate threshold with role-scope refusal and zero unauthorized calls (AT-04.1/.2, AT-03.1).
+- [ ] Valid structures and every distinct provider failure/out-of-scope case are mapped; type/action validation is repaired, but the complete error/scope matrix is absent.
+- [x] Output ceilings produce `partial`; assumptions and uncertainties remain visible (AT-04.4/.5).
+- [x] OpenAI request carries configured model, `store:false`, no provider tools, prompt/schema versions, and output ceiling (AT-05.1–.6).
+- [x] `local_only` makes no cloud call; public may proceed under `cloud_permitted`; local/private requires exact consent; restricted/denied/expired/mutated payloads do not call (AT-09).
+- [x] Depth-one and manifest tool grants are enforced; adversarial high-impact proposals execute nothing (AT-03.1/.2).
+- [x] Valid specialists register through manifests; invalid manifests remain disabled (AT-03.3/.4).
+- [x] Secret patterns are redacted from consent previews and restricted payloads never reach providers; high-impact actions are blocked (AT-10.5/.6).
+- [x] Live OpenAI smoke returned a valid `SpecialistResult`; provider usage is captured and configured cost estimates reconcile through M3 guardrails (OPS-003, AT-13.3).
 
 #### Risks and mitigations
 - **RSK-06 (disclosure):** default local-only, minimization, exact consent, hash binding; deterministic gates before live.
@@ -445,7 +450,7 @@ Prove routing, schema validation, depth-one, consent, and privacy against a **fa
 ### Milestone 6 — Memory, Data Controls & Operations
 
 - **Number / Name:** M6 — Memory, Data Controls & Operations
-- **Status:** Proposed
+- **Status:** **Reopened by independent verification (2026-08-04); prototype encryption accepted by owner 2026-08-05** — independent retention windows, periodic maintenance/backup checks, schema-backed health, and correlated trace fields are repaired. A vetted AEAD/key-management dependency remains deferred to a later version; recovery/UAT evidence remains incomplete (V1-019/020).
 - **Outcome:** Confirmed profile, startup continuity, review/correct/delete, retention/expiry, full audit, cost/health visibility, and backup/restore/rollback all work and are owner-controllable, with confirmed data kept strictly separate from inference.
 
 #### Objective
@@ -478,13 +483,13 @@ Store confirmed profile items with source/sensitivity/confirmation/expiry, stric
 - Manual: profile/data-control demo; `/trace` and `/sources` demo; restore demo.
 
 #### Entry criteria
-- [ ] M5 complete (audit/cost/health data exist to expose); OQ-08 targets approved.
+- [x] M5 complete (audit/cost/health data exist to expose); OQ-08 targets approved.
 
 #### Exit criteria
-- [ ] Confirmed items load; inferred never masquerade (AT-12.3); correction/deletion honored (AT-12.4); no-store leaves no body after restart (AT-12.1); stored sessions reload within retention and expire (AT-12.2); corrupt memory quarantined, base behavior starts (AT-12.5); partial deletion reports exact scope (AT-12.6).
-- [ ] Full trace correlates route/providers/versions/sources/approvals/retries/timing/usage/cost/limits/final states; no chain-of-thought (AT-13.1/.5).
-- [ ] `/status` reports healthy/degraded/disabled per capability without secrets (AT-13.2); usage/cost reconcile within tolerance (AT-13.3); audit-write failure visible and blocks consent-required calls without a durable approval (AT-13.4).
-- [ ] Failed migration leaves prior schema usable; backup/restore meets the approved recovery objective with referential integrity (AT-14.4/.5).
+- [x] Confirmed items load; inferred never masquerade; correction/deletion, expiry, no-store restart behavior, and dependent-record deletion are covered by M6 tests.
+- [ ] Durable trace/source records contain every required provider/model/prompt/retry/duration/usage/cost/limit field under one task correlation.
+- [ ] `/status` probes every capability, including audit, and reports actual remaining budget rather than only a process-local reservation total.
+- [x] Approved evidence/audit retention and automatic daily backup behavior are implemented; the owner accepts the current basic authenticated prototype backup envelope for this personal prototype. Vetted AEAD/key management is explicitly deferred to a later version; migration/quarantine basics pass.
 
 #### Risks and mitigations
 - **RSK-09:** confirmed/inferred separation + review/delete controls.
@@ -500,7 +505,7 @@ Store confirmed profile items with source/sensitivity/confirmation/expiry, stric
 ### Milestone 7 — Release Hardening, Evaluation Suite & UAT
 
 - **Number / Name:** M7 — Release Hardening, Evaluation Suite & UAT
-- **Status:** Proposed
+- **Status:** **Open — not release-ready (independent verification 2026-08-04)**; deterministic gate passes, aggregate quality evidence and owner UAT remain pending.
 - **Outcome:** The permanent 30-case evaluation suite, full security/AT-15 release gates, owner UAT of UC-01…UC-12, documentation, and final traceability all pass at approved thresholds, and V1 is demonstrable end-to-end.
 
 #### Objective
@@ -531,7 +536,7 @@ Assemble the permanent evaluation suite from EVAL fixtures; run deterministic as
 - Traceability: every mandatory requirement shows a passing verification with model/prompt/provider/date.
 
 #### Entry criteria
-- [ ] M1–M6 complete; OQ-09 thresholds approved; fixtures frozen.
+- [x] M1–M6 complete; OQ-09 thresholds approved; M7 catalog frozen in `src/elly/evaluation/catalog.py`.
 
 #### Exit criteria (also the V1 Definition of Done — see §14)
 - [ ] All deterministic security/policy/schema/limit/contract tests pass 100% (AT-15.4).
@@ -790,3 +795,6 @@ No recommendation or assumption in this document has been treated as a confirmed
 | 0.1 | 2026-08-03 | Planning (technical lead role) | Initial draft milestone plan for owner review. No code, scaffolding, or authoritative-document changes made. |
 | 0.2 | 2026-08-03 | Owner | Plan finalized; M1 authorized and implemented; M0 decision/spec work started. |
 | 0.3 | 2026-08-04 | Owner + agent | **M1 Complete** (owner-reviewed, fake-backed). **M0 Complete**: decisions/specs done; OpenAI/`web_search` smoke **passed** (RSK-02 retired); only NFR-003 benchmark deferred→M2 (RSK-01 carried). **M2 is now eligible to plan.** |
+| 0.4 | 2026-08-04 | Independent verification | M0–M2 remain closed; M3–M6 reopened; M7 remains open. See `V1_VERIFICATION_REPORT.md` for repaired defects, remaining blockers, and real-provider evidence. |
+| 0.5 | 2026-08-04 | Owner-independent blocker remediation | Shared guardrails, evidence selection, specialist scope/errors/privacy, retention scheduling, health, and trace reporting repaired. Remaining blockers require owner pricing/provider/crypto/UAT decisions. |
+| 0.6 | 2026-08-04 | Centralized runtime configuration | Providers, model IDs, cloud reservation pricing, and consent cost policy now resolve from one main TOML; specialist manifests no longer duplicate runtime models. |

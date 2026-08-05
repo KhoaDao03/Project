@@ -1,4 +1,20 @@
-# Traceability — Milestone M1
+# Traceability — Version 1
+
+**Independent verification status (2026-08-04):** M0–M2 closed; M3–M6 reopened;
+M7 open. “Implemented + Tested” addenda below are historical implementation
+claims, not proof that every acceptance-test clause is verified. The controlling
+defect/evidence matrix is [V1_VERIFICATION_REPORT.md](V1_VERIFICATION_REPORT.md).
+
+| Milestone | Current closure | Blocking defects/evidence |
+|---|---|---|
+| M0 | Closed | None |
+| M1 | Closed | None after V1-012 repair |
+| M2 | Closed | None after V1-002/006/010 repair and real CLI verification |
+| M3 | Reopened | V1-015, V1-016 |
+| M4 | Reopened | V1-017; live claim support remains `unknown` |
+| M5 | Reopened | V1-018; V1-003/005/008/013/014 repaired |
+| M6 | Reopened | V1-019, V1-020 |
+| M7 | Open | V1-021; quality/UAT pending |
 
 **Scope:** Milestone M1 (Walking Skeleton: Deterministic Local Conversation).
 **Status legend:** Not started · Planned · Scaffolded · Partially implemented ·
@@ -63,3 +79,60 @@ ports/adapters.
 | OPS-003 fake cost | UC-08, AT-11.5/.6 | `guardrails/cost.py:FakeCostLedger`, `ports/cost.py:CostPort` | reserve/reconcile/over-budget tests | Implemented + Tested |
 | OPS-004 interruption | UC-08, AT-14.3 | `sqlite_repository.py:tasks`, `mark_interrupted_tasks` | reopen/reconcile tests | Implemented + Tested |
 | FR-005/FR-006 failure/cancel | AT-01.6, AT-14.1 | `conversation.py`, `response_composer.py`, `cli.py` | cancellation, typed failure, no-success tests | Implemented + Tested |
+
+## M4 implementation addendum
+
+| Req | UC/AT | Source | Tests/evidence | Status |
+|---|---|---|---|---|
+| FR-003 / AI-005 freshness routing | UC-02, AT-06.1 | `research/freshness.py`, `conversation.py` | `test_research:FreshnessTests`, CLI routing | Implemented + Tested |
+| FR-004 / DATA-003 evidence and citations | UC-02, AT-06.2/.3/.6 | `ports/web_research.py`, `domain/models.py:EvidenceObject`, `presentation/render.py` | ten fixture questions, live adapter smoke | Implemented + Tested for hosted path |
+| AI-009 / AI-012 evidence state and conflicts | UC-05, AT-07/08 | `application/research.py`, `response_composer.py` | conflict, absent, citation tests | Implemented + Tested for hosted path |
+| SEC-003 injection quarantine | AT-10.1/.8 | `application/research.py:_quarantine_instructions` | hostile fixture test | Implemented + Tested |
+| SEC-006 citation URL boundary | AT-10.2/.8 | `research/citation_validator.py` | HTTPS/private/DNS/duplicate tests | Implemented + Tested for hosted metadata |
+| API-003 / DEC-OQ-07 hosted search | UC-02, AT-06 | `adapters/openai_web_research.py` | live `gpt-5.6-luna` web-search smoke | Implemented + Smoke-tested |
+
+## Current M4 verification evidence
+
+- Strict suite: **116 passed, 0 skipped**.
+- Compileall and `git diff --check`: OK.
+- Live provider: authentication/model inventory passed; actual hosted adapter returned
+  a current answer and three citation URLs. Combined structured+web feasibility probe
+  had provider HTTP 500; isolated web-search-only passed.
+- Brave/local page-reader behavior remains deferred by DEC-OQ-07.
+
+## M5 implementation addendum
+
+| Req | UC/AT | Source | Tests/evidence | Status |
+|---|---|---|---|---|
+| AI-003/AI-005 specialist routing | UC-03/12, AT-03/04 | `conversation.py:route`, `specialists/registry.py` | registry and workflow tests | Implemented + Tested |
+| AI-007/AI-008 result contract | AT-04/05 | `specialists/contracts.py`, `adapters/openai_specialist.py` | fake malformed/truncation and adapter tests | Implemented + Tested |
+| AI-013 depth-one/tool authorization | AT-03.1/.2 | `application/specialists.py`, manifests | tool/high-impact denial tests | Implemented + Tested |
+| AI-014/SEC-001/002 privacy + consent | UC-04, AT-09 | `privacy.py`, CLI `/approve`/`/deny` | classification/hash/expiry/mutation tests | Implemented + Tested |
+| API-002/AI-004 OpenAI specialist | AT-05 | `adapters/openai_specialist.py` | `store:false`/Structured Outputs/no-tools test + live smoke | Implemented + Smoke-tested |
+| OPS-003 usage/cost | AT-13.3 | `openai_specialist.py:last_usage`, M3 guardrails | live usage capture; configured estimate reconciliation | Implemented; billing pricing configured |
+
+M5 strict verification: **124 passed, 0 skipped**. Live smoke returned a valid
+`known` result from `gpt-5.6-luna` using public non-sensitive input.
+
+## M6 implementation addendum
+
+| Req | UC/AT | Source | Tests/evidence | Status |
+|---|---|---|---|---|
+| DATA-002 / DATA-005 profile continuity and deletion | UC-06/09, AT-12 | `memory.py:ProfileService`, `sqlite_repository.py` | `test_m6_data_controls:test_corrupt_profile_is_quarantined...`, profile lifecycle test | Implemented + Tested; Owner approved |
+| DATA-001 no-store and retention | UC-06/09, AT-12.1/.2 | `sqlite_repository.py`, `composition.py:maintain_storage` | M6 no-store/restart and expiry tests | Implemented + Tested |
+| DATA-004 / SEC-007 durable trace redaction | UC-11, AT-13.1/.5 | `audit_log.py`, `sqlite_repository.py` | durable audit/source test | Implemented + Tested |
+| OPS-002 / OPS-003 status and budget | UC-10, AT-13.2/.3 | `composition.py:Application.health`, guardrails | existing health/budget tests | Implemented + Tested |
+| OPS-004 quarantine, migration rollback, backup/restore | UC-06, AT-14.4/.5 | `sqlite_repository.py`, `operations.py` | quarantine, failed-migration rollback, recovery-time tests | Implemented + Tested |
+
+M6 focused verification: **8 passed**. Current strict verification: **172 passed, 0 skipped**.
+M6 is owner-approved and M7 release hardening is now in progress.
+
+## M7 implementation addendum
+
+| Req | UC/AT | Source | Tests/evidence | Status |
+|---|---|---|---|---|
+| NFR-004 permanent evaluation suite | AT-15.3, EVAL-001…030 | `evaluation/catalog.py`, `evaluation/runner.py` | `test_m7_release`; release-evidence JSON format | Implemented + Tested; live evidence pending |
+| AT-15.4 deterministic release gate | AT-15.4 | `scripts/run_release_gate.py` | 172-test strict regression; deterministic gate passes | Tested |
+| AT-15.5 quality thresholds | AT-15.5 | `docs/M7_RELEASE_CHECKLIST.md` | Harness reports provider-quality/live gates pending | Not yet verified |
+| AT-15.6 owner UAT | AT-15.6, UC-01…UC-12 | `docs/M7_RELEASE_CHECKLIST.md` | Owner record not yet supplied | Pending |
+| NFR-006 final adapter portability | AT-03.5/AT-15.4 | existing ports and contract tests | current regression suite | Tested; final M7 review pending |

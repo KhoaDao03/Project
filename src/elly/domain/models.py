@@ -4,9 +4,8 @@ These are the stable data contracts the whole system agrees on. They are plain
 stdlib dataclasses (no third-party dependency) with explicit validation in
 `__post_init__`, raising typed `EllyError`s on violation.
 
-Status: Scaffolded (M1). Fields present are those M1 exercises; research-only
-fields (claims/citations/partial_work) exist because they are part of the frozen
-TaskResult contract but are always empty in M1 (no web/specialist path yet).
+Status: Implemented through M5. Research and specialist fields are populated only
+when their application-owned workflows successfully produce them.
 Subject to M0 contract-freeze.
 
 Security/privacy:
@@ -21,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Mapping
 
 from .enums import (
     CloudMode,
@@ -68,6 +68,7 @@ class TaskRequest:
     cloud_mode: CloudMode
     persistence_mode: PersistenceMode
     submitted_at: datetime
+    approval_id: str | None = None
 
     def __post_init__(self) -> None:
         _require_nonempty(self.request_id, "request_id")
@@ -114,6 +115,50 @@ class TaskResult:
             TaskStatus.PARTIAL,
         ):
             raise InputInvalidError("answer may be empty only for a failed/blocked task")
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceObject:
+    """Validated hosted-search provenance (DATA-003, DEC-OQ-07).
+
+    Hosted search cannot provide an application-fetched content hash or page body;
+    those fields are therefore optional and remain empty on this M4 path. Citation
+    metadata is still validated by the application before it is rendered.
+    """
+
+    evidence_id: str
+    url: str
+    title: str
+    publisher: str
+    retrieved_at: datetime
+    source_class: str = "secondary"
+    snippet: str = ""
+    canonical_url: str = ""
+    content_hash: str = ""
+    freshness: str = "not_applicable"
+    safety_flags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for value, name in ((self.evidence_id, "evidence_id"), (self.url, "url"), (self.title, "title")):
+            _require_nonempty(value, name)
+        object.__setattr__(self, "retrieved_at", _require_aware_utc(self.retrieved_at, "retrieved_at"))
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimSupport:
+    """Claim-to-evidence binding used by research responses (AI-011/012)."""
+
+    claim_id: str
+    text: str
+    support_status: str
+    evidence_ids: tuple[str, ...] = ()
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        _require_nonempty(self.claim_id, "claim_id")
+        _require_nonempty(self.text, "text")
+        if self.support_status not in {"direct", "indirect", "conflicted", "unsupported"}:
+            raise InputInvalidError("support_status is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,3 +288,4 @@ class ConversationOutcome:
     result: TaskResult
     manifest: ContextManifest
     assistant_message: Message | None = None
+    consent_proposal: object | None = None

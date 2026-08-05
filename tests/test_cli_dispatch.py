@@ -41,20 +41,22 @@ class CliDispatchTests(unittest.TestCase):
         self.assertIn("storage(sqlite)", out)
         self.assertIn("Mode:", out)
         self.assertIn("Limits:", out)
+        self.assertIn("generalist=fake/fake-generalist-v1", out)
+        self.assertIn("research=openai_web_search/gpt-5.6-luna", out)
+        self.assertIn("remote reservation=$0.0100/call", out)
 
-    def test_provider_limit_is_visible_as_blocked_cli_result(self) -> None:
+    def test_request_scoped_guardrail_reservation_does_not_leak_between_tasks(self) -> None:
         self.cli.app.guardrails.ledger.reserve(provider_calls=self.cli.app.config.max_provider_calls)
         out = self.cli.dispatch("this must be blocked by the guardrail")
-        self.assertIn("blocked", out.lower())
-        self.assertIn("provider call limit", out.lower())
+        self.assertIn("fake-generalist", out)
 
     def test_new_no_store_switches_session(self) -> None:
         out = self.cli.dispatch("/new --no-store")
         self.assertIn("no_store", out)
         self.assertIs(self.cli.session.persistence_mode, PersistenceMode.NO_STORE)
 
-    def test_mode_cloud_unavailable(self) -> None:
-        self.assertIn("unavailable in M2", self.cli.dispatch("/mode cloud"))
+    def test_mode_cloud_permits_policy_controlled_research(self) -> None:
+        self.assertIn("cloud_permitted", self.cli.dispatch("/mode cloud"))
 
     def test_cancel_unavailable(self) -> None:
         self.assertIn("cancel", self.cli.dispatch("/cancel").lower())
@@ -73,6 +75,16 @@ class CliDispatchTests(unittest.TestCase):
         self.assertIn("[fake-generalist]", out)
         self.assertIn("Evidence: inferred", out)
         self.assertIn("Route: local_generalist", out)
+
+    def test_trace_surfaces_redacted_route_and_execution_detail(self) -> None:
+        self.cli.dispatch("hello trace")
+        task_id = self.cli.app.repository._conn.execute(
+            "SELECT task_id FROM tasks ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()[0]
+        out = self.cli.dispatch(f"/trace {task_id}")
+        self.assertIn("route=local_generalist", out)
+        self.assertIn("provider_calls=1", out)
+        self.assertIn("tools=none", out)
 
 
 if __name__ == "__main__":

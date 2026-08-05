@@ -3,8 +3,33 @@
 # Copy to `config.local.toml` (gitignored) and adjust locally.
 # Load order (see src/elly/config.py): built-in defaults -> this TOML -> ELLY_* env vars.
 #
-# M2 uses only local Ollama. Do not add API keys here — secrets belong in the
-# OS/environment mechanism only (SEC-004).
+# Do not add API keys here — secrets belong in the OS/environment mechanism only.
+
+# Operational provider, model, and price selection lives only in these three
+# tables. Capability sections below contain behavior/limits, not duplicate model
+# choices. Change these values, restart Elly, and every route uses them.
+[providers]
+generalist = "ollama"                 # "ollama" or "fake"
+research = "openai_web_search"       # "openai_web_search" or "fixtures"
+specialists = "openai"               # "openai" or "fake"
+
+[models]
+generalist = "qwen3:8b"
+research = "gpt-5.6-luna"
+specialist_default = "gpt-5.6-luna"
+
+# Optional exceptions stay in this same file. Omit an entry to inherit
+# models.specialist_default.
+[models.specialists]
+# coding = "gpt-5.6-terra"
+# research = "gpt-5.6-luna"
+
+[pricing]
+monthly_budget_usd = 10
+# Conservative amount reserved for every attempted remote research/specialist call.
+remote_call_reservation_usd = 0.01
+# Upper bound shown and bound into each exact-consent proposal.
+consent_max_cost_usd = 0.25
 
 [app]
 name = "elly"
@@ -12,10 +37,22 @@ name = "elly"
 # directory; keep it under a gitignored location. ":memory:" is used by tests.
 db_path = "data/elly.db"
 
+[storage]
+# Store-with-retention sessions are purged after this many days at startup.
+session_retention_days = 30
+# Hosted-search source metadata expires sooner than conversation history.
+evidence_retention_days = 7
+# Redacted execution metadata is retained for operational review.
+audit_retention_days = 90
+# A once-per-day backup check runs at startup and hourly thereafter when
+# ELLY_BACKUP_KEY is set.
+backup_dir = "data/backups"
+
 [limits]
 # FR-001 / NFR-001 boundary: input larger than this is rejected before any model
 # call. Provisional default from DESIGN §7 (subject to OQ-05 / M0 confirmation).
 max_input_chars = 20000
+specialist_max_output_tokens = 2000
 # FR-002 / AI-006 (initial): how many recent in-session messages the context
 # builder may consider. Provisional M1 value; real budgeting lands in M4.
 context_window_messages = 20
@@ -27,20 +64,20 @@ tool_timeout_seconds = 60
 total_timeout_seconds = 120
 max_concurrency = 1
 max_queue_size = 1
-monthly_budget_usd = 10
-# M3 uses deterministic fake pricing; local Ollama defaults to zero cost.
-provider_call_cost_usd = 0
 
 [generalist]
-provider = "ollama"
-# qwen3:8b is the development/testing default. qwen3:14b is opt-in only.
-model_id = "qwen3:8b"
 base_url = "http://127.0.0.1:11434"
 timeout_seconds = 120
 max_output_tokens = 512
 
 [specialists]
 manifest_dir = "config/specialists"
+
+[research]
+max_results = 5
+# Includes model reasoning tokens. Keep enough headroom for a cited answer.
+max_output_tokens = 1024
+timeout_seconds = 60
 
 [log]
 # Structured-log level. Logs are redacted (SEC-007): no message bodies, secrets,

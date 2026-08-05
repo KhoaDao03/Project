@@ -1,4 +1,4 @@
-"""Manifest discovery and registration; no specialist execution (M2 foundation)."""
+"""Manifest discovery and registration for application-owned M5 execution."""
 
 from __future__ import annotations
 
@@ -20,13 +20,24 @@ class DisabledSpecialist:
 class SpecialistRegistry:
     """Registry of valid manifests and explicitly disabled invalid entries."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self, *, default_model: str = "gpt-5.6-luna",
+        model_overrides: dict[str, str] | None = None,
+    ) -> None:
         self._manifests: dict[str, SpecialistManifest] = {}
         self._disabled: dict[str, DisabledSpecialist] = {}
+        self._default_model = default_model
+        self._model_overrides = model_overrides or {}
 
     @classmethod
-    def from_directory(cls, directory: str) -> "SpecialistRegistry":
-        registry = cls()
+    def from_directory(
+        cls, directory: str, *, default_model: str,
+        model_overrides: dict[str, str] | None = None,
+    ) -> "SpecialistRegistry":
+        """Load capability policy and inject models from the central config."""
+        if not default_model.strip():
+            raise ConfigInvalidError("specialist default model must be non-empty")
+        registry = cls(default_model=default_model, model_overrides=model_overrides)
         path = Path(directory)
         if not path.exists():
             return registry
@@ -41,9 +52,14 @@ class SpecialistRegistry:
             with path.open("rb") as handle:
                 raw = tomllib.load(handle)
             data: dict[str, Any] = raw.get("specialist", raw)
+            if "provider_model" in data:
+                raise ConfigInvalidError(
+                    "provider_model belongs in the main [models] configuration"
+                )
             capabilities = self._string_set(data["capabilities"], "capabilities")
             accepted_inputs = self._string_set(data["accepted_inputs"], "accepted_inputs")
             allowed_tools = self._string_set(data.get("allowed_tools", []), "allowed_tools")
+            exclusions = self._string_set(data.get("exclusions", []), "exclusions")
             requires_current_data = data["requires_current_data"]
             if not isinstance(requires_current_data, bool):
                 raise ConfigInvalidError("requires_current_data must be boolean")
@@ -60,6 +76,14 @@ class SpecialistRegistry:
                 timeout_seconds=float(data["timeout_seconds"]),
                 enabled=bool(data.get("enabled", True)),
                 allowed_tools=allowed_tools,
+                role=str(data.get("role", "research")),
+                provider_model=self._model_overrides.get(
+                    str(data["id"]), self._default_model
+                ),
+                prompt_version=str(data.get("prompt_version", "v1")),
+                privacy_class=str(data.get("privacy_class", "remote_allowed")),
+                output_limit=int(data.get("output_limit", 2000)),
+                exclusions=exclusions,
             )
             if manifest.id in self._manifests:
                 raise ConfigInvalidError(f"duplicate specialist id: {manifest.id}")

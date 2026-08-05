@@ -33,6 +33,12 @@ class SpecialistManifest:
     timeout_seconds: float
     enabled: bool = True
     allowed_tools: frozenset[str] = field(default_factory=frozenset)
+    role: str = "research"
+    provider_model: str = "gpt-5.6-luna"
+    prompt_version: str = "v1"
+    privacy_class: str = "remote_allowed"
+    output_limit: int = 2000
+    exclusions: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
         if not _ID.fullmatch(self.id):
@@ -51,3 +57,11 @@ class SpecialistManifest:
             raise ConfigInvalidError(f"specialist {self.id} timeout must be 0 < seconds <= 300")
         if any(not tool.strip() for tool in self.allowed_tools):
             raise ConfigInvalidError(f"specialist {self.id} contains an empty tool name")
+        if self.role not in {"research", "coding"}:
+            raise ConfigInvalidError(f"specialist {self.id} has invalid role")
+        if not self.provider_model.strip() or not self.prompt_version.strip():
+            raise ConfigInvalidError(f"specialist {self.id} requires model and prompt versions")
+        if self.privacy_class not in {"local", "remote_allowed", "restricted"}:
+            raise ConfigInvalidError(f"specialist {self.id} has invalid privacy class")
+        if self.output_limit <= 0 or self.output_limit > 12000:
+            raise ConfigInvalidError(f"specialist {self.id} output limit is invalid")

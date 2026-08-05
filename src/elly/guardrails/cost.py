@@ -33,5 +33,31 @@ class FakeCostLedger:
 
     @property
     def reserved_usd(self) -> float:
+        """Return settled spend plus outstanding reservations for this month."""
         with self._lock:
             return self._reserved
+
+    @property
+    def budget_usd(self) -> float:
+        """Return the configured monthly ceiling."""
+        return self._budget
+
+    @property
+    def remaining_usd(self) -> float:
+        """Return nonnegative remaining monthly capacity."""
+        with self._lock:
+            return max(0.0, self._budget - self._reserved)
+
+    @property
+    def warning_level(self) -> str:
+        """Return the highest approved 50/75/90-percent budget warning reached."""
+        if self._budget == 0:
+            return "exhausted"
+        ratio = self.reserved_usd / self._budget
+        if ratio >= 0.9:
+            return "90%"
+        if ratio >= 0.75:
+            return "75%"
+        if ratio >= 0.5:
+            return "50%"
+        return "none"

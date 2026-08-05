@@ -22,6 +22,7 @@ Related: DATA-001, DATA-004 (audit is a separate port), OPS-004.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from ..domain.models import Message, SessionRecord
@@ -49,4 +50,20 @@ class SessionRepositoryPort(Protocol):
 
     def recent_messages(self, session_id: str, limit: int) -> list[Message]:
         """Return up to `limit` most-recent persisted messages, oldest-first."""
+        ...
+
+    def purge_sessions(self, before: datetime) -> int:
+        """Delete expired sessions and dependent records transactionally."""
+        ...
+
+    def purge_task_sources(self, before: datetime) -> int:
+        """Delete source metadata older than the evidence-retention cutoff."""
+        ...
+
+    def purge_audit_events(self, before: datetime) -> int:
+        """Delete audit metadata older than the audit-retention cutoff."""
+        ...
+
+    def healthcheck(self) -> None:
+        """Raise StorageFailureError unless the connection and schema are usable."""
         ...

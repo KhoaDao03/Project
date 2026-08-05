@@ -1,7 +1,7 @@
 # Elly Research Assistant — project configuration
 #
-# Milestone: M1 (Walking Skeleton: Deterministic Local Conversation).
-# Status of this file: Scaffolded.
+# Version 1 local prototype configuration.
+# Status: M0–M2 closed; M3–M6 reopened by independent verification; M7 open.
 #
 # RUNTIME DEPENDENCIES: none. The M1 skeleton runs on the Python 3.11+ standard
 # library only (dataclasses, sqlite3, tomllib, logging, argparse, unicodedata).
@@ -17,7 +17,7 @@
 [project]
 name = "elly"
 version = "0.0.1"
-description = "Elly Research Assistant — local-first personal AI assistant (M1 walking skeleton)."
+description = "Elly Research Assistant — local-first personal AI assistant prototype."
 requires-python = ">=3.11"
 dependencies = []
 

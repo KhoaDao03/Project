@@ -1,10 +1,11 @@
-# Elly — Acceptance & Evaluation Test Specifications (M0)
+# Elly — Acceptance & Evaluation Test Specifications (M7 release harness)
 
 **Purpose:** turn the DESIGN acceptance suites (AT-01…15) and the permanent evaluation
-catalog (EVAL-001…030) into **executable test specs with fixtures**, mapped to layers,
+catalog (EVAL-001…030) into executable test specs and release evidence, mapped to layers,
 milestones, and status. Reconciled with `DECISIONS.md` (DEC-OQ-07 hosted `web_search` +
-citation validation; DEC-OQ-09 thresholds). **Status:** pending specs — **owner review of
-wording pending** (EVAL wording ties to DEC-OQ-09). Nothing here is "verified" yet.
+citation validation; DEC-OQ-09 thresholds). **Status:** M7 harness implemented;
+required live/UAT evidence remains pending. Nothing here is "verified" until the
+release gate evidence exists.
 
 **Determinism policy (DESIGN §8.1):** release gates run against **recorded fixtures**; a
 small **live smoke** detects provider drift. Recorded fixtures never substitute for live
@@ -22,19 +23,19 @@ Status legend: ✅ Tested (M1, fake-backed) · ◻ Pending (milestone noted).
 |---|---|---|---|---|---|---|
 | AT-01 | Text interaction, multi-turn, cancellation | E2E/Unit | valid/empty/oversized inputs; delayed-task | Det | M1→M3 | ✅ .1–.6 cancellation evidence |
 | AT-02 | Local-only operation, no cloud, model swap | Contract/Integration | net-off; missing-model; alt fake | Det | M2 | ✅ .4 swap; ◻ real Ollama (M2) |
-| AT-03 | Deterministic orchestration & extensibility | Unit/Integration | adversarial model output; test specialist | Det | M1→M5 | ✅ .5; ◻ .1–.4 (M5) |
-| AT-04 | Research/coding specialist roles | Integration | role/unrelated tasks; malformed outputs | Det (fake provider) | M5 | ◻ |
-| AT-05 | OpenAI adapter (Responses, store:false, failures) | Contract | mocked success + each failure class | Det + live smoke | M5 | ◻ |
-| AT-06 | Current research & citations | Integration | recorded `web_search` results; citation fixtures | Det + live smoke | M4 | ◻ |
-| AT-07 | Context & RAG selection | Unit | oversized mixed context; stale/dupe/secret | Det | M4 | ◻ (M1 partial: context builder) |
-| AT-08 | Epistemic honesty & conflict | Unit/Integration | strong/indirect/absent/conflicting evidence | Det | M4 | ◻ (M1: status axes) |
-| AT-09 | Privacy & exact consent | Integration | public/private/secret payloads; consent flows | Det | M5 | ◻ |
-| AT-10 | Security & redaction | Security | injection page; SSRF/redirect URLs; canary secrets | Det | M4→M5 | ◻ (M1: redaction .6/.7 partial) |
-| **AT-10.8 (new, DEC-OQ-07)** | **Citation validator** | Security/Unit | provider citations incl. private-IP/non-HTTPS/dupe/unresolvable | Det | M4 | ◻ |
+| AT-03 | Deterministic orchestration & extensibility | Unit/Integration | adversarial model output; test specialist | Det | M1→M5 | ✅ M5 scope |
+| AT-04 | Research/coding specialist roles | Integration | role/unrelated tasks; malformed outputs | Det (fake provider) | M5 | ✅ deterministic scope |
+| AT-05 | OpenAI adapter (Responses, store:false, failures) | Contract | mocked success + each failure class | Det + live smoke | M5 | ✅ adapter + live smoke |
+| AT-06 | Current research & citations | Integration | recorded hosted-search results; citation fixtures | Det + live smoke | M4 | ✅ hosted path |
+| AT-07 | Context & RAG selection | Unit | hosted citation metadata; stale/dupe/conflict | Det | M4 | ✅ hosted-path subset |
+| AT-08 | Epistemic honesty & conflict | Unit/Integration | strong/absent/conflicting/injected evidence | Det | M4 | ✅ hosted-path subset |
+| AT-09 | Privacy & exact consent | Integration | public/private/secret payloads; consent flows | Det | M5 | ✅ |
+| AT-10 | Security & redaction | Security | injection metadata; unsafe citation URLs; canary secrets | Det | M4→M5 | ✅ .1/.2/.8 M4 hosted path |
+| **AT-10.8 (new, DEC-OQ-07)** | **Citation validator** | Security/Unit | provider citations incl. private-IP/non-HTTPS/dupe/unresolvable | Det | M4 | ✅ |
 | AT-11 | Limits, timeout, retry, cost | Unit/Integration | boundary limits; transient/permanent failures | Det | M3 | ✅ deterministic M3 guardrail suite |
-| AT-12 | Session/profile data controls | Integration | no-store; profile confirm/inferred; corrupt memory | Det | M6 | ◻ (M1: no-store partial) |
-| AT-13 | Audit, health, cost visibility | Integration | one multi-phase task; mock price/usage | Det | M6 | ◻ (M1: correlation/health partial) |
-| AT-14 | Partial failure & recovery | Integration | per-adapter failure injection; restart; backup/restore | Det | M3→M6 | ✅ .1/.3 M3; ◻ .4/.5 M6 |
+| AT-12 | Session/profile data controls | Integration | no-store; profile confirm/inferred; expiry/delete | Det | M6 | ✅ focused M6 coverage including corrupt-memory quarantine |
+| AT-13 | Audit, health, cost visibility | Integration | one multi-phase task; mock price/usage | Det | M6 | ✅ durable trace/health/budget coverage; final field matrix M7 |
+| AT-14 | Partial failure & recovery | Integration | per-adapter failure injection; restart; backup/restore | Det | M3→M6 | ✅ .1/.3 M3; ✅ .4/.5 M6 focused evidence |
 | AT-15 | Hardware, AI-eval, release gate | Benchmark/Eval/UAT | target machine; pinned model/config; 30-case suite | Live/Det | M0→M7 | ◻ (M0: benchmark pending) |
 
 **AT-10.8 — Citation validator (spec):** given provider citations containing a
@@ -98,8 +99,16 @@ cloud/tool calls; citation support **100%** in fixtures; required abstention/blo
 safety-critical item **<4**; hardware from the NFR-003 benchmark. Fabricated
 citation/action-success events: **0**. Aggregates must not hide individual safety failures.
 
-## 6. Current coverage (M3)
-105 automated tests pass. M3 exercises AT-01.6, AT-02 local adapter contracts,
-AT-11 deterministic limits/retry/circuit/cost, and AT-14.1/.3 interruption/failure
-paths. Web, cloud specialist, profile, backup, and final release-evaluation items
-remain pending at their approved milestones.
+## 6. Current coverage (M6)
+172 automated tests pass. M5 exercises specialist routing, privacy/consent, structured
+results, tool/depth/high-impact denial, and live adapter shape. M4 exercises freshness routing, ten current-question
+fixtures, hosted citation validation, unsafe-host rejection, injection quarantine,
+conflict/unknown mapping, and live OpenAI hosted-search adapter behavior. M6 exercises
+confirmed profile controls, retention/no-store, durable redacted trace/source metadata,
+and authenticated backup integrity, including profile quarantine, migration rollback,
+and recovery timing. Local page reading, full page-body RAG, semantic memory,
+portable trace export, and final release evaluation remain deferred or pending.
+
+M7 adds `src/elly/evaluation/catalog.py`, `src/elly/evaluation/runner.py`,
+`scripts/run_release_gate.py`, and `tests/test_m7_release.py`. The harness is
+network-free and reports pending live, UAT, and hardware evidence explicitly.

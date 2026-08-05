@@ -1,33 +1,53 @@
-# Elly Implementation Guide — Milestone M3
+# Elly Version 1 Implementation Guide
 
-**Objective (M3):** enforce application-owned limits, timeout/retry/circuit policy,
-fake cost reservations, typed partial failure, and restart interruption around the
-M2 local conversation path.
+> Independent verification on 2026-08-04 reopened M3–M6 and left M7 open. This
+> guide describes the current implementation, not a release-complete system. See
+> `V1_VERIFICATION_REPORT.md` for verified boundaries and blockers.
+
+**Objective (M6):** preserve manifest-driven cloud specialists through exact privacy,
+consent, Structured Outputs, and depth-one authorization while preserving local
+qwen3:8b conversation and M4 evidence routing.
+
+M6 extends this with durable data controls, profile lifecycle, redacted trace views,
+retention, and backup/restore. M5 extends this with manifest-driven research/coding specialists, application-owned
+privacy classification, exact hash-bound consent, and Structured Outputs. The approved
+mapping is `local`→consent required, `remote_allowed`→eligible in cloud mode,
+`restricted`→never sent, and `unclassified`→blocked.
 
 Read the code in this order:
 `domain/models.py` → `ports/*` → `adapters/ollama_generalist.py` → `application/conversation.py` →
 `guardrails/*` → `domain/state_machine.py` → `adapters/*` → `presentation/cli.py` → `composition.py`.
 
-## M3 guardrail runtime path
+## M4 research runtime path
 
-`composition.build` constructs a `GuardrailController` from validated `[limits]`
-configuration. `ConversationOrchestrator.handle` reserves a step and provider call
-before invoking `GeneralistPort.generate`. The controller applies the configured
-timeout, retries only `TransientProviderError`, records circuit failures, reserves
-fake cost before execution, and reconciles it afterward. Limit, timeout, permanent,
-malformed, and circuit errors become blocked results; cancellation becomes a
-cancelled result with any received partial work.
+`composition.build` constructs the approved `OpenAIHostedWebSearch` provider (or the
+network-free fixture provider) behind `WebResearchProvider`, then wraps calls with
+the M3 `GuardrailController`. `ConversationOrchestrator.route` uses the deterministic
+freshness detector. Research requires `/mode cloud`, validates all returned URLs with
+the application citation policy, quarantines instruction-shaped text, and renders
+only accepted evidence URLs.
 
 SQLite task records are marked `running` before provider work and completed with the
 terminal status. Startup calls `mark_interrupted_tasks`; it marks stale running
 tasks `interrupted` and never replays them.
 
+### Hosted research path
+
+`research/freshness.py:needs_current_information` selects current or explicit research
+requests. `OpenAIHostedWebSearch` sends only the minimized query with `store:false`
+and the read-only hosted `web_search` tool. `research/citation_validator.py` rejects
+non-HTTPS, private, loopback, link-local, reserved, and duplicate URLs before
+`EvidenceObject`s reach `render_result`. `FixtureWebResearchProvider` exercises the
+same contract without network access. Hosted search is a documented DEC-OQ-07
+exception: Elly validates returned citation metadata but does not fetch page bodies.
+
 ---
 
 ## 1. Where execution begins
 
-`src/elly/__main__.py:main` — parses `--config`, calls `composition.build()` to
-wire the app, then `Cli.start(app).run()`. Config errors fail closed (exit 2).
+`src/elly/__main__.py:main` — parses `--config` (or auto-selects
+`./config.local.toml` when present), calls `composition.build()` to wire the app,
+then `Cli.start(app).run()`. Config errors fail closed (exit 2).
 
 ## 2. Runtime path (happy turn)
 
@@ -39,7 +59,7 @@ wire the app, then `Cli.start(app).run()`. Config errors fail closed (exit 2).
    - `ensure_transition(QUEUED→RUNNING)` + audit `task.received`;
    - `repository.recent_messages` (prior turns) → `context.build_context` → prompt + `ContextManifest`;
    - `repository.append_message` (user turn — repo honors no-store);
-   - `_call_generalist` → `GeneralistPort.generate` (the **fake**);
+   - `_call_generalist` → `GeneralistPort.generate` (real localhost Ollama by default);
    - `validation.validate_generalist_text`;
    - success → append assistant turn, `compose_success` (COMPLETED/INFERRED/VALIDATED), `ensure_transition`, audit `task.completed`.
 5. `presentation/render.py:render_result` prints Outcome / Evidence / Route.
@@ -67,16 +87,19 @@ in M1; model output is still treated as data, never executed (SEC-005 seam).
 ## 6. How dependencies are selected
 
 `composition.py:build` is the **only** place that binds concrete adapters to ports.
-Non-fake model IDs select `OllamaGeneralist`; `fake-*` IDs select the deterministic
-test double. SQLite, audit, and clock remain real adapters.
+The main TOML's `[providers]`, `[models]`, and `[pricing]` tables are the only
+operator-facing source for adapter selection, runtime model IDs, and cost policy.
+SQLite, audit, and clock remain real adapters.
 
 The built-in and development configuration select `qwen3:8b`. A request that
 explicitly needs the larger model can use `config.qwen3-14b.example.toml` or set
 `ELLY_GENERALIST_MODEL_ID=qwen3:14b`; there is no automatic upgrade.
 
-`specialists/registry.py:SpecialistRegistry` discovers validated manifests from
-`config/specialists`. It records invalid manifests as disabled and grants no
-execution or tool authority. Routing and provider execution are M5 work.
+`specialists/registry.py:SpecialistRegistry` discovers validated capability
+manifests from `config/specialists`, then injects models resolved by the main
+config. A manifest containing `provider_model` is rejected so it cannot silently
+override centralized configuration. Invalid manifests are disabled and grant no
+execution or tool authority.
 
 ## 7. Where fakes / real adapters are invoked
 

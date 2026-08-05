@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ..domain.models import AuditEvent
+from ..domain.models import AuditEvent, HealthReport
 
 
 @runtime_checkable
@@ -31,4 +31,8 @@ class AuditPort(Protocol):
 
     def by_task(self, task_id: str) -> list[AuditEvent]:
         """Return all events for a task, chronological order."""
+        ...
+
+    def health(self) -> HealthReport:
+        """Probe the sink without writing an event or exposing sensitive data."""
         ...

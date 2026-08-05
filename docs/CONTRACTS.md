@@ -67,10 +67,10 @@ validation** (see §7). Full `content_hash` returns when a local-reader provider
 `claim_id`, response span/text, `support_status` (`direct`|`indirect`|`conflicted`|`unsupported`),
 evidence ids, validation rule/version, display-safe notes. A `known` claim ≠ `unsupported`.
 
-## 5. Specialist contracts — foundation ✅ M2; execution ◻ M5 (DESIGN §6.3)
+## 5. Specialist contracts — ✅ M5 (DESIGN §6.3)
 
 - `SpecialistManifest`: id + contract version, role (`research`|`coding`), capability +
-  exclusions, input schema, `SpecialistResult` schema version, provider/model id, prompt
+  exclusions, input schema, `SpecialistResult` schema version, centrally injected runtime model id, prompt
   version, modalities (text), privacy class + consent rule, input/output/evidence limits,
   timeout/retry/cost class/fallback, enabled flag.
 - `SpecialistTask`: goal, role, bounded context manifest, evidence refs, user constraints,
@@ -79,11 +79,11 @@ evidence ids, validation rule/version, display-safe notes. A `known` claim ≠ `
 - `SpecialistResult`: `status` (Epistemic), `answer` (bounded), `key_evidence` (ids),
   `sources` (ids), `assumptions`, `uncertainties`, `recommended_action?` (AI-007/008).
 
-M2 adds `SpecialistManifest` validation and `SpecialistRegistry` discovery from
-`config/specialists/*.toml`. The registry does not route tasks, invoke providers,
-grant tools, or make a manifest executable; those remain M5 responsibilities.
+M2 added manifest validation and registry discovery. M5 adds application-owned routing,
+privacy/consent checks, provider execution, result validation, and depth-one/tool
+authorization; manifests still never grant authority by themselves.
 
-## 6. Consent contract — ◻ M5 (DESIGN §6.5, DEC-OQ-06)
+## 6. Consent contract — ✅ M5 (DESIGN §6.5, DEC-OQ-06)
 
 - `ConsentProposal`: proposal id, task id, provider/model, purpose, payload category list,
   redacted preview, payload hash, max reserved cost, created/expiry, one-time scope.
@@ -102,9 +102,9 @@ grant tools, or make a manifest executable; those remain M5 responsibilities.
 | `AuditPort` | `append`, `by_task` | ✅ M1 |
 | `ClockPort` | `now` (UTC) | ✅ M1 |
 | `CostPort` | estimate/reserve/reconcile | ✅ M3 fake ledger; live pricing M5 |
-| `SpecialistProviderPort` | health, execute structured request, cancel-if-supported | ◻ M5 |
-| **`WebResearchProvider`** (**new, DEC-OQ-07**) | `health`, `research(query, budget) -> {answer_text?, citations[]}` | ◻ M4 |
-| `CitationValidator` (**new, DEC-OQ-07**) | `validate(citations[]) -> validated[]` | ◻ M4 |
+| `SpecialistProviderPort` | health, execute structured request, cancel-if-supported | ✅ M5 fake + OpenAI |
+| **`WebResearchProvider`** (**new, DEC-OQ-07**) | `health`, `research(query, budget) -> {answer_text?, citations[]}` | ✅ M4 hosted adapter + fixture |
+| `CitationValidator` (**new, DEC-OQ-07**) | `validate(citations[]) -> validated[]` | ✅ M4 application policy |
 
 ### `WebResearchProvider` (frozen surface)
 Abstracts "given a query + bounds, return synthesized text and/or citations." The

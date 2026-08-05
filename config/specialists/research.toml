@@ -1,0 +1,18 @@
+[specialist]
+id = "research"
+version = "1.0"
+description = "Synthesizes bounded, validated research evidence."
+role = "research"
+capabilities = ["evidence_synthesis", "source_comparison", "uncertainty_reporting"]
+accepted_inputs = ["text", "context"]
+requires_current_data = false
+preferred_runtime = "cloud"
+risk_level = "low"
+estimated_cost = "medium"
+timeout_seconds = 60
+prompt_version = "research-v1"
+privacy_class = "remote_allowed"
+output_limit = 2000
+enabled = true
+allowed_tools = []
+exclusions = ["tool_execution", "action_claims"]

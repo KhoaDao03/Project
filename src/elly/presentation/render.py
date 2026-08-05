@@ -4,7 +4,7 @@ Renders the compact regions that apply in M1:
   1. Outcome (answer or direct status first)
   2. Evidence state (Known/Inferred/Unknown/Blocked) when material
   3. Route (local in M1)
-  4. Sources (empty in M1 — no research path yet)
+  4. Sources (validated provenance for research)
   5. Limit/failure/next step (only when present, separated from facts)
 
 Never renders chain-of-thought. Sources are always empty here because M1 has no
@@ -24,6 +24,10 @@ def render_result(result: TaskResult) -> str:
         lines.append(f"[{result.task_status.value}]")
     lines.append(f"Evidence: {result.epistemic_status.value}")
     lines.append(f"Route: {result.route_summary.value}")
+    if result.citations:
+        lines.append("Sources:")
+        for index, citation in enumerate(result.citations, start=1):
+            lines.append(f"  [{index}] {citation}")
     if result.failures:
         lines.append("Failure: " + "; ".join(result.failures))
     if result.partial_work:

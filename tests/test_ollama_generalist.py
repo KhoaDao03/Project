@@ -112,8 +112,10 @@ class OllamaGeneralistTests(unittest.TestCase):
         worker = threading.Thread(target=run)
         worker.start()
         time.sleep(0.05)
+        started = time.monotonic()
         self.adapter.cancel()
         worker.join(timeout=2)
+        self.assertLess(time.monotonic() - started, 0.15)
         self.assertIsInstance(result[0], CancelledError)
         self.assertEqual(result[0].partial_work, "local")  # type: ignore[union-attr]
 

@@ -56,6 +56,16 @@ class AuditRedactionTests(unittest.TestCase):
         joined = "\n".join(captured.output)
         self.assertNotIn(canary, joined)  # allowlisted fields only; detail not logged
 
+    def test_persisted_detail_redacts_credential_values(self) -> None:
+        self.audit.append(AuditEvent(
+            task_id="t3", session_id="s1", event_type="provider.failed", at=UTC,
+            detail="api_key=CANARY-DO-NOT-STORE password:also-secret",
+        ))
+        stored = self.audit.by_task("t3")[0].detail
+        self.assertNotIn("CANARY-DO-NOT-STORE", stored)
+        self.assertNotIn("also-secret", stored)
+        self.assertIn("[REDACTED]", stored)
+
 
 if __name__ == "__main__":
     unittest.main()
