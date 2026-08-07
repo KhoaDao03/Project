@@ -14,7 +14,7 @@ defect/evidence matrix is [V1_VERIFICATION_REPORT.md](V1_VERIFICATION_REPORT.md)
 | M4 | Reopened | V1-017; live claim support remains `unknown` |
 | M5 | Reopened | V1-018; V1-003/005/008/013/014 repaired |
 | M6 | Reopened | V1-019, V1-020 |
-| M7 | Open | V1-021; quality/UAT pending |
+| M7 | Open | V1-021; quality/final threshold review pending; owner UAT scope decision recorded |
 
 **Scope:** Milestone M1 (Walking Skeleton: Deterministic Local Conversation).
 **Status legend:** Not started · Planned · Scaffolded · Partially implemented ·
@@ -107,7 +107,7 @@ ports/adapters.
 | AI-003/AI-005 specialist routing | UC-03/12, AT-03/04 | `conversation.py:route`, `specialists/registry.py` | registry and workflow tests | Implemented + Tested |
 | AI-007/AI-008 result contract | AT-04/05 | `specialists/contracts.py`, `adapters/openai_specialist.py` | fake malformed/truncation and adapter tests | Implemented + Tested |
 | AI-013 depth-one/tool authorization | AT-03.1/.2 | `application/specialists.py`, manifests | tool/high-impact denial tests | Implemented + Tested |
-| AI-014/SEC-001/002 privacy + consent | UC-04, AT-09 | `privacy.py`, CLI `/approve`/`/deny` | classification/hash/expiry/mutation tests | Implemented + Tested |
+| AI-014/SEC-001/002 privacy + consent | UC-04, AT-09 | `privacy.py`, CLI `/approve`/`/deny` | classification/hash/expiry/mutation tests | Implemented + Tested; deferred from current-version UAT |
 | API-002/AI-004 OpenAI specialist | AT-05 | `adapters/openai_specialist.py` | `store:false`/Structured Outputs/no-tools test + live smoke | Implemented + Smoke-tested |
 | OPS-003 usage/cost | AT-13.3 | `openai_specialist.py:last_usage`, M3 guardrails | live usage capture; configured estimate reconciliation | Implemented; billing pricing configured |
 
@@ -118,9 +118,9 @@ M5 strict verification: **124 passed, 0 skipped**. Live smoke returned a valid
 
 | Req | UC/AT | Source | Tests/evidence | Status |
 |---|---|---|---|---|
-| DATA-002 / DATA-005 profile continuity and deletion | UC-06/09, AT-12 | `memory.py:ProfileService`, `sqlite_repository.py` | `test_m6_data_controls:test_corrupt_profile_is_quarantined...`, profile lifecycle test | Implemented + Tested; Owner approved |
-| DATA-001 no-store and retention | UC-06/09, AT-12.1/.2 | `sqlite_repository.py`, `composition.py:maintain_storage` | M6 no-store/restart and expiry tests | Implemented + Tested |
-| DATA-004 / SEC-007 durable trace redaction | UC-11, AT-13.1/.5 | `audit_log.py`, `sqlite_repository.py` | durable audit/source test | Implemented + Tested |
+| DATA-002 / DATA-005 profile continuity and deletion | UC-06/09, AT-12 | `memory.py:ProfileService`, `sqlite_repository.py` | `test_m6_data_controls:test_corrupt_profile_is_quarantined...`, profile lifecycle test | Implemented + Tested; deferred from current-version UAT |
+| DATA-001 no-store and retention | UC-06/09, AT-12.1/.2 | `sqlite_repository.py`, `composition.py:maintain_storage` | M6 no-store/restart and expiry tests | Implemented + Tested; deferred from current-version UAT |
+| DATA-004 / SEC-007 durable trace redaction | UC-11, AT-13.1/.5 | `audit_log.py`, `sqlite_repository.py` | durable audit/source test | Implemented + Tested; deferred from current-version UAT |
 | OPS-002 / OPS-003 status and budget | UC-10, AT-13.2/.3 | `composition.py:Application.health`, guardrails | existing health/budget tests | Implemented + Tested |
 | OPS-004 quarantine, migration rollback, backup/restore | UC-06, AT-14.4/.5 | `sqlite_repository.py`, `operations.py` | quarantine, failed-migration rollback, recovery-time tests | Implemented + Tested |
 
@@ -134,5 +134,14 @@ M6 is owner-approved and M7 release hardening is now in progress.
 | NFR-004 permanent evaluation suite | AT-15.3, EVAL-001…030 | `evaluation/catalog.py`, `evaluation/runner.py` | `test_m7_release`; release-evidence JSON format | Implemented + Tested; live evidence pending |
 | AT-15.4 deterministic release gate | AT-15.4 | `scripts/run_release_gate.py` | 172-test strict regression; deterministic gate passes | Tested |
 | AT-15.5 quality thresholds | AT-15.5 | `docs/M7_RELEASE_CHECKLIST.md` | Harness reports provider-quality/live gates pending | Not yet verified |
-| AT-15.6 owner UAT | AT-15.6, UC-01…UC-12 | `docs/M7_RELEASE_CHECKLIST.md` | Owner record not yet supplied | Pending |
+| AT-15.6 owner UAT | AT-15.6, UC-01…UC-12 | `docs/M7_UAT_RECORD.md` | Owner review 2026-08-07; scores and approved deferrals recorded | Owner-approved with UC-04/06/09/11 deferred; not verified for this version |
 | NFR-006 final adapter portability | AT-03.5/AT-15.4 | existing ports and contract tests | current regression suite | Tested; final M7 review pending |
+
+### M7 owner UAT decision addendum — 2026-08-07
+
+The owner approved the current UAT decision with clarity **4/5**, control/privacy
+**3/5**, usefulness **4/5**, and **no safety-critical issue observed**. UC-04
+(privacy and consent), UC-06 (startup continuity), UC-09 (profile and session
+controls), and UC-11 (trace and audit review) are deferred to later versions.
+Their implementation evidence remains historical coverage only and must not be
+reported as current-version verification.

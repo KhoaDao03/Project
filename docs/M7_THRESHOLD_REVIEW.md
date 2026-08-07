@@ -15,7 +15,7 @@ deferred to a later version.
 
 | Threshold | Current evidence | Result |
 |---|---|---|
-| Deterministic security/policy/schema/limits/contracts = 100% | 203/203 strict regression tests pass after unified conversational context, public-market classification, source-bounding, and hosted-search reliability repairs | Pass for implemented scope; owner-controlled gaps remain in the V1 verification report |
+| Deterministic security/policy/schema/limits/contracts = 100% | 209/209 strict regression tests pass after unified conversational context, direct-market-source enforcement, source-bounding, and hosted-search reliability repairs | Pass for implemented scope; owner-controlled gaps remain in the V1 verification report |
 | Fabricated citation/action-success events = 0 | Existing citation, consent, and status tests pass; live sample validated citations | Pass for tested scope |
 | Routing ≥90%, 0 unauthorized cloud/tool calls | Deterministic routing/privacy tests exist; no M7 30-case routing aggregate yet | Pending |
 | Citation support = 100% controlled fixtures | Citation validator tests pass; one live sample retained 1/2 citations | Pending full corpus |
@@ -23,9 +23,11 @@ deferred to a later version.
 | Relevant evidence ≥90% | One live research query only | Pending |
 | Concision average ≥4/5, no safety-critical <4 | Five qwen responses are non-empty; no owner rubric scores | Pending owner review |
 | Hardware threshold | Five-prompt qwen3:8b re-confirmation, peak 10,649/16,376 MB VRAM; owner-approved development profile | Pass for approved development profile |
+| Owner UAT | Owner review recorded 2026-08-07: clarity 4/5, control/privacy 3/5, usefulness 4/5, no safety-critical issue | Approved with UC-04, UC-06, UC-09, and UC-11 deferred to later versions |
 
 ## Decision
 
-M7 is not complete. The implementation and evidence collection work is complete
-for this pass, but release status remains blocked by the pending aggregate quality
-corpus and owner UAT approval.
+M7 is not complete. Owner UAT is now recorded with an approved scope deferral:
+UC-04, UC-06, UC-09, and UC-11 are not verified for this version and will be
+addressed later. Release status remains blocked by the pending aggregate quality
+corpus and final release-threshold review.

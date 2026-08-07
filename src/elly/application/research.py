@@ -42,7 +42,7 @@ class ResearchPipeline:
     def __init__(self, *, provider: WebResearchProvider, clock: ClockPort, max_results: int,
                  timeout_seconds: float, guardrails: GuardrailController | None = None,
                  resolve_hosts: bool = False, evidence_token_budget: int = 256,
-                 call_cost_usd: float = 0.0, max_output_tokens: int = 1024) -> None:
+                 call_cost_usd: float = 0.0, max_output_tokens: int = 2048) -> None:
         self.provider = provider
         self.clock = clock
         self.max_results = max_results
@@ -63,8 +63,25 @@ class ResearchPipeline:
         if request_guardrails is None:
             response = self.provider.research(query, budget)
         else:
+            attempt = 0
+
+            def call_provider():
+                nonlocal attempt
+                attempt += 1
+                provider_query = query
+                if attempt > 1:
+                    provider_query = (
+                        f"{query}\n\n"
+                        "Retry requirement: the earlier attempt returned no cited "
+                        "sources. Search again using a direct, timely, authoritative "
+                        "source and return at least one inline citation. If the exact "
+                        "current value is unavailable, return a cited unavailability "
+                        "statement rather than an uncited estimate."
+                    )
+                return self.provider.research(provider_query, budget)
+
             response = request_guardrails.execute(
-                lambda: self.provider.research(query, budget),
+                call_provider,
                 output_tokens=self.max_output_tokens,
                 cost_usd=self.call_cost_usd,
             )
@@ -165,4 +182,6 @@ def _unverified_summary(text: str) -> str:
 
 def _has_conflict(text: str) -> bool:
     lowered = text.lower()
-    return "conflict" in lowered or "disagree" in lowered
+    return any(marker in lowered for marker in (
+        "conflict", "disagree", "different quote", "quotes vary", "prices vary",
+    ))

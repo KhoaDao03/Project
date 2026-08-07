@@ -187,6 +187,15 @@ A vetted AEAD/key-management dependency is deferred to a later version and remai
 a production prerequisite. This does not represent the prototype construction as
 production-grade cryptography.
 
+### DEC-M7-03 — Owner-approved use-case deferrals *(Owner-approved, 2026-08-07)*
+
+The owner approved the M7 UAT verdict with clarity **4/5**, control/privacy **3/5**,
+usefulness **4/5**, and no safety-critical issue observed. UC-04 (privacy and
+consent), UC-06 (startup continuity), UC-09 (profile and session controls), and
+UC-11 (trace and audit review) are deferred to later versions. They are not claimed
+as verified in the current release; their later implementation and acceptance must
+be recorded in a future milestone/version decision.
+
 ## Still open
 
 - **OQ-10 — Production threat/legal/incident scope.** Deferred (pre-production only);

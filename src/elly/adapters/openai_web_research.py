@@ -32,7 +32,7 @@ class OpenAIHostedWebSearch:
 
     def __init__(
         self, *, api_key: str | None = None, model: str = "gpt-5.6-luna",
-        base_url: str = "https://api.openai.com/v1", max_output_tokens: int = 1024,
+        base_url: str = "https://api.openai.com/v1", max_output_tokens: int = 2048,
     ) -> None:
         self._key = (api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")).strip()
         self.model = model
@@ -49,20 +49,38 @@ class OpenAIHostedWebSearch:
         """Run one non-stored hosted-search request and return untrusted metadata."""
         if not self._key:
             raise PermanentProviderError("hosted web research is unavailable")
+        requested_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         body = {
             "model": self.model,
             "input": query,
             "instructions": (
                 "Use web search for this request; do not answer from model memory. "
+                f"The research request time is {requested_at}. Interpret current, "
+                "latest, today, and now relative to that timestamp. "
                 "Give a concise current answer and attach an inline citation to every "
-                "material factual claim. For a financial index quote, report the latest "
-                "available index level in points, its quote time or date, whether it may "
-                "be delayed, and the market status when available. Interpret S&P500, "
+                "material factual claim. Prefer official, first-party, exchange, index-"
+                "administrator, or established market-data sources over social media, "
+                "forums, forecasts, and commentary. For a financial index or commodity "
+                "quote, use a direct quote page or live financial-data feed; report the "
+                "latest available level, its exact quote time or date, whether it may be "
+                "delayed, and market status when available. If no timely direct quote can "
+                "be sourced, say so instead of substituting an older article or forecast. "
+                "Interpret S&P500, "
                 "S&P 500, SP500, and SPX as the S&P 500 stock-market index. Never present "
                 "a delayed quote as real-time and do not provide investment advice."
             ),
             "store": False,
-            "tools": [{"type": "web_search"}],
+            "reasoning": {"effort": "low"},
+            "tools": [{
+                "type": "web_search",
+                "search_context_size": "medium",
+                "external_web_access": True,
+                "filters": {
+                    "blocked_domains": [
+                        "reddit.com", "quora.com", "wikipedia.org"
+                    ]
+                },
+            }],
             "tool_choice": "required",
             "include": ["web_search_call.action.sources"],
             "max_output_tokens": self.max_output_tokens,
@@ -97,13 +115,12 @@ class OpenAIHostedWebSearch:
             raise TransientProviderError("hosted web research is unavailable") from exc
         text = _response_text(payload)
         citations = _response_citations(payload)
-        # Empty or uncited hosted-search results are commonly transient (for
-        # example, an output-token cutoff or an optional search that yielded no
-        # final message). Let the application-owned guardrail retry once while
-        # retaining its provider-call and cost accounting.
-        if not text or not citations:
+        # A cited passage can still produce a safe answer when the provider omits
+        # its top-level summary. No citations, however, can never satisfy Elly's
+        # research contract and is retried by the application guardrail.
+        if not citations:
             raise TransientProviderError(
-                "hosted web research returned an incomplete cited answer"
+                "hosted web research returned no cited sources"
             )
         return ResearchResponse(
             answer_text=text, citations=tuple(citations), provider="openai_web_search", model=self.model,

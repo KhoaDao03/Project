@@ -54,7 +54,11 @@ def _canonical(url: str) -> tuple[str, str]:
         if value and not key.lower().startswith("utm_")
         and key.lower() not in _TRACKING_QUERY_KEYS
     ))
-    canonical = urlunsplit(("https", host, parsed.path or "/", query, ""))
+    canonical_host = host.removeprefix("www.")
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/")
+    canonical = urlunsplit(("https", canonical_host, path, query, ""))
     return canonical, host
 
 

@@ -505,14 +505,14 @@ Store confirmed profile items with source/sensitivity/confirmation/expiry, stric
 ### Milestone 7 — Release Hardening, Evaluation Suite & UAT
 
 - **Number / Name:** M7 — Release Hardening, Evaluation Suite & UAT
-- **Status:** **Open — not release-ready (independent verification 2026-08-04)**; deterministic gate passes, aggregate quality evidence and owner UAT remain pending.
-- **Outcome:** The permanent 30-case evaluation suite, full security/AT-15 release gates, owner UAT of UC-01…UC-12, documentation, and final traceability all pass at approved thresholds, and V1 is demonstrable end-to-end.
+- **Status:** **Open — not release-ready (independent verification 2026-08-04)**; owner UAT was recorded 2026-08-07 with four approved later-version deferrals, while aggregate quality evidence and final threshold review remain pending.
+- **Outcome:** The permanent 30-case evaluation suite, full security/AT-15 release gates, owner UAT of the current scope, documentation, and final traceability pass at approved thresholds, with UC-04/06/09/11 explicitly deferred to later versions.
 
 #### Objective
 Turn a feature-complete system into a **verified, releasable** one. It addresses RSK-03 (specialist quality, now measurable), RSK-11/12 (scope/schedule discipline), and closes the release gate. **You learn** how to evaluate an AI system against versioned fixtures and thresholds and how to make a release decision on evidence.
 
 #### User-visible or demonstrable outcome
-The full EVAL-001…030 suite runs and reports per-case results pinned to model/prompt/provider/fixture version/date; all deterministic safety/policy/contract tests pass 100%; approved probabilistic thresholds (routing ≥90% with 0 unauthorized calls, ≥90% relevant evidence, 100% citation support / required abstention, concision rubric ≥4/5) pass with failures individually visible; the owner completes UC-01…UC-12 UAT; documentation and the traceability matrix are complete.
+The full EVAL-001…030 suite runs and reports per-case results pinned to model/prompt/provider/fixture version/date; all deterministic safety/policy/contract tests pass 100%; approved probabilistic thresholds (routing ≥90% with 0 unauthorized calls, ≥90% relevant evidence, 100% citation support / required abstention, concision rubric ≥4/5) pass with failures individually visible; the owner approves the current UAT scope, with UC-04/06/09/11 deferred; documentation and the traceability matrix are complete.
 
 #### Included scope
 - Use cases: UC-01…UC-12 *verification* (UAT).
@@ -524,6 +524,7 @@ The full EVAL-001…030 suite runs and reports per-case results pinned to model/
 #### Explicitly deferred scope
 - All optional V1 items (streaming NFR-005, web UI UX-002, verification pass AI-016, trace export DATA-006) unless separately approved — remain out of the release unless the owner elects them.
 - All Future roadmap items (§18).
+- Owner-approved later-version deferrals: **UC-04 privacy and consent, UC-06 startup continuity, UC-09 profile and session controls, and UC-11 trace and audit review**. These are not current-version verification targets.
 
 #### Dependencies
 - M1–M6 complete; OQ-09 thresholds approved; recorded fixtures + live smoke suites available.
@@ -542,7 +543,7 @@ Assemble the permanent evaluation suite from EVAL fixtures; run deterministic as
 - [ ] All deterministic security/policy/schema/limit/contract tests pass 100% (AT-15.4).
 - [ ] All approved probabilistic thresholds met, failures individually visible (AT-15.5); 0 fabricated citation/action-success events.
 - [ ] EVAL-001…030 recorded with model/prompt/provider/fixture/date (AT-15.3).
-- [ ] Owner completes UC-01…UC-12 UAT and approves clarity, control, usefulness (AT-15.6).
+- [x] Owner records UAT decision and approves clarity/control/usefulness (AT-15.6); UC-04/06/09/11 are explicitly deferred to later versions and remain unverified for this version.
 - [ ] SRS §20 V1 acceptance checklist fully satisfied; traceability matrix updated; docs complete.
 
 #### Risks and mitigations

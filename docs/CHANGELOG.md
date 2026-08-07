@@ -6,6 +6,22 @@ The complete chronological record of improvements made during the independent
 verification and owner test conversation is in
 [CONVERSATION_IMPROVEMENT_LOG.md](CONVERSATION_IMPROVEMENT_LOG.md).
 
+## Time-sensitive market research reliability — 2026-08-06
+
+- Current market-price and index-level requests now require a direct quote,
+  exchange, index-administrator, or established market-data page. News recaps,
+  forecasts, forums, and community posts are not accepted as current quotes.
+- Hosted search receives the exact UTC request time, requires direct timely quote
+  evidence and quote timing/delay/market status, blocks common community domains,
+  uses medium search context with external access enabled, and has a configurable
+  2,048-token output ceiling.
+- A bounded retry now changes the request to explicitly repair missing citations
+  instead of repeating the same query. A citation-only response can proceed to
+  application validation even when the provider omits its top-level summary.
+- Canonical source identity now collapses `www` and trailing-slash variants.
+  Conflicting or provider-varying market quotes remain `unknown`.
+- Strict suite: **209 passing**. Release quality scoring and owner UAT remain open.
+
 ## Unified conversational awareness — 2026-08-05
 
 - Added one bounded, role-aware conversation resolver shared by local generalist,
@@ -24,7 +40,7 @@ verification and owner test conversation is in
 
 - Hosted research now requires the `web_search` tool, requests the provider's
   complete consulted-source metadata, retries incomplete/uncited responses once,
-  and uses a configurable 1,024-token research output ceiling instead of a
+  and uses a configurable research output ceiling instead of a
   hard-coded 512-token ceiling.
 - Valid relevant citation metadata without claim passages now produces a useful,
   explicitly unverified `inferred` provider summary rather than an empty abstention.
@@ -104,6 +120,13 @@ verification and owner test conversation is in
   and owner UAT remain open.
 
 ## [Unreleased]
+
+### M7 owner UAT verdict — 2026-08-07
+- Recorded owner approval from Khoa Dao: clarity 4/5, control/privacy 3/5,
+  usefulness 4/5, and no safety-critical issue observed.
+- Deferred UC-04, UC-06, UC-09, and UC-11 to later versions. These capabilities
+  remain explicitly unverified for the current release rather than being counted
+  as passed.
 
 ### Milestone M0 (Decision, Feasibility & Contract-Freeze Gate) — **Complete 2026-08-04**
 - Owner decisions **OQ-01…OQ-09** recorded (`docs/DECISIONS.md`), incl. hosted

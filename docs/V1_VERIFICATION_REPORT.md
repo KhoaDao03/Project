@@ -21,7 +21,14 @@ than inventing support.
 An owner-independent remediation pass subsequently closed the shared-accounting,
 specialist-policy, retention/scheduling, health, trace-display, and deterministic
 evidence-selection defects. The deterministic suite passes, but a green suite is not a V1 release decision.
-Aggregate quality thresholds and owner UC-01…UC-12 UAT are still absent.
+Aggregate quality thresholds and owner UC-01…UC-12 UAT were still absent at the
+2026-08-04 verification date; the owner UAT follow-up is recorded below.
+
+Owner UAT follow-up (2026-08-07): the owner approved the current verdict with
+clarity 4/5, control/privacy 3/5, usefulness 4/5, and no safety-critical issue.
+UC-04, UC-06, UC-09, and UC-11 are deferred to later versions and are not treated
+as verified in the current release. The remaining release-threshold evidence is
+still required before M7 closure.
 
 ## 2. Initial repository state
 
@@ -59,7 +66,7 @@ synthetic text. No sensitive owner data was sent.
 | M4 Web/evidence | Implemented for selected metadata-only policy; aggregate acceptance pending | Deterministic selection and inferred-summary behavior pass; live hosted annotations may still lack claim passages | Corrected | Current-provider/inferred policy recorded | **Reopened pending aggregate evidence** |
 | M5 Specialists/privacy | Implementation repaired | Scope/privacy/error/output fixtures pass; aggregate acceptance and pricing remain | Corrected | Aggregate review pending | **Reopened** |
 | M6 Data/operations | Partial pending crypto/recovery | Retention/scheduler/health/trace tests pass; vetted AEAD and recovery acceptance remain | Corrected | Crypto choice pending | **Reopened** |
-| M7 Release/UAT | Partial harness | Deterministic gate passes; quality and UAT pending | Accurate after synchronization | Pending | **Remain open** |
+| M7 Release/UAT | Partial harness | Deterministic gate passes; quality pending; owner UAT follow-up records approved deferrals | Accurate after synchronization | Pending final threshold review | **Remain open** |
 
 ## 5. Confirmed repairs
 
@@ -79,6 +86,7 @@ synthetic text. No sensitive owner data was sent.
 | V1-012 | Major privacy, M1/M6 | Audit detail was truncated but credential values could still be persisted. | Credential-value redaction occurs before durable write; canary test added. | Fixed |
 | V1-013 | Major validation, M5 | Wrong-typed specialist fields were coerced to strings; false performed-action claims could pass. | Strict raw/type validation and performed-action rejection; tests added. | Fixed |
 | V1-014 | Major audit/consent, M5/M6 | Cloud approval was not durably audited before a provider call. | CLI writes redacted approval metadata first; audit failure prevents the call; tests added. | Fixed |
+| V1-023 | Major freshness/relevance, M4 | A successful financial search could select community posts or news recaps by lexical overlap, while identical retries exhausted the provider allowance. Retrieval time was incorrectly treated as sufficient freshness evidence. | Current market-value queries now require direct quote/index sources; hosted search is time-anchored and community-filtered; retries request citation repair; URL variants deduplicate; quote conflicts stay unknown. Deterministic regressions added. | Fixed for implemented hosted path; aggregate live-quality evidence remains pending |
 
 ## 6. Blocker-remediation status and residual gaps
 
@@ -143,7 +151,7 @@ library only; Python/toolchain provenance still remains an operator concern.
 | `git status --short`; `git log --oneline -12`; `rg --files` | Initial state recorded; pre-existing dirty M4–M7 work identified. |
 | `PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -t .` | Baseline sandbox: 129 run, one socket setup error; authorized rerun: **135/135 pass**. |
 | Focused repaired suites | Staged owner-independent blocker sets: **94/94** and final trace subset **83/83** pass. |
-| `PYTHONPATH=src python3 scripts/run_release_gate.py --output /tmp/elly-v1-conversation-context-evidence.json --hardware-status pass` | **203/203 pass** after unified conversational context, public-market classification, source-bounding, and hosted-search reliability repairs; 30 records, deterministic pass, quality pending, UAT pending, hardware pass from explicit prior evidence, releasable false; exit 2 as designed. |
+| `PYTHONPATH=src python3 scripts/run_release_gate.py --output /tmp/elly-v1-market-freshness-evidence.json --hardware-status pass` | **209/209 pass** after unified conversational context, direct-market-source enforcement, source-bounding, and hosted-search reliability repairs; 30 records, deterministic pass, quality pending, owner UAT scope decision recorded separately, hardware pass from explicit prior evidence, releasable false; exit 2 as designed. |
 | `PYTHONPATH=src python3 -m compileall -q src tests` | Pass. |
 | `git diff --check` | Pass. |
 | `ruff check src tests` | Not run: `ruff` not installed. |
@@ -183,5 +191,6 @@ does not itself block the personal prototype build.
 3. Approve a vetted backup AEAD/key-management dependency and complete recovery
    acceptance evidence.
 4. Run and score all EVAL-001…030 cases at approved thresholds.
-5. Owner completes and signs `docs/M7_UAT_RECORD.md`; rerun the release gate and
-   independently reassess M3–M7 closure.
+5. Rerun the release gate and independently reassess M3–M7 closure, carrying the
+   owner-approved UC-04/06/09/11 deferrals as explicit scope exclusions for this
+   version.

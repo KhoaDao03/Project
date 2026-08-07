@@ -25,7 +25,9 @@ from elly.domain.errors import (
     StorageFailureError,
     TransientProviderError,
 )
-from elly.ports.web_research import ProviderCitation, ResearchBudget
+from elly.guardrails.controller import GuardrailController
+from elly.guardrails.limits import LimitPolicy
+from elly.ports.web_research import ProviderCitation, ResearchBudget, ResearchResponse
 from elly.research.citation_validator import validate_citations
 from elly.research.fake_provider import FixtureWebResearchProvider
 from elly.research.freshness import needs_current_information
@@ -66,6 +68,15 @@ class CitationValidatorTests(unittest.TestCase):
         self.assertEqual(len(result.evidence), 1)
         self.assertEqual(result.evidence[0].canonical_url, "https://example.com/market")
         self.assertEqual(len(result.rejected), 2)
+
+    def test_www_and_trailing_slash_variants_collapse(self) -> None:
+        result = validate_citations((
+            ProviderCitation("https://www.example.com/market/", "Market"),
+            ProviderCitation("https://example.com/market", "Market duplicate"),
+        ), now=UTC)
+        self.assertEqual(len(result.evidence), 1)
+        self.assertEqual(result.evidence[0].canonical_url, "https://example.com/market")
+        self.assertIn("duplicate", result.rejected[0])
 
     def test_private_non_https_and_unresolvable_are_not_renderable(self) -> None:
         result = validate_citations((
@@ -132,15 +143,17 @@ class EvidenceSelectionTests(unittest.TestCase):
         self.assertEqual(1, len(result.selected))
         self.assertTrue(any("token budget" in reason for reason in result.excluded))
 
-    def test_sp500_query_matches_generic_stock_indexes_headline(self) -> None:
+    def test_current_sp500_rejects_news_recap_instead_of_treating_it_as_quote(self) -> None:
         result = select_evidence(
             "What is the S&P500 index right now?", (
                 self.item(
-                    "E1", "How major US stock indexes fared Tuesday 8/4/2026"
+                    "E1", "How major US stock indexes fared Tuesday 8/4/2026",
+                    url="https://example.com/news/market-recap",
                 ),
             ), now=UTC, current_information=True,
         )
-        self.assertEqual(["E1"], [item.evidence_id for item in result.selected])
+        self.assertEqual([], [item.evidence_id for item in result.selected])
+        self.assertIn("E1: not a direct market quote source", result.excluded)
 
     def test_sp500_query_matches_source_only_spx_url(self) -> None:
         result = select_evidence(
@@ -148,6 +161,29 @@ class EvidenceSelectionTests(unittest.TestCase):
                 self.item(
                     "E1", "example.com",
                     url="https://example.com/indices/us-spx-500"
+                ),
+            ), now=UTC, current_information=True,
+        )
+        self.assertEqual(["E1"], [item.evidence_id for item in result.selected])
+
+    def test_current_gold_prefers_direct_quote_and_rejects_community_and_news(self) -> None:
+        result = select_evidence(
+            "What is the current price of gold?", (
+                self.item("E1", "Gold outlook", url="https://reddit.com/r/gold/post"),
+                self.item("E2", "Gold prices moved", url="https://investing.com/news/commodities/gold-prices"),
+                self.item("E3", "Live gold spot price", url="https://monex.com/gold-prices/"),
+            ), now=UTC, current_information=True,
+        )
+        self.assertEqual(["E3"], [item.evidence_id for item in result.selected])
+        self.assertIn("E1: not a direct market quote source", result.excluded)
+        self.assertIn("E2: not a direct market quote source", result.excluded)
+
+    def test_official_sp500_index_page_is_a_direct_quote_source(self) -> None:
+        result = select_evidence(
+            "What is the current S&P500 index?", (
+                self.item(
+                    "E1", "S&P 500 index",
+                    url="https://www.spglobal.com/spdji/en/indices/equity/sp-500/",
                 ),
             ), now=UTC, current_information=True,
         )
@@ -266,7 +302,7 @@ class ResearchPipelineTests(unittest.TestCase):
         self.assertIn("conflicting", outcome.answer)
         self.assertEqual((), outcome.claims)
 
-    def test_realistic_sp500_metadata_produces_unverified_summary(self) -> None:
+    def test_sp500_news_metadata_is_not_presented_as_a_current_quote(self) -> None:
         provider = FixtureWebResearchProvider(
             answer="The S&P 500 was reported at a current index level.",
             citations=(ProviderCitation(
@@ -278,10 +314,56 @@ class ResearchPipelineTests(unittest.TestCase):
         outcome = ResearchPipeline(
             provider=provider, clock=_Clock(), max_results=5, timeout_seconds=1
         ).execute("What is the S&P500 index right now?")
-        self.assertEqual(EpistemicStatus.INFERRED, outcome.epistemic)
-        self.assertEqual(1, len(outcome.evidence))
-        self.assertIn("Unverified provider summary", outcome.answer)
+        self.assertEqual(EpistemicStatus.UNKNOWN, outcome.epistemic)
+        self.assertEqual(0, len(outcome.evidence))
+        self.assertIn("could not verify", outcome.answer)
         self.assertEqual((), outcome.claims)
+
+    def test_market_quote_variation_keeps_unverified_summary_unknown(self) -> None:
+        provider = FixtureWebResearchProvider(
+            answer="A second live aggregator showed a different quote; prices vary by provider.",
+            citations=(ProviderCitation(
+                "https://monex.com/gold-prices/", "Live gold price"
+            ),),
+        )
+        outcome = ResearchPipeline(
+            provider=provider, clock=_Clock(), max_results=5, timeout_seconds=1
+        ).execute("What is the current price of gold?")
+        self.assertEqual(EpistemicStatus.UNKNOWN, outcome.epistemic)
+        self.assertIn("conflicting", outcome.answer)
+
+    def test_retry_changes_query_to_request_direct_cited_evidence(self) -> None:
+        class RetryProvider:
+            def __init__(self):
+                self.calls = []
+
+            def research(self, query, budget):
+                self.calls.append(query)
+                if len(self.calls) == 1:
+                    raise TransientProviderError("no cited sources")
+                return ResearchResponse(
+                    answer_text="Current gold price.",
+                    citations=(ProviderCitation(
+                        "https://monex.com/gold-prices/", "Current gold price",
+                        snippet="Current gold price.",
+                    ),),
+                    provider="retry", model="fixture", retrieved_at=UTC,
+                )
+
+        provider = RetryProvider()
+        guardrails = GuardrailController(
+            policy=LimitPolicy(max_provider_calls=2, max_retries=1, max_output_tokens=2048),
+            tool_timeout_seconds=1, total_timeout_seconds=3, sleep=lambda _delay: None,
+        )
+        outcome = ResearchPipeline(
+            provider=provider, clock=_Clock(), max_results=5, timeout_seconds=1,
+            guardrails=guardrails,
+        ).execute("What is the current price of gold?")
+        self.assertEqual(EpistemicStatus.KNOWN, outcome.epistemic)
+        self.assertEqual(2, len(provider.calls))
+        self.assertEqual("What is the current price of gold?", provider.calls[0])
+        self.assertIn("Retry requirement", provider.calls[1])
+        self.assertIn("direct, timely, authoritative", provider.calls[1])
 
 
 class OpenAIHostedWebSearchTests(unittest.TestCase):
@@ -334,26 +416,35 @@ class OpenAIHostedWebSearchTests(unittest.TestCase):
             request_body["include"], ["web_search_call.action.sources"]
         )
         self.assertIn("inline citation", request_body["instructions"])
-        self.assertEqual(request_body["max_output_tokens"], 1024)
+        self.assertIn("research request time", request_body["instructions"])
+        self.assertEqual(request_body["reasoning"], {"effort": "low"})
+        self.assertEqual(request_body["tools"][0]["search_context_size"], "medium")
+        self.assertTrue(request_body["tools"][0]["external_web_access"])
+        self.assertIn(
+            "reddit.com", request_body["tools"][0]["filters"]["blocked_domains"]
+        )
+        self.assertEqual(request_body["max_output_tokens"], 2048)
         self.assertEqual(len(result.citations), 1)
         self.assertEqual(result.citations[0].snippet, "")
 
-    def test_incomplete_or_uncited_answer_is_retryable(self) -> None:
-        payloads = (
-            {"output_text": "An uncited answer.", "output": []},
-            {
-                "output_text": "",
-                "output": [{
-                    "type": "web_search_call",
-                    "action": {"sources": [{"url": "https://example.com/source"}]},
-                }],
-            },
-        )
-        for payload in payloads:
-            with self.subTest(payload=payload):
-                with patch("urllib.request.urlopen", return_value=_Response(payload)):
-                    with self.assertRaises(TransientProviderError):
-                        self.adapter.research("current result", self.budget)
+    def test_uncited_answer_is_retryable(self) -> None:
+        payload = {"output_text": "An uncited answer.", "output": []}
+        with patch("urllib.request.urlopen", return_value=_Response(payload)):
+            with self.assertRaises(TransientProviderError):
+                self.adapter.research("current result", self.budget)
+
+    def test_cited_source_without_top_level_summary_is_accepted(self) -> None:
+        payload = {
+            "output_text": "",
+            "output": [{
+                "type": "web_search_call",
+                "action": {"sources": [{"url": "https://example.com/source"}]},
+            }],
+        }
+        with patch("urllib.request.urlopen", return_value=_Response(payload)):
+            result = self.adapter.research("current result", self.budget)
+        self.assertEqual("", result.answer_text)
+        self.assertEqual(1, len(result.citations))
 
 
 class _Response:
@@ -413,7 +504,7 @@ class ResearchCliTests(unittest.TestCase):
         result = self.cli.dispatch("What is the latest result?")
         self.assertIn("Route: web_research", result)
         self.assertIn("Sources:", result)
-        self.assertIn("https://www.example.com/current", result)
+        self.assertIn("https://example.com/current", result)
         roles = [message.role for message in self.app.repository.recent_messages(self.cli.session.session_id, 10)]
         self.assertEqual(roles, ["user", "assistant"])
 
@@ -482,7 +573,7 @@ class ResearchCliTests(unittest.TestCase):
         self.assertIn("A useful but unverified current result.", result)
         self.assertIn("Verified facts:\nNone", result)
         self.assertIn("Evidence: inferred", result)
-        self.assertIn("https://www.example.com/current", result)
+        self.assertIn("https://example.com/current", result)
 
     def test_research_followups_keep_prior_subject_and_do_not_fall_back_local(self) -> None:
         self.cli.dispatch("/mode cloud")

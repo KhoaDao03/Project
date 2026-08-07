@@ -1,10 +1,10 @@
 # Conversation-Driven Improvement Log
 
-**Period:** 2026-08-04 through 2026-08-05  
+**Period:** 2026-08-04 through 2026-08-06
 **Scope:** Work requested and verified during the owner/Codex conversation that
 began with independent release verification and continued through configuration,
 hosted research, financial lookups, routing, and conversational awareness.  
-**Current deterministic baseline:** **203 passed, 0 failed, 0 skipped**.
+**Current deterministic baseline:** **209 passed, 0 failed, 0 skipped**.
 
 This log consolidates the thread-level work. The detailed independent findings
 remain in [V1_VERIFICATION_REPORT.md](V1_VERIFICATION_REPORT.md), while
@@ -111,7 +111,7 @@ that metadata is claim-level evidence.
 - Classified empty or uncited provider output as transient so the existing
   bounded guardrail can retry it once, with every attempt still cost-accounted.
 - Replaced the hard-coded 512-token hosted-research limit with configurable
-  `research.max_output_tokens`, defaulting to 1,024 tokens. This leaves room for
+  `research.max_output_tokens`, now defaulting to 2,048 tokens. This leaves room for
   reasoning plus a cited final response.
 - Added financial-quote instructions requiring the latest available level,
   timestamp/date, delay caveat, and market status when available; delayed quotes
@@ -130,6 +130,34 @@ that metadata is claim-level evidence.
 - Canonicalized and collapsed common tracking-only URL variants before evidence
   selection, eliminating large duplicate source dumps.
 - Included accepted/rejected source counts in bounded research audit metadata.
+
+The 2026-08-06 owner rerun exposed a second reliability layer: a search can run
+successfully without yielding evidence suitable for a current financial quote.
+The S&P request used both allowed provider attempts but returned no usable cited
+source; the gold request returned 48 candidate source records, of which the old
+lexical selector retained five, primarily Reddit and a news article. Their
+retrieval timestamp showed when Elly received the metadata, not when the quoted
+market value was published. Therefore neither a successful lookup nor a current
+retrieval timestamp established that the number itself was current.
+
+The general repair is now:
+
+- Current market-value queries require direct quote/index paths; news, article,
+  forecast, analysis, opinion, Reddit, and Quora sources are rejected for that
+  purpose. Established exchanges, index administrators, and market-data hosts
+  win ranking ties.
+- Hosted search is anchored to the exact UTC request time and instructed to use
+  direct quote feeds, report quote time/date, delay, and market status, and state
+  unavailability instead of substituting an old story or forecast.
+- The web-search request uses required search, medium context, explicit external
+  access, and blocked community domains. Its output allowance is 2,048 tokens.
+- The one allowed retry carries a targeted citation-repair instruction rather
+  than sending the same failed request twice.
+- Valid citations without a top-level provider summary proceed to local evidence
+  validation; no-citation results remain retryable failures.
+- `www`/bare-host and trailing-slash source variants canonicalize to one source.
+- Text acknowledging different provider quotes or varying prices is treated as a
+  conflict and remains `unknown`, never a verified fact.
 
 Observed live outcomes during owner verification:
 
@@ -185,11 +213,11 @@ Examples now covered by regression tests:
 
 ## 7. Verification evidence
 
-- Final strict regression suite: **203 passed, 0 failed, 0 skipped**.
+- Final strict regression suite: **209 passed, 0 failed, 0 skipped**.
 - Python compilation: pass.
 - `git diff --check`: pass.
 - Release evidence artifact:
-  `/tmp/elly-v1-conversation-context-evidence.json`.
+  `/tmp/elly-v1-market-freshness-evidence.json`.
 - Frozen catalog: 30 cases; deterministic gate pass; historical hardware evidence
   pass; aggregate quality and owner UAT remain pending; `releasable=false`.
 - `ruff` and `mypy` were not installed, so they were not represented as executed.

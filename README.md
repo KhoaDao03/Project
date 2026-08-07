@@ -1,119 +1,286 @@
 # Elly
 
-Elly Research Assistant — a local-first personal AI assistant.
+Elly is a terminal-first, local-first personal AI assistant. Ordinary conversation
+runs through a local Ollama model. When the owner explicitly enables cloud mode,
+Elly can route current-information questions to hosted web research and selected
+tasks to hosted specialists under privacy, consent, cost, and execution limits.
 
-**Current state: independently verified, not release-ready.** M0–M2 remain closed,
-M3–M6 are reopened, and M7 remains open for aggregate quality evidence and owner
-UAT. See [`docs/V1_VERIFICATION_REPORT.md`](docs/V1_VERIFICATION_REPORT.md).
-Development and testing default to local `qwen3:8b`; `qwen3:14b` is
-opt-in through [config.qwen3-14b.example.toml](config.qwen3-14b.example.toml) or
-`ELLY_GENERALIST_MODEL_ID`. See
-[`docs/MILESTONE_PLAN.md`](docs/MILESTONE_PLAN.md) for the roadmap and
-[`docs/implementStatus/M6_IMPLEMENTATION_STATUS.md`](docs/implementStatus/M6_IMPLEMENTATION_STATUS.md)
-for M6 implementation status and [`docs/M7_RELEASE_CHECKLIST.md`](docs/M7_RELEASE_CHECKLIST.md)
-for current release-gate evidence. See
-[`docs/implementStatus/M7_IMPLEMENTATION_STATUS.md`](docs/implementStatus/M7_IMPLEMENTATION_STATUS.md)
-for the M7 implementation status.
+## Project status
+
+**Independently verified, but not release-ready.** As of **2026-08-06**:
+
+- M0–M2 remain closed.
+- M3–M6 are implemented for the current prototype but remain reopened against
+  their broader acceptance criteria.
+- M7 remains open pending the complete live-quality corpus and owner UC-01…UC-12
+  acceptance testing.
+- The strict deterministic suite passes: **209 passed, 0 failed, 0 skipped**.
+- The development default is `qwen3:8b`; `qwen3:14b` is available through the
+  opt-in [14B example profile](config.qwen3-14b.example.toml).
+
+This status deliberately distinguishes passing deterministic tests from a release
+decision. See the [independent verification report](docs/V1_VERIFICATION_REPORT.md),
+[release checklist](docs/M7_RELEASE_CHECKLIST.md), and
+[conversation-driven improvement log](docs/CONVERSATION_IMPROVEMENT_LOG.md).
+
+## What works today
+
+| Area | Current behavior |
+|---|---|
+| Local conversation | Real localhost Ollama adapter with bounded context, output limits, cancellation, typed failures, and no cloud fallback |
+| Conversational awareness | Dependent turns use bounded recent conversation context for routing and answers; unrelated turns do not inherit stale intent |
+| Web research | OpenAI hosted `web_search` with `store:false`, required search, bounded retry, URL validation, source selection, and explicit cloud-mode gating |
+| Market lookups | Recognized current commodity/index questions require direct quote, exchange, index-administrator, or market-data sources; news, forecasts, and community posts are not accepted as live quotes |
+| Evidence honesty | Results distinguish `known`, `inferred`, `unknown`, and `blocked`; metadata-only provider summaries remain visibly unverified |
+| Specialists | Coding and evidence-synthesis routes use validated manifests and structured hosted responses with exact consent where policy requires it |
+| Privacy | Local-only is the default; restricted data cannot leave the machine, and eligible local/private payloads require an exact one-use consent proposal |
+| Persistence | SQLite sessions, confirmed profile items, redacted audit events, task traces, source metadata, independent retention periods, and no-store sessions |
+| Operations | Health/status reporting, bounded queue/concurrency, retry/circuit/timeout controls, cost reservations, authenticated backup/restore, and startup maintenance |
+| Configuration | Provider, model, and pricing choices are centralized in one TOML file, with environment variables as the final override layer |
+
+Elly never treats model output as authorization. Specialists cannot execute tools,
+write files, or truthfully claim that they performed external actions.
 
 ## Requirements
 
-Python **≥ 3.11**. **No third-party runtime dependencies** — V1 uses only the
-standard library (`sqlite3`, `tomllib`, `dataclasses`, …).
+- Python **3.11 or newer**
+- Ollama running locally at `http://127.0.0.1:11434` for the default generalist
+- The configured local model, normally `qwen3:8b`
+- An `OPENAI_API_KEY` only if hosted research or specialists will be used
 
-## Run
+Elly has **no third-party Python runtime dependencies**; its application runtime
+uses the standard library. Ollama and OpenAI are external providers, not Python
+packages installed by this project.
+
+## Quick start
+
+From the repository root:
 
 ```bash
-cp config.example.toml config.local.toml                # one-time local setup
-PYTHONPATH=src python3 -m elly                          # auto-loads config.local.toml
-PYTHONPATH=src python3 -m elly --config config.example.toml
-ELLY_DB_PATH=":memory:" PYTHONPATH=src python3 -m elly  # ephemeral database
+# One-time local configuration
+cp config.example.toml config.local.toml
+
+# Ensure the default local model is available
+ollama pull qwen3:8b
+
+# Start Elly; config.local.toml is loaded automatically
+PYTHONPATH=src python3 -m elly
 ```
+
+For hosted capabilities, add the key to the gitignored `.env` file:
+
+```bash
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY=...
+```
+
+Elly loads `.env` without overriding values already present in the process
+environment. API keys do not belong in TOML files.
+
+Alternative launches:
+
+```bash
+PYTHONPATH=src python3 -m elly --config config.example.toml
+ELLY_DB_PATH=":memory:" PYTHONPATH=src python3 -m elly
+```
+
+## Using Elly
+
+Elly starts in `local_only` mode. Cloud mode grants permission for policy-approved
+hosted calls; it does not force every message to use a cloud route.
+
+```text
+you> Explain dependency injection
+... local Ollama response ...
+Evidence: inferred
+Route: local_generalist
+
+you> /mode cloud
+Mode: cloud_permitted (hosted web research requires OPENAI_API_KEY).
+
+you> What is the current S&P 500 index?
+... current researched response or an honest inability to verify ...
+Evidence: known | inferred | unknown
+Route: web_research
+```
+
+Follow-ups such as “How about gold?” or “Tell me more” use the relevant bounded
+conversation history. Routing authority comes from the user’s intent—not from text
+previously generated by the assistant.
+
+### Evidence labels
+
+- `known`: displayed factual claims have a safe claim-supporting cited passage.
+- `inferred`: a useful provider or local-model answer is shown, but is not
+  established as verified fact.
+- `unknown`: evidence is absent, unsuitable, or conflicting.
+- `blocked`: policy, consent, configuration, limits, or a provider failure stopped
+  the request.
+
+Hosted providers sometimes return valid source metadata without claim-level
+passages. In that case Elly separates an **Unverified provider summary** from an
+empty **Verified facts** section rather than pretending the links prove the text.
 
 ### Commands
 
 | Command | Effect |
 |---|---|
-| `<text>` | Ask Elly (local Ollama generalist) |
-| `/new [--no-store]` | Start a new session (optionally no-store) |
-| `/mode local` | Local-only (the default mode) |
-| `/mode cloud` | Permit policy-controlled hosted web research (OpenAI `web_search`) |
-| `/status` | Dependency health + active mode |
-| `/cancel` | Request cancellation of the active local generation |
-| `/approve <id>` | Approve one exact specialist consent proposal |
-| `/deny <id>` | Deny one specialist consent proposal |
-| `/profile ...` | Review, add, correct, or delete confirmed profile items |
-| `/history list\|delete ...` | Review or delete stored sessions |
+| `<text>` | Submit a request through context-aware routing |
+| `/new [--no-store]` | Start a stored or ephemeral session |
+| `/mode local` | Enforce local-only operation |
+| `/mode cloud` | Permit policy-controlled hosted research and specialists |
+| `/status` | Show health, resolved providers/models, limits, and budget usage |
+| `/cancel` | Request cancellation of active local generation |
+| `/approve <id>` | Approve the exact pending specialist/hosted consent proposal |
+| `/deny <id>` | Deny the pending proposal without making the call |
+| `/profile list\|add\|correct\|delete ...` | Manage explicitly confirmed profile items |
+| `/history list\|delete <session-id>` | Review or delete stored sessions |
 | `/trace <task-id>` | Show redacted durable task events |
-| `/sources <task-id>` | Show task source metadata |
-| `/backup <path>` / `/restore <path>` | Create or restore an authenticated backup |
-| `/help`, `/exit` | Help / quit |
+| `/sources <task-id>` | Show stored validated source metadata |
+| `/backup <path>` | Create an authenticated backup when `ELLY_BACKUP_KEY` is set |
+| `/restore <path>` | Validate and restore an authenticated backup |
+| `/help`, `/exit` | Show help or quit |
 
-## Configuration
+## One-file runtime configuration
 
-Copy `config.example.toml` to the gitignored `config.local.toml`. A normal
-`python -m elly` run auto-loads that file, so `--config` is needed only for an
-alternate profile. Operational choices are centralized:
+Copy [config.example.toml](config.example.toml) to the gitignored
+`config.local.toml`. Provider, model, and pricing changes live together:
 
-- `[providers]` selects generalist, research, and specialist adapters.
-- `[models]` selects the local model, research model, and default specialist
-  model; `[models.specialists]` can override an individual specialist.
-- `[pricing]` owns the monthly ceiling, remote-call reservation, and consent maximum.
+```toml
+[providers]
+generalist = "ollama"
+research = "openai_web_search"
+specialists = "openai"
 
-Specialist manifests contain capability/security policy, not provider, model, or
-dollar pricing. Environment variables remain optional deployment overrides; API
-keys still belong only in `.env` or the OS environment.
+[models]
+generalist = "qwen3:8b"
+research = "gpt-5.6-luna"
+specialist_default = "gpt-5.6-luna"
 
-M3/M4 guardrails are configurable through `[limits]`; pricing is in `[pricing]`.
-Optional `ELLY_*` environment variables can override deployment-specific values.
+[models.specialists]
+# coding = "gpt-5.6-terra"
+# research = "gpt-5.6-luna"
+# stock_analysis = "gpt-5.6-terra"
 
-M6 retention and backup settings are in `[storage]`; set `ELLY_BACKUP_KEY` to
-enable startup and hourly daily-backup checks plus `/backup`/`/restore`.
+[pricing]
+monthly_budget_usd = 10
+remote_call_reservation_usd = 0.01
+consent_max_cost_usd = 0.25
+```
 
-`config/specialists/*.toml` contains declarative capability manifests. They are
-validated and discovered at startup. Research and coding routes may use the
-centrally configured specialist provider only in cloud-permitted mode and under
-privacy/consent policy.
+Additional sections control behavior rather than provider selection:
 
-**Secrets (`.env`).** For later cloud use (and the M0 OpenAI feasibility smoke), copy
-`.env.example` to `.env` and paste your key:
+- `[limits]`: input, steps, calls, retries, timeouts, concurrency, queue, and
+  specialist output ceilings.
+- `[generalist]`: localhost Ollama endpoint, timeout, and output ceiling.
+- `[research]`: maximum sources, 2,048-token default output allowance, and timeout.
+- `[storage]`: session/evidence/audit retention and backup directory.
+- `[specialists]`: capability-manifest directory.
+- `[log]`: redacted structured-log level.
+
+Environment variables remain supported as deployment overrides. Legacy TOML keys
+are accepted during migration, but the centralized tables above take precedence.
+Run `/status` to see the effective non-secret configuration.
+
+Specialist manifests in `config/specialists/` define capabilities, risk, privacy,
+timeouts, and exclusions. They do not duplicate provider models or pricing.
+`stock_analysis` is present as a validated capability manifest, but the current
+deterministic router exposes only the coding and research-specialist routes; stock
+questions that need fresh data currently use web research.
+
+## Research safeguards
+
+For recognized current commodity and financial-index quotes, Elly:
+
+1. anchors search to the exact UTC request time;
+2. requests a direct quote and its date/time, delay, and market status;
+3. blocks common community domains at the hosted-search layer;
+4. rejects news, forecasts, analysis, opinion, and community pages as quote
+   evidence during local selection;
+5. deduplicates tracking, `www`, and trailing-slash URL variants; and
+6. retries once with a targeted citation-repair instruction when the first search
+   returns no cited source.
+
+If suitable evidence is still unavailable, Elly abstains instead of substituting
+an old article or unsupported value.
+
+## Storage and privacy
+
+- Normal sessions use SQLite and configured retention periods.
+- `/new --no-store` prevents message-body reconstruction after restart.
+- Only explicitly confirmed profile facts are stored; inferred profile facts have
+  no persistence path.
+- Audit events contain bounded operational metadata, not prompts, secrets, or
+  chain-of-thought.
+- Source metadata expires separately from sessions and audit events.
+- `ELLY_BACKUP_KEY` enables backup/restore and scheduled daily-backup checks.
+
+The backup mechanism is a prototype authenticated envelope, not a final vetted
+AEAD/key-management design. That production decision and recovery acceptance are
+still open release items.
+
+## Verification
+
+Run the deterministic checks from the repository root:
 
 ```bash
-cp .env.example .env      # then set OPENAI_API_KEY=... in .env
+PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -t .
+PYTHONPATH=src python3 -m compileall -q src tests
+git diff --check
 ```
 
-`.env` is gitignored (never committed, SEC-004); `.env.example` is the committed
-template. `python -m elly` loads `.env` at startup (non-overriding; empty values
-ignored), so an unfilled key is a safe no-op.
-
-## Test
+Optional development tools, when installed:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -t .                            # all tests
-PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -t .  # strict
-PYTHONPATH=src python3 -m compileall -q src tests                                    # syntax check
+ruff check src tests
+mypy src
 ```
 
-## Real vs fake dependencies
+Generate a release-evidence snapshot with:
 
-- **Real:** terminal CLI, deterministic orchestrator, SQLite persistence (honors
-  no-store), redacted audit log, config, health.
-- **Real:** the local generalist (`OllamaGeneralist`) for non-`fake-*` model IDs.
-- **Fake:** `FakeGeneralist`, retained for deterministic contract and unit tests.
-- **Real:** approved OpenAI hosted `web_search` when `OPENAI_API_KEY` is configured.
-- **Fake:** `FixtureWebResearchProvider`, used for deterministic research tests.
-
-## Limitations
-
-Hosted-search metadata does not currently prove claim-level support, so live
-research may return `unknown` with validated sources. Full page-body RAG and M7
-quality/UAT gates remain incomplete. Brave/local reading, semantic memory, and
-authoritative live billing prices remain deferred. Specialists never execute
-tools, write files, or perform high-impact actions. Not for production.
-
-## Layout
-
+```bash
+PYTHONPATH=src python3 scripts/run_release_gate.py \
+  --output /tmp/elly-m7-evidence.json \
+  --hardware-status pass
 ```
-src/elly/{domain,ports,adapters,application,presentation}/   # ports-and-adapters monolith
-tests/                                                       # stdlib unittest
-docs/                                                        # SRS, DESIGN, plan, guides
+
+Only pass `--hardware-status pass` when the separately approved qwen3:8b hardware
+evidence is in scope. The command is expected to return a nonzero release result
+while quality or owner-UAT gates remain pending.
+
+## Known limitations and open gates
+
+- No complete 30-case live-provider quality/scoring corpus has been approved.
+- Owner UC-01…UC-12 UAT is pending.
+- Claim-level `known` research answers depend on the hosted provider supplying
+  cited passages; URL metadata alone remains `inferred` or `unknown`.
+- Current market research is intentionally conservative and may abstain when a
+  direct timely quote cannot be established.
+- Cloud pricing uses a conservative configured reservation, not an automatically
+  synchronized authoritative provider price feed.
+- The backup cryptography boundary still needs a vetted production dependency and
+  owner-approved recovery acceptance.
+- Full page-body RAG, local page reading, semantic/vector memory, web UI, portable
+  trace export, and autonomous tool execution are outside the current V1 scope.
+- Elly is a prototype and should not be used as authoritative medical, legal, or
+  financial advice.
+
+## Repository map
+
+```text
+src/elly/domain/          contracts, state, validation, context resolution
+src/elly/application/     conversation, research, specialist orchestration
+src/elly/ports/           provider and persistence boundaries
+src/elly/adapters/        Ollama, OpenAI, SQLite, audit adapters
+src/elly/research/        freshness, citation validation, source selection
+src/elly/specialists/     manifests, contracts, registry, fake provider
+src/elly/presentation/    terminal CLI and rendering
+config/specialists/       declarative specialist capability manifests
+tests/                    deterministic stdlib unittest suite
+scripts/                  smoke, benchmark, and release-evidence helpers
+docs/                     requirements, design, plans, reports, and evidence
 ```
+
+Start with [MILESTONE_PLAN.md](docs/MILESTONE_PLAN.md) for the roadmap and
+[CONVERSATION_IMPROVEMENT_LOG.md](docs/CONVERSATION_IMPROVEMENT_LOG.md) for the
+complete record of improvements made during verification and owner testing.

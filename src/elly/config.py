@@ -103,7 +103,7 @@ _DEFAULTS: dict[str, object] = {
     "research_provider": "openai_web_search",
     "research_model_id": "gpt-5.6-luna",
     "research_max_results": 5,
-    "research_max_output_tokens": 1024,
+    "research_max_output_tokens": 2048,
     "research_timeout_seconds": 60.0,
     "session_retention_days": 30,
     "evidence_retention_days": 7,

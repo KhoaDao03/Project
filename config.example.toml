@@ -76,7 +76,7 @@ manifest_dir = "config/specialists"
 [research]
 max_results = 5
 # Includes model reasoning tokens. Keep enough headroom for a cited answer.
-max_output_tokens = 1024
+max_output_tokens = 2048
 timeout_seconds = 60
 
 [log]

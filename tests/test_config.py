@@ -24,7 +24,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.specialist_provider, "openai")
         self.assertEqual(cfg.specialist_model_id("coding"), "gpt-5.6-luna")
         self.assertEqual(cfg.consent_max_cost_usd, 0.25)
-        self.assertEqual(cfg.research_max_output_tokens, 1024)
+        self.assertEqual(cfg.research_max_output_tokens, 2048)
 
     def test_development_config_selects_eight_b(self) -> None:
         cfg = load_config("config.example.toml")
