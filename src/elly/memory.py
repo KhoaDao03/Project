@@ -5,8 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import logging
+from typing import TYPE_CHECKING
 
 from .domain.errors import EllyError, InputInvalidError
+
+if TYPE_CHECKING:
+    from .ports.clock import ClockPort
+    from .ports.repository import SessionRepositoryPort
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +38,9 @@ class ProfileItem:
 class ProfileService:
     """Thin policy facade; inferred/model-derived values have no write method."""
 
-    def __init__(self, repository, clock) -> None:
+    def __init__(
+        self, repository: "SessionRepositoryPort", clock: "ClockPort"
+    ) -> None:
         self.repository = repository
         self.clock = clock
         self.degraded = False
@@ -53,10 +60,7 @@ class ProfileService:
         try:
             return self.list()
         except (EllyError, ValueError, TypeError) as exc:
-            quarantine = getattr(self.repository, "quarantine_profile_store", None)
-            if not callable(quarantine):
-                raise
-            suffix = quarantine(self.clock.now())
+            suffix = self.repository.quarantine_profile_store(self.clock.now())
             self.degraded = True
             logging.getLogger("elly.memory").warning(
                 "profile store quarantined suffix=%s reason=%s", suffix, type(exc).__name__

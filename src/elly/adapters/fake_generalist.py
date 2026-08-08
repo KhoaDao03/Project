@@ -92,3 +92,7 @@ class FakeGeneralist:
         text = f"{_FAKE_PREFIX}acknowledged: {snippet}" if snippet else f"{_FAKE_PREFIX}acknowledged."
         usage = GeneralistUsage(output_tokens=min(len(text.split()), request.max_output_tokens), latency_ms=0)
         return GeneralistResponse(text=text, usage=usage)
+
+    def cancel(self) -> None:
+        """The deterministic fake has no active I/O to interrupt."""
+        return None

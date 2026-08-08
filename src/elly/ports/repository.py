@@ -25,7 +25,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from ..domain.models import Message, SessionRecord
+from ..domain.models import AuditEvent, Message, OperationLease, ProvenanceReference, SessionRecord
+from ..memory import ProfileItem
 
 
 @runtime_checkable
@@ -60,10 +61,85 @@ class SessionRepositoryPort(Protocol):
         """Delete source metadata older than the evidence-retention cutoff."""
         ...
 
+    def purge_task_provenance(self, before: datetime) -> int:
+        ...
+
     def purge_audit_events(self, before: datetime) -> int:
         """Delete audit metadata older than the audit-retention cutoff."""
         ...
 
     def healthcheck(self) -> None:
         """Raise StorageFailureError unless the connection and schema are usable."""
+        ...
+
+    def start_task(self, task_id: str, session_id: str, at: datetime) -> bool:
+        """Start a task and return whether this request created a new task row."""
+        ...
+
+    def finish_task(self, task_id: str, status: str, at: datetime) -> None:
+        ...
+
+    def task_status(self, task_id: str) -> str | None:
+        ...
+
+    def mark_interrupted_tasks(self, at: datetime) -> int:
+        ...
+
+    def append_audit(self, event: AuditEvent) -> None:
+        ...
+
+    def add_task_source(self, task_id: str, source: str, at: datetime) -> None:
+        ...
+
+    def add_task_provenance(self, task_id: str, reference: ProvenanceReference) -> None:
+        ...
+
+    def audit_by_task(self, task_id: str) -> list[AuditEvent]:
+        ...
+
+    def task_sources(self, task_id: str) -> tuple[str, ...]:
+        ...
+
+    def list_sessions(self) -> list[SessionRecord]:
+        ...
+
+    def delete_session(self, session_id: str) -> bool:
+        ...
+
+    def add_profile_item(self, item: ProfileItem) -> None:
+        ...
+
+    def list_profile_items(self) -> list[ProfileItem]:
+        ...
+
+    def get_profile_item(self, item_id: str) -> ProfileItem | None:
+        ...
+
+    def update_profile_item(self, item: ProfileItem) -> None:
+        ...
+
+    def delete_profile_item(self, item_id: str, at: datetime) -> bool:
+        ...
+
+    def purge_expired_profile(self, now: datetime) -> int:
+        ...
+
+    def quarantine_profile_store(self, at: datetime) -> str:
+        ...
+
+    def close(self) -> None:
+        ...
+
+    def claim_operation(
+        self, *, task_id: str, request_id: str, capability_id: str,
+        request_digest: str, at: datetime,
+    ) -> OperationLease:
+        ...
+
+    def complete_operation(self, operation_id: str, *, at: datetime) -> None:
+        ...
+
+    def fail_operation(
+        self, operation_id: str, *, at: datetime, possible_duplicate: bool = False
+    ) -> None:
         ...

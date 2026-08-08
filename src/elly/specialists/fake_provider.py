@@ -21,6 +21,9 @@ class FakeSpecialistProvider:
     def health(self) -> HealthReport:
         return HealthReport(component="specialist(fake)", state=HealthState.HEALTHY)
 
+    def cancel(self) -> None:
+        return None
+
     def execute(self, task: SpecialistTask, *, model: str, prompt_version: str, output_limit: int) -> SpecialistResult:
         self.calls.append({
             "specialist_id": task.specialist_id,

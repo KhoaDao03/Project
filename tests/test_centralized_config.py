@@ -68,6 +68,7 @@ class CentralizedConfigIntegrationTests(unittest.TestCase):
                 self.assertEqual(app.config.research_model_id, "research-central")
                 self.assertEqual(app.specialist_registry.get("coding").provider_model, "coding-central")
                 self.assertEqual(app.specialist_registry.get("research").provider_model, "specialist-central")
+                self.assertIsNotNone(app.capability_registry.get("stock_analysis"))
                 self.assertEqual(app.guardrails.cost.budget_usd, 9)
                 # Fake/local routes cost zero even though the remote reservation
                 # policy is centrally configured for real cloud adapters.

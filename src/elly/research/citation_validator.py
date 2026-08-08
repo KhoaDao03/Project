@@ -98,7 +98,13 @@ def validate_citations(
             accepted.append(EvidenceObject(
                 evidence_id=f"E{len(accepted) + 1}", url=citation.url, canonical_url=canonical,
                 title=citation.title or host, publisher=citation.publisher or host,
-                snippet=citation.snippet, retrieved_at=citation.retrieved_at or stamp,
+                snippet=citation.snippet,
+                supporting_passage=citation.supporting_passage,
+                validation_status=(
+                    "provider_passage" if citation.supporting_passage else "metadata_only"
+                ),
+                retrieved_at=citation.retrieved_at or stamp,
+                source_published_at=citation.published_at,
                 source_class="primary" if host.endswith((".gov", ".edu")) else "secondary",
                 safety_flags=("hosted_provider_metadata",),
             ))

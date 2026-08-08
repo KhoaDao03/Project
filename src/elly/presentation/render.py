@@ -22,6 +22,7 @@ def render_result(result: TaskResult) -> str:
         lines.append(result.answer)
     else:
         lines.append(f"[{result.task_status.value}]")
+    lines.append(f"Outcome: {result.outcome_code.value}")
     lines.append(f"Evidence: {result.epistemic_status.value}")
     lines.append(f"Route: {result.route_summary.value}")
     if result.citations:

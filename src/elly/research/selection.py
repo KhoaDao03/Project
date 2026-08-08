@@ -125,23 +125,41 @@ def select_evidence(
             excluded.append(f"{item.evidence_id}: duplicate")
             continue
         seen.add(identity)
-        age = now - item.retrieved_at
-        if current_information and age > stale_after:
-            excluded.append(f"{item.evidence_id}: stale")
-            continue
         market_authority = 0
         if market_quote:
             direct_market, market_authority = _market_source_score(item)
             if not direct_market:
                 excluded.append(f"{item.evidence_id}: not a direct market quote source")
                 continue
+        freshness_time = item.retrieved_at if market_quote else item.source_published_at
+        if (
+            current_information
+            and freshness_time is None
+            and now - item.retrieved_at > stale_after
+        ):
+            excluded.append(f"{item.evidence_id}: stale")
+            continue
+        if current_information and freshness_time is not None and now - freshness_time > stale_after:
+            excluded.append(f"{item.evidence_id}: stale")
+            continue
         relevance = len(
             query_terms & _terms(f"{item.title} {item.snippet} {item.url}")
         )
         if query_terms and relevance == 0:
             excluded.append(f"{item.evidence_id}: unrelated")
             continue
-        fresh_item = replace(item, freshness="current" if current_information else "not_applicable")
+        fresh_item = replace(
+            item,
+            freshness=(
+                "retrieval_current_live_source"
+                if current_information and market_quote
+                else "source_time_current"
+                if current_information and freshness_time is not None
+                else "source_time_unknown"
+                if current_information
+                else "not_applicable"
+            ),
+        )
         ranked.append((
             market_authority, relevance, item.source_class == "primary", -index,
             fresh_item,

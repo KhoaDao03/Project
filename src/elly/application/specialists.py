@@ -6,12 +6,16 @@ import re
 from dataclasses import dataclass
 
 from ..domain.enums import CloudMode
-from ..domain.errors import ConfigInvalidError, ConsentRequiredError, MalformedResultError, PermissionDeniedError
+from ..domain.errors import (
+    CancelledError, ConfigInvalidError, ConsentRequiredError, EllyError,
+    MalformedResultError, PermissionDeniedError,
+)
 from ..privacy import ConsentProposal, ConsentWorkflow, PrivacyClass, classify_payload
 from ..specialists.contracts import SpecialistResult, SpecialistTask, validate_result
 from ..specialists.manifest import SpecialistManifest
 from ..ports.specialist import SpecialistProviderPort
 from ..guardrails.controller import GuardrailController
+from .execution import CancellationToken
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,10 +41,14 @@ class SpecialistWorkflow:
 
     def execute(self, *, task: SpecialistTask, manifest: SpecialistManifest,
                 cloud_mode: CloudMode, now=None,
-                request_guardrails: GuardrailController | None = None) -> SpecialistExecution:
+                request_guardrails: GuardrailController | None = None,
+                authorization_granted: bool = False,
+                cancellation: CancellationToken | None = None) -> SpecialistExecution:
         """Authorize and execute one depth-one specialist task or fail closed."""
         if not manifest.enabled:
             raise PermissionDeniedError("specialist is disabled")
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         if task.specialist_id != manifest.id or task.delegation_depth != 1:
             raise PermissionDeniedError("specialist task is outside the authorized scope")
         self._validate_scope(task, manifest)
@@ -56,19 +64,21 @@ class SpecialistWorkflow:
             raise PermissionDeniedError("specialist payload classification is inconsistent")
         if privacy is PrivacyClass.RESTRICTED or manifest.privacy_class == "restricted":
             raise PermissionDeniedError("restricted content may never be sent to a cloud specialist")
-        if cloud_mode is CloudMode.LOCAL_ONLY:
+        if cloud_mode is CloudMode.LOCAL_ONLY and not authorization_granted:
             raise PermissionDeniedError("cloud specialist requires cloud_permitted mode")
         proposal = None
-        if privacy is PrivacyClass.LOCAL:
+        if privacy is PrivacyClass.LOCAL and not authorization_granted:
             purpose = f"execute {manifest.role} specialist"
             if not self.consent.check(
                 proposal_id=task.approval_id, payload=task.context,
                 provider=self.provider_name, model=manifest.provider_model, purpose=purpose,
+                capability_id=manifest.id,
                 categories=(privacy.value,), max_cost=self.consent_max_cost_usd, now=now,
             ):
                 proposal = self.consent.propose(
                     task_id=task.task_id, provider=self.provider_name, model=manifest.provider_model,
                     purpose=purpose, categories=(privacy.value,),
+                    capability_id=manifest.id,
                     payload=task.context, max_cost=self.consent_max_cost_usd, now=now,
                 )
                 raise ConsentRequiredError("exact owner consent is required before sending local content", proposal=proposal)
@@ -77,6 +87,8 @@ class SpecialistWorkflow:
             output_limit=min(manifest.output_limit, self.max_output_tokens),
         )
         try:
+            if cancellation is not None:
+                cancellation.register(self.provider.cancel)
             if request_guardrails is None and self.guardrails is not None:
                 request_guardrails = self.guardrails.for_request()
             result = request_guardrails.execute(
@@ -86,6 +98,15 @@ class SpecialistWorkflow:
             ) if request_guardrails else operation()
         except ValueError as exc:
             raise MalformedResultError("specialist provider returned malformed output") from exc
+        except EllyError as exc:
+            if cancellation is not None and cancellation.cancelled:
+                raise CancelledError("specialist execution cancelled") from exc
+            raise
+        finally:
+            if cancellation is not None:
+                cancellation.unregister(self.provider.cancel)
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         if result.recommended_action and any(word in result.recommended_action.lower() for word in ("execute", "write", "send", "delete", "trade")):
             raise PermissionDeniedError("high-impact specialist actions are disabled")
         return SpecialistExecution(result=validate_result(result))

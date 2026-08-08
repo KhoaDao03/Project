@@ -47,8 +47,13 @@ class SpecialistResult:
             raise ConfigInvalidError("successful specialist result requires an answer")
         if len(self.answer) > 12000:
             raise ConfigInvalidError("specialist answer exceeds output ceiling")
-        for field_name in ("assumptions", "uncertainties", "key_evidence", "sources"):
-            values = getattr(self, field_name)
+        fields = (
+            ("assumptions", self.assumptions),
+            ("uncertainties", self.uncertainties),
+            ("key_evidence", self.key_evidence),
+            ("sources", self.sources),
+        )
+        for field_name, values in fields:
             if not isinstance(values, tuple) or any(not isinstance(value, str) for value in values):
                 raise ConfigInvalidError(f"specialist {field_name} must contain only strings")
         if self.recommended_action is not None and not isinstance(self.recommended_action, str):

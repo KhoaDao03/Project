@@ -6,14 +6,16 @@ import re
 from dataclasses import dataclass
 
 from ..domain.enums import EpistemicStatus
-from ..domain.errors import MalformedResultError
-from ..domain.models import EvidenceObject
+from ..domain.errors import CancelledError, EllyError, MalformedResultError
+from ..domain.models import ClaimSupport, EvidenceObject
 from ..guardrails.controller import GuardrailController
 from ..ports.clock import ClockPort
 from ..ports.web_research import ResearchBudget, WebResearchProvider
 from ..research.citation_validator import ValidatedCitationSet, validate_citations
+from ..research.evidence_policy import EvidencePolicy
 from ..research.freshness import needs_current_information
 from ..research.selection import select_evidence
+from .execution import CancellationToken
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +29,7 @@ class ResearchExecution:
     claims: tuple[str, ...]
     provider: str
     model: str
+    claim_supports: tuple[ClaimSupport, ...] = ()
 
 
 _INJECTION = re.compile(r"(?im)^.*(?:ignore\s+(?:all\s+)?(?:previous|policy)|reveal\s+(?:the\s+)?(?:key|secret)|call\s+a\s+tool).*$")
@@ -42,7 +45,8 @@ class ResearchPipeline:
     def __init__(self, *, provider: WebResearchProvider, clock: ClockPort, max_results: int,
                  timeout_seconds: float, guardrails: GuardrailController | None = None,
                  resolve_hosts: bool = False, evidence_token_budget: int = 256,
-                 call_cost_usd: float = 0.0, max_output_tokens: int = 2048) -> None:
+                 call_cost_usd: float = 0.0, max_output_tokens: int = 2048,
+                 evidence_policy: EvidencePolicy | None = None) -> None:
         self.provider = provider
         self.clock = clock
         self.max_results = max_results
@@ -52,39 +56,62 @@ class ResearchPipeline:
         self.evidence_token_budget = evidence_token_budget
         self.call_cost_usd = call_cost_usd
         self.max_output_tokens = max_output_tokens
+        self.evidence_policy = evidence_policy or EvidencePolicy()
 
     def execute(
-        self, query: str, *, request_guardrails: GuardrailController | None = None
+        self, query: str, *, request_guardrails: GuardrailController | None = None,
+        cancellation: CancellationToken | None = None,
     ) -> ResearchExecution:
         """Research a query under the caller's shared per-task guardrail context."""
         budget = ResearchBudget(max_results=self.max_results, timeout_seconds=self.timeout_seconds)
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         if request_guardrails is None and self.guardrails is not None:
             request_guardrails = self.guardrails.for_request()
-        if request_guardrails is None:
-            response = self.provider.research(query, budget)
-        else:
-            attempt = 0
+        cancel_provider = getattr(self.provider, "cancel", None)
+        unregister = (
+            cancellation.register(cancel_provider)
+            if cancellation is not None and callable(cancel_provider)
+            else None
+        )
+        try:
+            if request_guardrails is None:
+                response = self.provider.research(query, budget)
+            else:
+                attempt = 0
 
-            def call_provider():
-                nonlocal attempt
-                attempt += 1
-                provider_query = query
-                if attempt > 1:
-                    provider_query = (
-                        f"{query}\n\n"
-                        "Retry requirement: the earlier attempt returned no cited "
-                        "sources. Search again using a direct, timely, authoritative "
-                        "source and return at least one inline citation. If the exact "
-                        "current value is unavailable, return a cited unavailability "
-                        "statement rather than an uncited estimate."
-                    )
-                return self.provider.research(provider_query, budget)
+                def call_provider():
+                    nonlocal attempt
+                    if cancellation is not None:
+                        cancellation.raise_if_cancelled()
+                    attempt += 1
+                    provider_query = query
+                    if attempt > 1:
+                        provider_query = (
+                            f"{query}\n\n"
+                            "Retry requirement: the earlier attempt returned no cited "
+                            "sources. Search again using a direct, timely, authoritative "
+                            "source and return at least one inline citation. If the exact "
+                            "current value is unavailable, return a cited unavailability "
+                            "statement rather than an uncited estimate."
+                        )
+                    return self.provider.research(provider_query, budget)
 
-            response = request_guardrails.execute(
-                call_provider,
-                output_tokens=self.max_output_tokens,
-                cost_usd=self.call_cost_usd,
-            )
+                response = request_guardrails.execute(
+                    call_provider,
+                    cancel=cancel_provider if callable(cancel_provider) else None,
+                    output_tokens=self.max_output_tokens,
+                    cost_usd=self.call_cost_usd,
+                )
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+        except EllyError as exc:
+            if cancellation is not None and cancellation.cancelled:
+                raise CancelledError("hosted research cancelled") from exc
+            raise
+        finally:
+            if unregister is not None:
+                unregister()
         validated: ValidatedCitationSet = validate_citations(
             response.citations, now=self.clock.now(), resolve_hosts=self.resolve_hosts
         )
@@ -106,14 +133,29 @@ class ResearchPipeline:
                 rejected=rejected, epistemic=EpistemicStatus.UNKNOWN, claims=(),
                 provider=response.provider, model=response.model,
             )
-        # Only provider annotations with an exact cited answer span can support a
-        # displayed factual claim. A URL alone proves neither retrieval nor claim
-        # support, so free-form provider prose is never upgraded to ``known``.
+        # Only an explicit/provider-validatable claim passage can support a
+        # displayed factual claim. Search metadata and arbitrary snippets remain
+        # discovery leads and are never upgraded to ``known``.
         supported = tuple(
-            (item, snippet)
+            (eligible.evidence, eligible.evidence.supporting_passage)
             for item in evidence
-            if (snippet := _supported_passage(item.snippet))
+            if (
+                (eligible := self.evidence_policy.evaluate(
+                    item, provider_answer=response.answer_text,
+                    now=self.clock.now(), cancellation=cancellation,
+                    current_information=needs_current_information(query),
+                )).evidence is not None
+                and eligible.evidence is not None
+                and _supported_passage(eligible.evidence.supporting_passage)
+            )
         )
+        supported_ids = {item.evidence_id for item, _snippet in supported}
+        evidence_rejected = tuple(
+            item.evidence_id + ": ineligible claim evidence"
+            for item in evidence
+            if item.evidence_id not in supported_ids
+        )
+        rejected = rejected + evidence_rejected
         if not supported:
             summary = _unverified_summary(response.answer_text)
             if not summary:
@@ -141,13 +183,25 @@ class ResearchPipeline:
                 provider=response.provider, model=response.model,
             )
         claims = tuple(f"{snippet} [{item.evidence_id}]" for item, snippet in supported)
+        conflicted = _has_conflict(response.answer_text) or _has_structured_conflict(
+            query, supported
+        )
+        claim_supports = tuple(
+            ClaimSupport(
+                claim_id=f"claim-{index}", text=snippet,
+                support_status="conflicted" if conflicted else "supported",
+                evidence_ids=(item.evidence_id,),
+                note="independent evidence values disagree" if conflicted else "",
+            )
+            for index, (item, snippet) in enumerate(supported, start=1)
+        )
         answer = " ".join(dict.fromkeys(snippet for _item, snippet in supported))
         if not answer:
             raise MalformedResultError("research provider returned no safe cited answer")
-        epistemic = EpistemicStatus.UNKNOWN if _has_conflict(response.answer_text) else EpistemicStatus.KNOWN
+        epistemic = EpistemicStatus.UNKNOWN if conflicted else EpistemicStatus.KNOWN
         return ResearchExecution(
-            answer=answer, evidence=evidence, rejected=rejected,
-            epistemic=epistemic, claims=claims,
+            answer=answer, evidence=tuple(item for item, _snippet in supported), rejected=rejected,
+            epistemic=epistemic, claims=claims, claim_supports=claim_supports,
             provider=response.provider, model=response.model,
         )
 
@@ -185,3 +239,28 @@ def _has_conflict(text: str) -> bool:
     return any(marker in lowered for marker in (
         "conflict", "disagree", "different quote", "quotes vary", "prices vary",
     ))
+
+
+_CURRENT_MARKET = re.compile(
+    r"(?i)(?:\b(?:gold|silver|platinum|palladium|bitcoin|ethereum|spx|gspc|dow|nasdaq)\b|"
+    r"\bs\s*&?\s*p\s*500\b).{0,80}"
+    r"\b(?:current|latest|now|today|price|quote|level|points?|spot|value)\b|"
+    r"\b(?:current|latest|now|today|price|quote|level|points?|spot|value)\b.{0,80}"
+    r"(?:\b(?:gold|silver|platinum|palladium|bitcoin|ethereum|spx|gspc|dow|nasdaq)\b|"
+    r"\bs\s*&?\s*p\s*500\b)"
+)
+_LEADING_VALUE = re.compile(
+    r"(?<![A-Za-z])(?:[$€£]\s*)?(-?\d[\d,]*(?:\.\d+)?)"
+)
+
+
+def _has_structured_conflict(query: str, supported) -> bool:
+    """Detect differing primary numeric values across current-market evidence."""
+    if not _CURRENT_MARKET.search(query) or len(supported) < 2:
+        return False
+    values: list[str] = []
+    for _item, passage in supported:
+        match = _LEADING_VALUE.search(passage)
+        if match:
+            values.append(match.group(1).replace(",", ""))
+    return len(values) >= 2 and len(set(values)) > 1

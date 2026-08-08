@@ -19,6 +19,24 @@ class PrivacyClass(str, Enum):
     UNCLASSIFIED = "unclassified"
 
 
+@dataclass(frozen=True, slots=True)
+class ClassificationDecision:
+    """What a payload is, without implying that it may be transmitted."""
+
+    classification: PrivacyClass
+    reason_code: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.classification, PrivacyClass):
+            raise ConfigInvalidError("classification must be a PrivacyClass")
+        if not isinstance(self.reason_code, str) or not self.reason_code.strip():
+            raise ConfigInvalidError("classification reason_code must be non-empty")
+
+    @property
+    def is_external_eligible(self) -> bool:
+        return self.classification is PrivacyClass.REMOTE_ALLOWED
+
+
 _SECRET = re.compile(r"(?i)(api[_ -]?key|secret|password|token|-----begin .*private key-----)")
 _SECRET_VALUE = re.compile(
     r"(?i)\b(api[_ -]?key|secret|password|token)\b\s*[:=]\s*([^\s,;]+)"
@@ -51,6 +69,20 @@ def classify_payload(text: str) -> PrivacyClass:
     return PrivacyClass.UNCLASSIFIED
 
 
+class PrivacyPolicy:
+    """Application-owned, deterministic payload classification."""
+
+    def classify(self, payload: str) -> ClassificationDecision:
+        classification = classify_payload(payload)
+        reason = {
+            PrivacyClass.RESTRICTED: "RESTRICTED_CONTENT",
+            PrivacyClass.LOCAL: "OWNER_SPECIFIC_CONTENT",
+            PrivacyClass.REMOTE_ALLOWED: "PUBLIC_CONTENT",
+            PrivacyClass.UNCLASSIFIED: "NO_SAFE_CLASSIFICATION",
+        }[classification]
+        return ClassificationDecision(classification, reason)
+
+
 def payload_hash(payload: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -68,6 +100,7 @@ class ConsentProposal:
     max_reserved_cost: float
     created_at: datetime
     expires_at: datetime
+    capability_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +124,7 @@ class ConsentWorkflow:
 
     def propose(self, *, task_id: str, provider: str, model: str, purpose: str,
                 payload: str, categories: tuple[str, ...], max_cost: float,
+                capability_id: str = "",
                 now: datetime | None = None) -> ConsentProposal:
         stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         proposal = ConsentProposal(
@@ -99,6 +133,7 @@ class ConsentWorkflow:
             redacted_preview=_preview(payload), payload_digest=payload_hash(payload),
             max_reserved_cost=max_cost, created_at=stamp,
             expires_at=stamp + timedelta(seconds=self._ttl),
+            capability_id=capability_id,
         )
         self._proposals[proposal.proposal_id] = proposal
         return proposal
@@ -123,6 +158,7 @@ class ConsentWorkflow:
 
     def check(self, *, proposal_id: str | None, payload: str, provider: str | None = None,
               model: str | None = None, purpose: str | None = None,
+              capability_id: str | None = None,
               categories: tuple[str, ...] | None = None, max_cost: float | None = None,
               now: datetime | None = None) -> bool:
         """Consume an exact, unexpired approval bound to all supplied call fields."""
@@ -139,6 +175,7 @@ class ConsentWorkflow:
             and (provider is None or proposal.provider == provider)
             and (model is None or proposal.model == model)
             and (purpose is None or proposal.purpose == purpose)
+            and (capability_id is None or proposal.capability_id == capability_id)
             and (categories is None or proposal.categories == categories)
             and (max_cost is None or proposal.max_reserved_cost == max_cost)
         )

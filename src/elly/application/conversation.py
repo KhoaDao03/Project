@@ -23,17 +23,17 @@ Related: UC-01, BUS-001, AI-002/006/010, FR-002/006, DATA-001/004, OPS-001, UX-0
 from __future__ import annotations
 
 import time
+from threading import Lock
 
-from ..domain import validation
-from ..domain.context import build_context, resolve_conversation_context
-from ..domain.enums import CloudMode, EpistemicStatus, ErrorClass, Route, TaskStatus, ValidationStatus
-from ..domain.errors import CancelledError, ConsentRequiredError, EllyError, MalformedResultError, PermissionDeniedError
+from ..domain.context import resolve_conversation_context
+from ..domain.enums import ErrorClass, OutcomeCode, Route, TaskStatus
+from ..domain.errors import CancelledError, ConfigInvalidError, EllyError, StorageFailureError
 from ..domain.models import (
     AuditEvent,
     ConversationOutcome,
-    GeneralistRequest,
-    GeneralistResponse,
     Message,
+    ProvenanceReference,
+    RouteRequest,
     TaskRequest,
 )
 from ..domain.state_machine import ensure_transition
@@ -42,14 +42,23 @@ from ..ports.clock import ClockPort
 from ..ports.generalist import GeneralistPort
 from ..ports.repository import SessionRepositoryPort
 from ..guardrails.controller import GuardrailController
-from ..research.freshness import needs_current_information
 from .research import ResearchPipeline
-from .response_composer import compose_blocked, compose_cancelled, compose_research, compose_success
-from .response_composer import compose_consent_required, compose_specialist
-from ..specialists.contracts import SpecialistTask
+from .response_composer import (
+    compose_blocked, compose_cancelled, compose_failed, compose_partial,
+    compose_possible_duplicate, compose_success,
+)
+from .response_composer import compose_consent_required
 from ..specialists.registry import SpecialistRegistry
 from ..application.specialists import SpecialistWorkflow
-from ..privacy import ConsentWorkflow, PrivacyClass, classify_payload
+from ..privacy import ConsentWorkflow, PrivacyPolicy, payload_hash
+from .authorization import CloudAuthorizationPolicy
+from .capabilities import CapabilityRegistry
+from .capabilities import CapabilityRequest
+from .capability_handlers import ResearchCapabilityHandler, SpecialistCapabilityHandler
+from .context_builder import ContextBuilder
+from .local_conversation import LocalConversationUseCase
+from .routing import RoutingPolicy
+from .execution import CancellationToken
 
 
 class ConversationOrchestrator:
@@ -74,6 +83,12 @@ class ConversationOrchestrator:
         specialist_workflow: SpecialistWorkflow | None = None,
         consent: ConsentWorkflow | None = None,
         profile_service=None,
+        capability_registry: CapabilityRegistry | None = None,
+        routing_policy: RoutingPolicy | None = None,
+        context_builder: ContextBuilder | None = None,
+        privacy_policy: PrivacyPolicy | None = None,
+        cloud_authorization_policy: CloudAuthorizationPolicy | None = None,
+        local_conversation: LocalConversationUseCase | None = None,
     ) -> None:
         self._clock = clock
         self._generalist = generalist
@@ -91,6 +106,67 @@ class ConversationOrchestrator:
         self._specialist_workflow = specialist_workflow
         self._consent = consent
         self._profile_service = profile_service
+        self._active_lock = Lock()
+        self._active_cancellation: CancellationToken | None = None
+        if capability_registry is None:
+            handlers = []
+            if research is not None:
+                handlers.append(
+                    ResearchCapabilityHandler(
+                        research,
+                        provider_id=research_provider_id,
+                        model_id=research_model_id or "configured-research-model",
+                        max_cost_usd=consent_max_cost_usd,
+                    )
+                )
+            if specialist_workflow is not None:
+                registered_specialists: set[str] = set()
+                for manifest in (
+                    specialist_registry.enabled() if specialist_registry is not None else ()
+                ):
+                    specialist_route = (
+                        Route.CODING_SPECIALIST
+                        if manifest.role == "coding"
+                        else Route.RESEARCH_SPECIALIST
+                    )
+                    handlers.append(
+                        SpecialistCapabilityHandler(
+                            manifest.id,
+                            specialist_route,
+                            manifest,
+                            specialist_workflow,
+                        )
+                    )
+                    registered_specialists.add(manifest.id)
+                for specialist_id, specialist_route in (
+                    ("coding", Route.CODING_SPECIALIST),
+                    ("research", Route.RESEARCH_SPECIALIST),
+                ):
+                    if specialist_id not in registered_specialists:
+                        handlers.append(
+                            SpecialistCapabilityHandler(
+                                specialist_id,
+                                specialist_route,
+                                specialist_registry.get(specialist_id) if specialist_registry else None,
+                                specialist_workflow,
+                            )
+                        )
+            capability_registry = CapabilityRegistry(tuple(handlers))
+        self._capability_registry = capability_registry
+        self._capability_registry.validate()
+        self._routing_policy = routing_policy or RoutingPolicy(capabilities=capability_registry)
+        self._context_builder = context_builder or ContextBuilder(
+            context_window=context_window,
+            reserved_output_tokens=max_output_tokens,
+        )
+        self._privacy_policy = privacy_policy or PrivacyPolicy()
+        self._cloud_authorization_policy = cloud_authorization_policy or CloudAuthorizationPolicy()
+        self._local_conversation = local_conversation or LocalConversationUseCase(
+            generalist=generalist,
+            model_id=model_id,
+            max_output_tokens=max_output_tokens,
+            guardrails=guardrails,
+        )
 
     # ---- provided helpers (use these; do not re-implement) ----------------
 
@@ -101,13 +177,15 @@ class ConversationOrchestrator:
         dependent turns may inherit that intent from one bounded prior user turn.
         Timeless conversation remains on the local generalist.
         """
-        lowered = request.text.lower()
-        if any(token in lowered for token in ("review this code", "debug this", "code review", "python function", "programming bug")):
-            return Route.CODING_SPECIALIST
-        if any(token in lowered for token in ("research specialist", "synthesize the sources", "analyze the evidence")):
-            return Route.RESEARCH_SPECIALIST
-        route_text = contextual_text if contextual_text is not None else request.text
-        return Route.WEB_RESEARCH if needs_current_information(route_text) else Route.LOCAL_GENERALIST
+        return self._routing_policy.decide(
+            RouteRequest(
+                request_id=request.request_id,
+                text=request.text,
+                contextual_text=contextual_text,
+                cloud_mode=request.cloud_mode,
+            ),
+            proposal=request.route_proposal,
+        ).route
 
     def _emit(
         self,
@@ -134,15 +212,6 @@ class ConversationOrchestrator:
             )
         )
 
-    def _call_generalist(self, prompt: str) -> GeneralistResponse:
-        """Build the bounded request and return normalized model text plus usage."""
-        gen_request = GeneralistRequest(
-            prompt=prompt,
-            model_id=self._model_id,
-            max_output_tokens=self._max_output_tokens,
-        )
-        return self._generalist.generate(gen_request)
-
     @staticmethod
     def _guardrail_detail(request_guardrails: GuardrailController | None) -> str:
         """Render non-sensitive request usage for correlated audit events."""
@@ -165,19 +234,332 @@ class ConversationOrchestrator:
             f"{cls._guardrail_detail(request_guardrails)}"
         )
 
-    def _start_task_record(self, task_id: str, request: TaskRequest) -> None:
-        start = getattr(self._repository, "start_task", None)
-        if callable(start):
-            start(task_id, request.session_id, self._clock.now())
+    def _start_task_record(self, task_id: str, request: TaskRequest) -> bool:
+        return self._repository.start_task(task_id, request.session_id, self._clock.now())
 
     def _finish_task_record(self, task_id: str, status: TaskStatus) -> None:
-        finish = getattr(self._repository, "finish_task", None)
-        if callable(finish):
-            finish(task_id, status.value, self._clock.now())
+        self._repository.finish_task(task_id, status.value, self._clock.now())
+
+    @staticmethod
+    def _capability_id_for_route(route: Route, route_decision) -> str:
+        return route_decision.capability_id or {
+            Route.WEB_RESEARCH: "web_research",
+            Route.CODING_SPECIALIST: "coding",
+            Route.RESEARCH_SPECIALIST: "research",
+            Route.LOCAL_GENERALIST: "local_generalist",
+        }.get(route, "")
+
+    def _fail_operation(self, operation_lease, *, possible_duplicate: bool = False) -> None:
+        if operation_lease is not None:
+            self._repository.fail_operation(
+                operation_lease.operation_id,
+                at=self._clock.now(),
+                possible_duplicate=possible_duplicate,
+            )
+
+    def _complete_operation(self, operation_lease) -> None:
+        if operation_lease is not None:
+            self._repository.complete_operation(
+                operation_lease.operation_id, at=self._clock.now()
+            )
+
+    def _best_effort_fail_operation(
+        self, operation_lease, *, possible_duplicate: bool = False
+    ) -> None:
+        try:
+            self._fail_operation(
+                operation_lease, possible_duplicate=possible_duplicate
+            )
+        except StorageFailureError:
+            # The original persistence failure is already the actionable result;
+            # do not hide it behind a second failure while recording the ledger.
+            return
+
+    def _best_effort_finish_task(self, task_id: str, status: TaskStatus) -> None:
+        try:
+            self._finish_task_record(task_id, status)
+        except StorageFailureError:
+            return
+
+    def _record_provenance(
+        self, task_id: str, references: tuple[ProvenanceReference, ...]
+    ) -> None:
+        for reference in references:
+            self._repository.add_task_provenance(task_id, reference)
+
+    def _execute_registered_capability(
+        self,
+        *,
+        request: TaskRequest,
+        task_id: str,
+        status: TaskStatus,
+        route: Route,
+        route_request: RouteRequest,
+        route_decision,
+        context_text: str,
+        context_manifest,
+        request_guardrails: GuardrailController | None,
+        started: float,
+        operation_lease,
+        cancellation: CancellationToken,
+    ) -> ConversationOutcome | None:
+        """Authorize and execute one optional capability through its typed port."""
+        if route is Route.LOCAL_GENERALIST:
+            return None
+        capability_id = self._capability_id_for_route(route, route_decision)
+        handler = self._capability_registry.get(capability_id)
+        if handler is None:
+            reason = "requested optional capability is not registered"
+            blocked = ensure_transition(status, TaskStatus.BLOCKED)
+            self._emit(
+                request=request, task_id=task_id, route=route,
+                event_type="capability.blocked", status=blocked,
+                error_class=ErrorClass.PERMISSION_DENIED,
+                detail=self._failure_detail(reason, started, request_guardrails),
+            )
+            self._fail_operation(operation_lease)
+            self._finish_task_record(task_id, blocked)
+            return ConversationOutcome(
+                result=compose_blocked(
+                    task_id=task_id, reason=reason, route=route,
+                    outcome_code=OutcomeCode.UNAVAILABLE,
+                ),
+                manifest=context_manifest,
+            )
+
+        capability_status = handler.status()
+        if not route_decision.available or not capability_status.available:
+            reason = capability_status.reason_code or route_decision.diagnostic or "capability unavailable"
+            blocked = ensure_transition(status, TaskStatus.BLOCKED)
+            self._emit(
+                request=request, task_id=task_id, route=route,
+                event_type="capability.unavailable", status=blocked,
+                error_class=ErrorClass.PERMISSION_DENIED,
+                detail=self._failure_detail(reason, started, request_guardrails),
+            )
+            self._fail_operation(operation_lease)
+            self._finish_task_record(task_id, blocked)
+            return ConversationOutcome(
+                result=compose_blocked(
+                    task_id=task_id, reason=reason, route=route,
+                    outcome_code=OutcomeCode.UNAVAILABLE,
+                ),
+                manifest=context_manifest,
+            )
+
+        capability_request = CapabilityRequest(
+            task=request,
+            route_request=route_request,
+            context_text=context_text,
+            context_manifest=context_manifest,
+            task_id=task_id,
+            execution_at=self._clock.now(),
+            request_guardrails=request_guardrails,
+            cancellation=cancellation,
+        )
+        match = handler.can_handle(capability_request)
+        if not match.accepted:
+            reason = match.reason_code or "capability rejected request"
+            blocked = ensure_transition(status, TaskStatus.BLOCKED)
+            self._emit(
+                request=request, task_id=task_id, route=route,
+                event_type="capability.input_rejected", status=blocked,
+                error_class=ErrorClass.INPUT_INVALID,
+                detail=self._failure_detail(reason, started, request_guardrails),
+            )
+            self._fail_operation(operation_lease)
+            self._finish_task_record(task_id, blocked)
+            return ConversationOutcome(
+                result=compose_blocked(task_id=task_id, reason=reason, route=route),
+                manifest=context_manifest,
+            )
+
+        descriptor = handler.descriptor
+        if route not in descriptor.routes:
+            self._fail_operation(operation_lease)
+            failed = ensure_transition(status, TaskStatus.FAILED)
+            self._finish_task_record(task_id, failed)
+            return ConversationOutcome(
+                result=compose_failed(
+                    task_id=task_id,
+                    reason="registered capability does not declare the selected route",
+                    route=route,
+                ),
+                manifest=context_manifest,
+            )
+        execution_started = False
+        generated_result = None
+        try:
+            classification = self._privacy_policy.classify(context_text)
+            authorization = self._cloud_authorization_policy.authorize(
+                task_id=task_id,
+                payload=context_text,
+                classification=classification,
+                cloud_mode=request.cloud_mode,
+                destination=descriptor.destination,
+                model=descriptor.model,
+                capability_id=descriptor.capability_id,
+                purpose=descriptor.purpose or f"execute {descriptor.capability_id}",
+                consent=self._consent,
+                approval_id=request.approval_id,
+                max_cost=descriptor.max_cost_usd,
+                now=self._clock.now(),
+                capability_available=capability_status.available,
+                requires_external_boundary=descriptor.requires_external_boundary,
+            )
+            if not authorization.allowed:
+                proposal = authorization.consent_proposal
+                if proposal is not None:
+                    awaiting = ensure_transition(status, TaskStatus.AWAITING_CONSENT)
+                    self._emit(
+                        request=request, task_id=task_id, route=route,
+                        event_type="consent.requested", status=awaiting,
+                        error_class=ErrorClass.PERMISSION_DENIED,
+                        detail=self._failure_detail("exact consent required", started, request_guardrails),
+                    )
+                    self._fail_operation(operation_lease)
+                    self._finish_task_record(task_id, awaiting)
+                    return ConversationOutcome(
+                        result=compose_consent_required(task_id=task_id, proposal=proposal, route=route),
+                        manifest=context_manifest,
+                        consent_proposal=proposal,
+                    )
+                blocked = ensure_transition(status, TaskStatus.BLOCKED)
+                self._emit(
+                    request=request, task_id=task_id, route=route,
+                    event_type="capability.authorization_denied", status=blocked,
+                    error_class=ErrorClass.PERMISSION_DENIED,
+                    detail=self._failure_detail(authorization.reason_code, started, request_guardrails),
+                )
+                self._fail_operation(operation_lease)
+                self._finish_task_record(task_id, blocked)
+                return ConversationOutcome(
+                    result=compose_blocked(
+                        task_id=task_id, reason=authorization.reason_code, route=route
+                    ),
+                    manifest=context_manifest,
+                )
+
+            self._emit(
+                request=request,
+                task_id=task_id,
+                route=route,
+                event_type="authorization.approved",
+                status=status,
+                detail=(
+                    f"capability={descriptor.capability_id} "
+                    f"destination={descriptor.destination} "
+                    f"classification={classification.classification.value} "
+                    f"payload_digest={authorization.payload_digest[:16]} "
+                    f"reason={authorization.reason_code}"
+                ),
+            )
+            execution_started = True
+            execution = handler.execute(capability_request)
+            result = execution.result
+            if result.task_id != task_id:
+                raise ConfigInvalidError("capability returned a mismatched task id")
+            generated_result = result
+            if result.answer and result.task_status not in {
+                TaskStatus.AWAITING_CONSENT, TaskStatus.CANCELLED
+            }:
+                self._repository.append_message(
+                    request.session_id,
+                    Message(role="assistant", content=result.answer, created_at=self._clock.now()),
+                )
+            self._record_sources(task_id, result.citations)
+            self._record_provenance(task_id, result.provenance)
+            self._emit(
+                request=request, task_id=task_id, route=route,
+                event_type="capability.completed", status=result.task_status,
+                detail=(
+                    f"capability={descriptor.capability_id} "
+                    f"route_reason={route_decision.reason_code.value} "
+                    f"duration_ms={int((time.monotonic() - started) * 1000)} "
+                    f"{self._guardrail_detail(request_guardrails)}"
+                ),
+            )
+            self._finish_task_record(task_id, result.task_status)
+            self._complete_operation(operation_lease)
+            return ConversationOutcome(result=result, manifest=context_manifest)
+        except StorageFailureError as exc:
+            self._best_effort_fail_operation(
+                operation_lease, possible_duplicate=execution_started
+            )
+            failed_status = (
+                TaskStatus.PARTIAL if generated_result is not None else TaskStatus.FAILED
+            )
+            self._best_effort_finish_task(task_id, failed_status)
+            return ConversationOutcome(
+                result=(
+                    compose_partial(
+                        task_id=task_id,
+                        reason=exc.summary,
+                        route=route,
+                        answer=generated_result.answer,
+                        partial_work=(
+                            "capability output was generated but durable completion was incomplete",
+                        ),
+                    )
+                    if generated_result is not None
+                    else compose_failed(task_id=task_id, reason=exc.summary, route=route)
+                ),
+                manifest=context_manifest,
+            )
+        except CancelledError as exc:
+            self._fail_operation(operation_lease, possible_duplicate=execution_started)
+            cancelled = ensure_transition(status, TaskStatus.CANCELLED)
+            self._emit(
+                request=request, task_id=task_id, route=route,
+                event_type="capability.cancelled", status=cancelled,
+                error_class=exc.error_class,
+                detail=self._failure_detail(exc.summary, started, request_guardrails),
+            )
+            self._finish_task_record(task_id, cancelled)
+            return ConversationOutcome(
+                result=compose_cancelled(task_id=task_id, partial_work=exc.partial_work, route=route),
+                manifest=context_manifest,
+            )
+        except EllyError as exc:
+            self._fail_operation(operation_lease, possible_duplicate=execution_started)
+            failed = ensure_transition(status, TaskStatus.FAILED)
+            self._emit(
+                request=request, task_id=task_id, route=route,
+                event_type="capability.failed", status=failed,
+                error_class=exc.error_class,
+                detail=self._failure_detail(exc.summary, started, request_guardrails),
+            )
+            self._finish_task_record(task_id, failed)
+            return ConversationOutcome(
+                result=compose_failed(task_id=task_id, reason=exc.summary, route=route),
+                manifest=context_manifest,
+            )
 
     # ---- orchestration ----------------------------------------------------
 
+    def cancel_active(self) -> bool:
+        """Request cancellation of the currently executing turn, if any."""
+        with self._active_lock:
+            token = self._active_cancellation
+        if token is None:
+            return False
+        token.cancel()
+        return True
+
     def handle(self, request: TaskRequest) -> ConversationOutcome:
+        cancellation = CancellationToken()
+        with self._active_lock:
+            self._active_cancellation = cancellation
+        try:
+            return self._handle(request, cancellation=cancellation)
+        finally:
+            with self._active_lock:
+                if self._active_cancellation is cancellation:
+                    self._active_cancellation = None
+
+    def _handle(
+        self, request: TaskRequest, *, cancellation: CancellationToken
+    ) -> ConversationOutcome:
         """Process one local conversational turn (UC-01).
 
         Deterministic sequence:
@@ -193,6 +575,7 @@ class ConversationOrchestrator:
         typed EllyErrors to the caller (the CLI renders them as blocked).
         """
         started = time.monotonic()
+        cancellation.raise_if_cancelled()
         task_id = f"task-{request.request_id}"
         request_guardrails = self._guardrails.for_request() if self._guardrails is not None else None
         # Read prior context before routing. A dependent turn such as "How about
@@ -205,257 +588,179 @@ class ConversationOrchestrator:
             current_text=request.text, history=history
         )
         research_query = conversation_context.remote_text
-        route = self.route(
-            request, contextual_text=conversation_context.routing_text
+        route_request = RouteRequest(
+            request_id=request.request_id,
+            text=request.text,
+            contextual_text=conversation_context.routing_text,
+            cloud_mode=request.cloud_mode,
         )
+        route_decision = self._routing_policy.decide(
+            route_request, proposal=request.route_proposal
+        )
+        route = route_decision.route
         # Lifecycle transitions go through the state machine so the application —
         # not ad-hoc code — owns valid task states (AI-002, FR-006).
         status = ensure_transition(TaskStatus.QUEUED, TaskStatus.RUNNING)
-        self._emit(
-            request=request,
-            task_id=task_id,
-            route=route,
-            event_type="task.received",
-            status=status,
-        )
-        self._start_task_record(task_id, request)
 
         # (2) Context is built from PRIOR turns only; build_context appends the
         # current text itself, so we load history BEFORE persisting this turn to
         # avoid double-counting the current message (FR-002, AI-006).
-        prompt, context_manifest = build_context(
+        prompt, context_manifest = self._context_builder.build(
             current_text=request.text,
             history=history,
-            window=self._context_window,
-            reserved_output_tokens=self._max_output_tokens,
         )
+        profile_provenance: tuple[ProvenanceReference, ...] = ()
         if self._profile_service is not None:
-            profile_lines = [f"confirmed {item.key}: {item.value}" for item in self._profile_service.context_items()]
+            profile_items = self._profile_service.context_items()
+            profile_lines = [
+                f"confirmed {item.key}: {item.value}" for item in profile_items
+            ]
+            profile_provenance = tuple(
+                ProvenanceReference("profile", item.item_id, item.updated_at)
+                for item in profile_items
+            )
             if profile_lines:
                 prompt = "confirmed owner context:\n" + "\n".join(profile_lines) + "\n" + prompt
+
+        # Claim the request before persisting another user turn or starting an
+        # optional provider.  The digest is over the immutable request payload;
+        # authorization separately hashes the exact context sent externally.
+        task_created = self._start_task_record(task_id, request)
+        operation_lease = self._repository.claim_operation(
+            task_id=task_id,
+            request_id=request.request_id,
+            capability_id=self._capability_id_for_route(route, route_decision),
+            request_digest=payload_hash(request.text),
+            at=self._clock.now(),
+        )
+        existing_task_status = self._repository.task_status(task_id)
+        if (
+            not task_created
+            and operation_lease.fresh
+            and existing_task_status in {TaskStatus.COMPLETED.value, TaskStatus.PARTIAL.value}
+        ):
+            # A task created before the V1.5 operation migration has no ledger
+            # row.  Treat its terminal record as already executed rather than
+            # replaying the provider call during the first post-migration retry.
+            self._fail_operation(operation_lease, possible_duplicate=True)
+            operation_lease = self._repository.claim_operation(
+                task_id=task_id,
+                request_id=request.request_id,
+                capability_id=self._capability_id_for_route(route, route_decision),
+                request_digest=payload_hash(request.text),
+                at=self._clock.now(),
+            )
+        if not operation_lease.fresh:
+            duplicate_status = ensure_transition(status, TaskStatus.PARTIAL)
+            self._emit(
+                request=request,
+                task_id=task_id,
+                route=route,
+                event_type="task.duplicate_prevented",
+                status=duplicate_status,
+                error_class=ErrorClass.PERMISSION_DENIED,
+                detail=(
+                    f"operation={operation_lease.operation_id} "
+                    "provider_dispatch=not_started"
+                ),
+            )
+            return ConversationOutcome(
+                result=compose_possible_duplicate(task_id=task_id, route=route),
+                manifest=context_manifest,
+            )
+
+        try:
+            self._emit(
+                request=request,
+                task_id=task_id,
+                route=route,
+                event_type="task.received",
+                status=status,
+                detail=f"route_reason={route_decision.reason_code.value}",
+            )
+        except StorageFailureError as exc:
+            self._best_effort_fail_operation(operation_lease)
+            self._best_effort_finish_task(task_id, TaskStatus.FAILED)
+            return ConversationOutcome(
+                result=compose_failed(task_id=task_id, reason=exc.summary, route=route),
+                manifest=context_manifest,
+            )
 
         # (3) Persist the user turn (verified input; kept even if generation fails).
         # Approval resumes the already-recorded turn; do not duplicate the user
         # body when the exact consent proposal is approved and resubmitted.
-        if request.approval_id is None:
-            self._repository.append_message(
-                request.session_id,
-                Message(role="user", content=request.text, created_at=self._clock.now()),
-            )
-
-        if route in {Route.CODING_SPECIALIST, Route.RESEARCH_SPECIALIST}:
-            specialist_id = "coding" if route is Route.CODING_SPECIALIST else "research"
-            specialist_manifest = self._specialist_registry.get(specialist_id) if self._specialist_registry else None
-            if specialist_manifest is None or self._specialist_workflow is None:
-                reason = "requested specialist capability is disabled"
-                blocked = ensure_transition(status, TaskStatus.BLOCKED)
-                self._emit(request=request, task_id=task_id, route=route, event_type="specialist.blocked", status=blocked,
-                           error_class=ErrorClass.PERMISSION_DENIED,
-                           detail=self._failure_detail(reason, started, request_guardrails))
-                self._finish_task_record(task_id, blocked)
-                return ConversationOutcome(result=compose_blocked(task_id=task_id, reason=reason, route=route), manifest=context_manifest)
-            specialist_context = conversation_context.remote_text
-            specialist_task = SpecialistTask(
-                task_id=task_id, specialist_id=specialist_id, goal=request.text,
-                context=specialist_context,
-                privacy_class=classify_payload(specialist_context).value,
-                approval_id=request.approval_id,
-            )
+        if request.approval_id is None and task_created:
             try:
-                execution = self._specialist_workflow.execute(
-                    task=specialist_task, manifest=specialist_manifest, cloud_mode=request.cloud_mode,
-                    now=self._clock.now(), request_guardrails=request_guardrails,
-                )
-                specialist_result = execution.result
-                result = compose_specialist(
-                    task_id=task_id, answer=specialist_result.answer, route=route,
-                    epistemic=EpistemicStatus(specialist_result.status) if specialist_result.status != "partial" else EpistemicStatus.INFERRED,
-                    assumptions=specialist_result.assumptions, uncertainties=specialist_result.uncertainties,
-                    sources=specialist_result.sources, partial=specialist_result.truncated or specialist_result.status == "partial",
-                )
                 self._repository.append_message(
                     request.session_id,
-                    Message(role="assistant", content=result.answer, created_at=self._clock.now()),
+                    Message(role="user", content=request.text, created_at=self._clock.now()),
                 )
-                self._emit(request=request, task_id=task_id, route=route, event_type="specialist.completed", status=result.task_status)
-                provider_usage = getattr(self._specialist_workflow.provider, "last_usage", {})
-                provider_cost = getattr(self._specialist_workflow.provider, "last_cost_usd", 0.0)
-                self._emit(
-                    request=request, task_id=task_id, route=route, event_type="specialist.usage",
-                    status=result.task_status,
-                    detail=(
-                        f"provider={self._specialist_workflow.provider_name} "
-                        f"model={specialist_manifest.provider_model} "
-                        f"prompt={specialist_manifest.prompt_version} tools=none "
-                        f"duration_ms={int((time.monotonic() - started) * 1000)} "
-                        f"cost_usd={provider_cost:.4f} {self._guardrail_detail(request_guardrails)} "
-                        f"usage={provider_usage}"
-                    ),
-                )
-                self._record_sources(task_id, result.citations)
-                self._finish_task_record(task_id, result.task_status)
-                return ConversationOutcome(result=result, manifest=context_manifest)
-            except ConsentRequiredError as exc:
-                awaiting = ensure_transition(status, TaskStatus.AWAITING_CONSENT)
-                self._emit(request=request, task_id=task_id, route=route, event_type="consent.requested", status=awaiting,
-                           error_class=exc.error_class,
-                           detail=self._failure_detail("exact consent required", started, request_guardrails))
-                self._finish_task_record(task_id, awaiting)
+            except StorageFailureError as exc:
+                self._best_effort_fail_operation(operation_lease)
+                self._best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=compose_consent_required(task_id=task_id, proposal=exc.proposal, route=route),
-                    manifest=context_manifest, consent_proposal=exc.proposal,
-                )
-            except EllyError as exc:
-                blocked = ensure_transition(status, TaskStatus.BLOCKED)
-                self._emit(request=request, task_id=task_id, route=route, event_type="specialist.failed", status=blocked,
-                           error_class=exc.error_class,
-                           detail=self._failure_detail(exc.summary, started, request_guardrails))
-                self._finish_task_record(task_id, blocked)
-                return ConversationOutcome(result=compose_blocked(task_id=task_id, reason=exc.summary, route=route), manifest=context_manifest)
-
-        if route is Route.WEB_RESEARCH:
-            if request.cloud_mode is not CloudMode.CLOUD_PERMITTED:
-                denied = PermissionDeniedError("web research requires /mode cloud because the query leaves this device")
-                blocked = ensure_transition(status, TaskStatus.BLOCKED)
-                self._emit(request=request, task_id=task_id, route=route, event_type="research.blocked", status=blocked,
-                           error_class=denied.error_class,
-                           detail=self._failure_detail(denied.summary, started, request_guardrails))
-                self._finish_task_record(task_id, blocked)
-                return ConversationOutcome(result=compose_blocked(task_id=task_id, reason=denied.summary, route=route), manifest=context_manifest)
-            if self._research is None:
-                denied = PermissionDeniedError("web research capability is disabled")
-                blocked = ensure_transition(status, TaskStatus.BLOCKED)
-                self._emit(request=request, task_id=task_id, route=route, event_type="research.blocked", status=blocked,
-                           error_class=denied.error_class,
-                           detail=self._failure_detail(denied.summary, started, request_guardrails))
-                self._finish_task_record(task_id, blocked)
-                return ConversationOutcome(result=compose_blocked(task_id=task_id, reason=denied.summary, route=route), manifest=context_manifest)
-            privacy = classify_payload(research_query)
-            if privacy is PrivacyClass.RESTRICTED:
-                denied = PermissionDeniedError("restricted content may never be sent to hosted web research")
-                blocked = ensure_transition(status, TaskStatus.BLOCKED)
-                self._emit(request=request, task_id=task_id, route=route, event_type="research.blocked", status=blocked,
-                           error_class=denied.error_class,
-                           detail=self._failure_detail(denied.summary, started, request_guardrails))
-                self._finish_task_record(task_id, blocked)
-                return ConversationOutcome(result=compose_blocked(task_id=task_id, reason=denied.summary, route=route), manifest=context_manifest)
-            if privacy is PrivacyClass.UNCLASSIFIED:
-                denied = PermissionDeniedError(
-                    "unclassified content may not be sent to hosted web research; "
-                    "describe it as public or use a recognized public-data request"
-                )
-                blocked = ensure_transition(status, TaskStatus.BLOCKED)
-                self._emit(
-                    request=request, task_id=task_id, route=route,
-                    event_type="research.blocked", status=blocked,
-                    error_class=denied.error_class,
-                    detail=self._failure_detail(
-                        denied.summary, started, request_guardrails
-                    ),
-                )
-                self._finish_task_record(task_id, blocked)
-                return ConversationOutcome(
-                    result=compose_blocked(
-                        task_id=task_id, reason=denied.summary, route=route
-                    ),
+                    result=compose_failed(task_id=task_id, reason=exc.summary, route=route),
                     manifest=context_manifest,
                 )
-            if privacy is PrivacyClass.LOCAL:
-                purpose = "perform hosted web research"
-                approved = self._consent is not None and self._consent.check(
-                    proposal_id=request.approval_id, payload=research_query,
-                    provider=self._research_provider_id, model=self._research_model_id,
-                    purpose=purpose, categories=(privacy.value,),
-                    max_cost=self._consent_max_cost_usd,
-                    now=self._clock.now(),
-                )
-                if not approved:
-                    if self._consent is None:
-                        denied = PermissionDeniedError("hosted research consent capability is unavailable")
-                        blocked = ensure_transition(status, TaskStatus.BLOCKED)
-                        self._emit(request=request, task_id=task_id, route=route, event_type="research.blocked", status=blocked,
-                                   error_class=denied.error_class,
-                                   detail=self._failure_detail(denied.summary, started, request_guardrails))
-                        self._finish_task_record(task_id, blocked)
-                        return ConversationOutcome(result=compose_blocked(task_id=task_id, reason=denied.summary, route=route), manifest=context_manifest)
-                    proposal = self._consent.propose(
-                        task_id=task_id, provider=self._research_provider_id,
-                        model=self._research_model_id, purpose=purpose,
-                        payload=research_query, categories=(privacy.value,),
-                        max_cost=self._consent_max_cost_usd,
-                        now=self._clock.now(),
-                    )
-                    awaiting = ensure_transition(status, TaskStatus.AWAITING_CONSENT)
-                    self._emit(request=request, task_id=task_id, route=route, event_type="consent.requested", status=awaiting,
-                               error_class=ErrorClass.PERMISSION_DENIED,
-                               detail=self._failure_detail("exact consent required", started, request_guardrails))
-                    self._finish_task_record(task_id, awaiting)
-                    return ConversationOutcome(
-                        result=compose_consent_required(task_id=task_id, proposal=proposal, route=route),
-                        manifest=context_manifest, consent_proposal=proposal,
-                    )
-            try:
-                research = self._research.execute(
-                    research_query, request_guardrails=request_guardrails
-                )
-                result = compose_research(
-                    task_id=task_id, answer=research.answer,
-                    citations=tuple(e.canonical_url or e.url for e in research.evidence),
-                    claims=research.claims, epistemic=research.epistemic,
-                )
-                self._repository.append_message(
-                    request.session_id,
-                    Message(role="assistant", content=result.answer, created_at=self._clock.now()),
-                )
-                self._record_sources(task_id, result.citations)
-                self._emit(
-                    request=request, task_id=task_id, route=route, event_type="research.completed",
-                    status=result.task_status,
-                    detail=(
-                        f"provider={research.provider} model={research.model} "
-                        f"tools=web_search duration_ms={int((time.monotonic() - started) * 1000)} "
-                        f"sources={len(result.citations)} rejected={len(research.rejected)} "
-                        f"{self._guardrail_detail(request_guardrails)}"
-                    ),
-                )
-                self._finish_task_record(task_id, result.task_status)
-                return ConversationOutcome(result=result, manifest=context_manifest)
-            except CancelledError as exc:
-                cancelled = ensure_transition(status, TaskStatus.CANCELLED)
-                self._emit(request=request, task_id=task_id, route=route, event_type="research.cancelled", status=cancelled,
-                           error_class=exc.error_class,
-                           detail=self._failure_detail(exc.summary, started, request_guardrails))
-                self._finish_task_record(task_id, cancelled)
-                return ConversationOutcome(result=compose_cancelled(task_id=task_id, partial_work=exc.partial_work, route=route), manifest=context_manifest)
-            except EllyError as exc:
-                blocked = ensure_transition(status, TaskStatus.BLOCKED)
-                self._emit(request=request, task_id=task_id, route=route, event_type="research.failed", status=blocked,
-                           error_class=exc.error_class,
-                           detail=self._failure_detail(exc.summary, started, request_guardrails))
-                self._finish_task_record(task_id, blocked)
-                return ConversationOutcome(result=compose_blocked(task_id=task_id, reason=exc.summary, route=route), manifest=context_manifest)
+
+        capability_outcome = self._execute_registered_capability(
+            request=request,
+            task_id=task_id,
+            status=status,
+            route=route,
+            route_request=route_request,
+            route_decision=route_decision,
+            context_text=research_query,
+            context_manifest=context_manifest,
+            request_guardrails=request_guardrails,
+            started=started,
+            operation_lease=operation_lease,
+            cancellation=cancellation,
+        )
+        if capability_outcome is not None:
+            return capability_outcome
 
         # (4)+(5) Call the model and validate its untrusted output. Any typed
         # EllyError (provider failure OR validation rejection) maps to BLOCKED.
+        text = ""
         try:
-            if self._guardrails is None:
-                generalist_response = self._call_generalist(prompt)
-            else:
-                cancel = getattr(self._generalist, "cancel", None)
-                generalist_response = request_guardrails.execute(
-                    lambda: self._call_generalist(prompt),
-                    cancel=cancel if callable(cancel) else None,
-                    output_tokens=self._max_output_tokens,
-                    cost_usd=0.0,
+            # Preserve the V1 test/application seam where a composed provider can
+            # be replaced before a turn while keeping the use case typed.
+            if self._local_conversation.generalist is not self._generalist:
+                self._local_conversation = LocalConversationUseCase(
+                    generalist=self._generalist,
+                    model_id=self._model_id,
+                    max_output_tokens=self._max_output_tokens,
+                    guardrails=self._guardrails,
                 )
-            text = generalist_response.text
-            if validation.validate_generalist_text(text) is ValidationStatus.REJECTED:
-                raise MalformedResultError("model returned empty/invalid output")
+            local_execution = self._local_conversation.execute(
+                prompt,
+                request_guardrails=request_guardrails,
+                cancellation=cancellation,
+            )
+            generalist_response = local_execution.response
+            text = local_execution.text
             assistant_message = Message(
                 role="assistant", content=text, created_at=self._clock.now()
             )
             self._repository.append_message(request.session_id, assistant_message)
+        except StorageFailureError as exc:
+            self._best_effort_fail_operation(operation_lease, possible_duplicate=True)
+            self._best_effort_finish_task(task_id, TaskStatus.PARTIAL)
+            return ConversationOutcome(
+                result=compose_partial(
+                    task_id=task_id,
+                    reason=exc.summary,
+                    answer=text,
+                    partial_work=(
+                        "local response was generated but durable completion was incomplete",
+                    ) if text else (),
+                ),
+                manifest=context_manifest,
+                assistant_message=None,
+            )
         except CancelledError as exc:
+            self._fail_operation(operation_lease)
             cancelled = ensure_transition(status, TaskStatus.CANCELLED)
             self._emit(
                 request=request, task_id=task_id, route=route, event_type="task.cancelled",
@@ -468,6 +773,7 @@ class ConversationOrchestrator:
                 assistant_message=None,
             )
         except EllyError as exc:
+            self._fail_operation(operation_lease)
             blocked = ensure_transition(status, TaskStatus.BLOCKED)
             self._emit(
                 request=request,
@@ -486,31 +792,56 @@ class ConversationOrchestrator:
             )
 
         # (6) Success: compose the three-axis result and record completion.
-        result = compose_success(task_id=task_id, answer=text, route=route)
-        ensure_transition(status, result.task_status)
-        self._emit(
-            request=request,
-            task_id=task_id,
-            route=route,
-            event_type="task.completed",
-            status=result.task_status,
-            detail=(
-                f"provider={type(self._generalist).__name__} model={self._model_id} "
-                f"prompt=local-generalist-v1 tools=none "
-                f"duration_ms={int((time.monotonic() - started) * 1000)} "
-                f"output_tokens={generalist_response.usage.output_tokens} "
-                f"latency_ms={generalist_response.usage.latency_ms} "
-                f"{self._guardrail_detail(request_guardrails)}"
-            ),
-        )
-        self._finish_task_record(task_id, result.task_status)
-        return ConversationOutcome(
-            result=result, manifest=context_manifest, assistant_message=assistant_message
-        )
+        try:
+            result = compose_success(
+                task_id=task_id,
+                answer=text,
+                route=route,
+                provenance=tuple(
+                    ProvenanceReference("message", str(message_id))
+                    for message_id in context_manifest.included_message_ids
+                ) + profile_provenance,
+            )
+            ensure_transition(status, result.task_status)
+            self._emit(
+                request=request,
+                task_id=task_id,
+                route=route,
+                event_type="task.completed",
+                status=result.task_status,
+                detail=(
+                    f"provider={type(self._generalist).__name__} model={self._model_id} "
+                    f"prompt=local-generalist-v1 tools=none "
+                    f"duration_ms={int((time.monotonic() - started) * 1000)} "
+                    f"output_tokens={generalist_response.usage.output_tokens} "
+                    f"latency_ms={generalist_response.usage.latency_ms} "
+                    f"{self._guardrail_detail(request_guardrails)}"
+                ),
+            )
+            self._record_provenance(task_id, result.provenance)
+            self._finish_task_record(task_id, result.task_status)
+            self._complete_operation(operation_lease)
+            return ConversationOutcome(
+                result=result, manifest=context_manifest, assistant_message=assistant_message
+            )
+        except StorageFailureError as exc:
+            self._best_effort_fail_operation(operation_lease, possible_duplicate=True)
+            self._best_effort_finish_task(task_id, TaskStatus.PARTIAL)
+            return ConversationOutcome(
+                result=compose_partial(
+                    task_id=task_id,
+                    reason=exc.summary,
+                    route=route,
+                    answer=text,
+                    partial_work=(
+                        "local response was generated but durable completion was incomplete",
+                    ),
+                ),
+                manifest=context_manifest,
+                assistant_message=assistant_message,
+            )
 
     def _record_sources(self, task_id: str, sources) -> None:
-        add_source = getattr(self._repository, "add_task_source", None)
-        if callable(add_source):
-            for source in sources:
-                if source:
-                    add_source(task_id, str(source), self._clock.now())
+        for source in sources:
+            if source:
+                self._repository.add_task_source(task_id, str(source), self._clock.now())

@@ -5,6 +5,27 @@ runs through a local Ollama model. When the owner explicitly enables cloud mode,
 Elly can route current-information questions to hosted web research and selected
 tasks to hosted specialists under privacy, consent, cost, and execution limits.
 
+## Project context and documentation
+
+Future developers and AI agents should read [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)
+first. It is the maintained, up-to-date orientation and handoff snapshot for the
+project, including current scope, architecture, workflows, milestone status,
+verification evidence, limitations, unresolved decisions, and recommended reading
+order. It is intended to provide immediate context without requiring a review of
+every document or prior conversation.
+
+The project context is a navigation and summary layer, not a replacement for
+authoritative requirements, decisions, source code, tests, or verification reports.
+When deeper understanding or exact behavior is needed, those materials remain
+available in this repository and should be consulted directly.
+
+Version-specific documentation should be grouped under the corresponding
+documentation folder, such as `docs/v1/`, so that requirements, architecture,
+decisions, implementation records, tests, and verification evidence for that
+version can be found together. The project context should link to the relevant
+version documents and be updated whenever project behavior, scope, decisions,
+milestones, or verification status changes.
+
 ## Project status
 
 **Independently verified, but not release-ready.** As of **2026-08-06**:

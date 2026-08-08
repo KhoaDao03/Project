@@ -27,6 +27,9 @@ class FixtureWebResearchProvider:
     def health(self) -> HealthReport:
         return HealthReport(component="research(fixtures)", state=HealthState.HEALTHY)
 
+    def cancel(self) -> None:
+        return None
+
     def research(self, query: str, budget: ResearchBudget) -> ResearchResponse:
         self.calls.append(query)
         return ResearchResponse(

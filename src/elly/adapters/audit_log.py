@@ -19,6 +19,7 @@ import re
 
 from ..domain.enums import HealthState
 from ..domain.models import AuditEvent, HealthReport
+from ..ports.repository import SessionRepositoryPort
 
 _MAX_DETAIL = 200
 _SECRET_VALUE = re.compile(
@@ -35,7 +36,7 @@ def _redact_detail(detail: str) -> str:
 class StructuredAuditLog:
     """In-process, redacting audit sink that also emits structured log lines."""
 
-    def __init__(self, logger: logging.Logger | None = None, repository=None) -> None:
+    def __init__(self, logger: logging.Logger | None = None, repository: SessionRepositoryPort | None = None) -> None:
         self._events: list[AuditEvent] = []
         self._log = logger or logging.getLogger("elly.audit")
         self._repository = repository
@@ -75,8 +76,7 @@ class StructuredAuditLog:
         if self._repository is None:
             return HealthReport(component="audit(memory)", state=HealthState.HEALTHY)
         try:
-            healthcheck = getattr(self._repository, "healthcheck")
-            healthcheck()
+            self._repository.healthcheck()
             return HealthReport(component="audit", state=HealthState.HEALTHY)
         except Exception as exc:  # noqa: BLE001 - health must report, not raise
             return HealthReport(

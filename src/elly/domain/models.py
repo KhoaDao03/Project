@@ -20,19 +20,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from .enums import (
     CloudMode,
     EpistemicStatus,
     ErrorClass,
     HealthState,
+    OutcomeCode,
     PersistenceMode,
     Route,
+    RouteReasonCode,
     TaskStatus,
     ValidationStatus,
 )
 from .errors import InputInvalidError
+
+if TYPE_CHECKING:
+    from ..privacy import ConsentProposal
 
 
 def _require_nonempty(value: str, name: str) -> str:
@@ -69,6 +74,7 @@ class TaskRequest:
     persistence_mode: PersistenceMode
     submitted_at: datetime
     approval_id: str | None = None
+    route_proposal: "RouteProposal | None" = None
 
     def __post_init__(self) -> None:
         _require_nonempty(self.request_id, "request_id")
@@ -78,6 +84,8 @@ class TaskRequest:
             raise InputInvalidError("cloud_mode must be a CloudMode")
         if not isinstance(self.persistence_mode, PersistenceMode):
             raise InputInvalidError("persistence_mode must be a PersistenceMode")
+        if self.route_proposal is not None and not isinstance(self.route_proposal, RouteProposal):
+            raise InputInvalidError("route_proposal must be a RouteProposal or null")
         object.__setattr__(self, "submitted_at", _require_aware_utc(self.submitted_at, "submitted_at"))
 
 
@@ -104,9 +112,18 @@ class TaskResult:
     partial_work: tuple[str, ...] = ()
     failures: tuple[str, ...] = ()
     next_actions: tuple[str, ...] = ()
+    outcome_code: OutcomeCode = OutcomeCode.SUCCESS
+    provenance: tuple["ProvenanceReference", ...] = ()
+    claim_supports: tuple["ClaimSupport", ...] = ()
 
     def __post_init__(self) -> None:
         _require_nonempty(self.task_id, "task_id")
+        if not isinstance(self.outcome_code, OutcomeCode):
+            raise InputInvalidError("outcome_code must be an OutcomeCode")
+        if any(not isinstance(item, ProvenanceReference) for item in self.provenance):
+            raise InputInvalidError("provenance must contain ProvenanceReference values")
+        if any(not isinstance(item, ClaimSupport) for item in self.claim_supports):
+            raise InputInvalidError("claim_supports must contain ClaimSupport values")
         # answer may be empty ONLY for a typed failure/blocked result.
         if not self.answer.strip() and self.task_status not in (
             TaskStatus.FAILED,
@@ -137,11 +154,19 @@ class EvidenceObject:
     content_hash: str = ""
     freshness: str = "not_applicable"
     safety_flags: tuple[str, ...] = ()
+    supporting_passage: str = ""
+    validation_status: str = "metadata_only"
+    source_published_at: datetime | None = None
 
     def __post_init__(self) -> None:
         for value, name in ((self.evidence_id, "evidence_id"), (self.url, "url"), (self.title, "title")):
             _require_nonempty(value, name)
         object.__setattr__(self, "retrieved_at", _require_aware_utc(self.retrieved_at, "retrieved_at"))
+        if self.source_published_at is not None:
+            object.__setattr__(
+                self, "source_published_at",
+                _require_aware_utc(self.source_published_at, "source_published_at"),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,8 +182,91 @@ class ClaimSupport:
     def __post_init__(self) -> None:
         _require_nonempty(self.claim_id, "claim_id")
         _require_nonempty(self.text, "text")
-        if self.support_status not in {"direct", "indirect", "conflicted", "unsupported"}:
+        if self.support_status not in {
+            "direct", "indirect", "supported", "conflicted", "unsupported", "unverified"
+        }:
             raise InputInvalidError("support_status is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ProvenanceReference:
+    """Safe reference to approved context or evidence that influenced a result."""
+
+    kind: str
+    reference_id: str
+    recorded_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        _require_nonempty(self.kind, "provenance kind")
+        _require_nonempty(self.reference_id, "provenance reference_id")
+        if self.recorded_at is not None:
+            object.__setattr__(
+                self, "recorded_at", _require_aware_utc(self.recorded_at, "recorded_at")
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RouteRequest:
+    """Typed input to routing policy; contains no model authorization."""
+
+    request_id: str
+    text: str
+    contextual_text: str | None = None
+    cloud_mode: CloudMode = CloudMode.LOCAL_ONLY
+
+    def __post_init__(self) -> None:
+        _require_nonempty(self.request_id, "route request_id")
+        _require_nonempty(self.text, "route text")
+        if self.contextual_text is not None and not isinstance(self.contextual_text, str):
+            raise InputInvalidError("contextual_text must be text or null")
+        if not isinstance(self.cloud_mode, CloudMode):
+            raise InputInvalidError("route cloud_mode must be a CloudMode")
+
+
+@dataclass(frozen=True, slots=True)
+class RouteProposal:
+    """Untrusted route/capability suggestion from a model or classifier."""
+
+    route: Route | None = None
+    capability_id: str | None = None
+    request_schema: str = ""
+
+    def __post_init__(self) -> None:
+        if self.route is None and not self.capability_id:
+            raise InputInvalidError("route proposal must name a route or capability")
+        if self.route is not None and not isinstance(self.route, Route):
+            raise InputInvalidError("route proposal route must be a Route")
+        if self.capability_id is not None:
+            _require_nonempty(self.capability_id, "route proposal capability_id")
+
+
+@dataclass(frozen=True, slots=True)
+class RouteDecision:
+    """Final deterministic route decision with an auditable reason code."""
+
+    route: Route
+    reason_code: RouteReasonCode
+    capability_id: str | None = None
+    diagnostic: str = ""
+    available: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.route, Route):
+            raise InputInvalidError("route decision route must be a Route")
+        if not isinstance(self.reason_code, RouteReasonCode):
+            raise InputInvalidError("route decision reason_code must be a RouteReasonCode")
+        if self.capability_id is not None:
+            _require_nonempty(self.capability_id, "route decision capability_id")
+
+
+@dataclass(frozen=True, slots=True)
+class OperationLease:
+    """Idempotency claim for one externally meaningful operation."""
+
+    operation_id: str
+    fresh: bool
+    state: str
+    possible_duplicate: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,4 +396,4 @@ class ConversationOutcome:
     result: TaskResult
     manifest: ContextManifest
     assistant_message: Message | None = None
-    consent_proposal: object | None = None
+    consent_proposal: "ConsentProposal | None" = None

@@ -26,7 +26,7 @@ Elly is a single-user, terminal-first, local-first assistant. Ordinary conversat
 **Tested:** deterministic unit, contract, integration, security, and release-harness coverage exists; current release materials report 209/209 for the implemented scope.  
 **Verified:** local Ollama and bounded OpenAI smoke paths have recorded evidence; the complete approved V1 is not verified.  
 **Owner reviewed:** M0–M2 evidence and the 2026-08-07 UAT verdict are recorded; full current-version acceptance is not complete.  
-**Release-ready:** **No.** M3–M6 are reopened and M7 remains open because aggregate quality evidence, final threshold review, pricing assurance, backup/recovery assurance, and accepted scope gaps remain.
+**Release-ready:** **No.** M3–M6 are reopened and M7 remains open because aggregate quality evidence, final threshold review, pricing assurance, backup/recovery assurance, and accepted scope gaps remain. The reasons and later-iteration boundary are recorded in [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md).
 
 ## 3. Project Goals and Motivation
 
@@ -56,6 +56,8 @@ Elly is a single-user, terminal-first, local-first assistant. Ordinary conversat
 - **Unavailable by design:** high-impact/write actions, specialist shell/file/tool execution, model-authorized external actions, silent cloud fallback, and treating URL metadata alone as `known` claim support.
 - **Unresolved/release-blocking:** authoritative provider pricing, vetted production backup AEAD/key management, recovery acceptance, complete aggregate quality corpus, and final threshold review.
 - `stock_analysis` has a validated manifest, but the deterministic router exposes coding and research-specialist routes only; fresh stock questions use web research.
+
+The reopened milestone gaps are intentionally deferred to later project iterations; see [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md). That record does not close or change milestone status by itself.
 
 ## 5. Users, Actors, and Use Cases
 
@@ -239,13 +241,15 @@ Application code controls routing, cloud permission, consent, provider/model, li
 | M6 | data/operations | profile/retention/traces/backup prototype | Implemented | focused tests | Reopened; crypto/recovery |
 | M7 | release/evaluation/UAT | EVAL catalog/gate/thresholds/UAT | Partial | deterministic gate; live pending | Open; [checklist](docs/M7_RELEASE_CHECKLIST.md) |
 
-Implementation existence and narrow tests do not prove closure. Read [docs/implementStatus](docs/implementStatus/) with the controlling [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md).
+Implementation existence and narrow tests do not prove closure. Read [docs/implementStatus](docs/implementStatus/) with the controlling [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md). The later-iteration deferral record is [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md).
 
 ## 17. Version 1 Verification and Release Status
 
 The controlling decision is **not release-ready**. Recorded evidence includes real Ollama local-path smoke, bounded OpenAI hosted-search and specialist smokes, deterministic security/schema/limit tests, compile checks, and release-harness execution. Current release materials report 209/209 deterministic tests for implemented scope, 30 catalog records, hardware evidence for approved qwen3:8b development, and UAT clarity 4/5, control/privacy 3/5, usefulness 4/5, no safety-critical issue.
 
 Gaps are: no complete live-quality/scoring corpus at approved thresholds; claim-level hosted research support is limited by provider annotations; pricing is a configured reservation rather than authoritative billing; backup crypto is a prototype; recovery acceptance is absent; and UC-04/06/09/11 are deferred and not current-release verified.
+
+These gaps are recorded as deferred later-iteration work in [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md). They remain open for milestone/release accounting until separately addressed and verified.
 
 This task’s sandbox test attempt ran 203 tests and failed during `test_ollama_generalist` setup because localhost socket creation was denied. It is not evidence that the suite fails in the repository. The recorded 209/209 result remains repository evidence, while differing counts are an evidence/documentation conflict to reconcile in a future authorized verification run.
 
@@ -324,11 +328,12 @@ Unittest covers deterministic unit/contract/integration/security behavior; it do
 5. [DESIGN.md](docs/DESIGN.md) and [CONTRACTS.md](docs/CONTRACTS.md) — architecture, UCs, interfaces.
 6. [TEST_SPECS.md](docs/TEST_SPECS.md), [MILESTONE_PLAN.md](docs/MILESTONE_PLAN.md), [TRACEABILITY.md](docs/TRACEABILITY.md) — acceptance, milestones, mappings.
 7. [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md), [M7_RELEASE_CHECKLIST.md](docs/M7_RELEASE_CHECKLIST.md), [M7_THRESHOLD_REVIEW.md](docs/M7_THRESHOLD_REVIEW.md), [M7_UAT_RECORD.md](docs/M7_UAT_RECORD.md) — evidence and release state.
-8. [IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md) — runtime walkthrough.
-9. [__main__.py](src/elly/__main__.py), [composition.py](src/elly/composition.py), [conversation.py](src/elly/application/conversation.py) — entry and orchestration.
-10. [models.py](src/elly/domain/models.py), [ports](src/elly/ports/), [adapters](src/elly/adapters/) — contracts and providers.
-11. [privacy.py](src/elly/privacy.py), [guardrails](src/elly/guardrails/), [sqlite_repository.py](src/elly/adapters/sqlite_repository.py) — security, limits, state.
-12. [tests](tests/) and [run_release_gate.py](scripts/run_release_gate.py) — executable evidence.
+8. [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md) — reasons for reopened milestones and later-iteration boundaries.
+9. [IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md) — runtime walkthrough.
+10. [__main__.py](src/elly/__main__.py), [composition.py](src/elly/composition.py), [conversation.py](src/elly/application/conversation.py) — entry and orchestration.
+11. [models.py](src/elly/domain/models.py), [ports](src/elly/ports/), [adapters](src/elly/adapters/) — contracts and providers.
+12. [privacy.py](src/elly/privacy.py), [guardrails](src/elly/guardrails/), [sqlite_repository.py](src/elly/adapters/sqlite_repository.py) — security, limits, state.
+13. [tests](tests/) and [run_release_gate.py](scripts/run_release_gate.py) — executable evidence.
 
 ## 26. Source-Tree Map
 
@@ -377,7 +382,7 @@ docs/                          requirements, architecture, decisions, evidence
 
 **Is data persisted?** Normal SQLite state is retained by policy; `/new --no-store` prevents message-body reconstruction. See [sqlite_repository.py](src/elly/adapters/sqlite_repository.py).
 
-**What remains unresolved?** Pricing assurance, vetted backup crypto/recovery acceptance, aggregate quality/final threshold review, and deferred UAT scope. See §23.
+**What remains unresolved?** Pricing assurance, vetted backup crypto/recovery acceptance, aggregate quality/final threshold review, and deferred UAT scope. See §23 and [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md).
 
 ## 29. Context Freshness and Update Procedure
 
@@ -393,8 +398,8 @@ Change the date, commit, branch/worktree statement, affected sections, verificat
 - **Architecture/contracts:** [DESIGN.md](docs/DESIGN.md), [CONTRACTS.md](docs/CONTRACTS.md), [IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md).
 - **Security/privacy:** [THREAT_MODEL.md](docs/THREAT_MODEL.md), [DECISIONS.md](docs/DECISIONS.md), [privacy.py](src/elly/privacy.py), [audit_log.py](src/elly/adapters/audit_log.py).
 - **Milestones/traceability:** [MILESTONE_PLAN.md](docs/MILESTONE_PLAN.md), [TRACEABILITY.md](docs/TRACEABILITY.md), [implementStatus](docs/implementStatus/).
+- **Deferred milestone gaps:** [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md).
 - **Implementation:** [src/elly](src/elly/), [pyproject.toml](pyproject.toml).
 - **Testing:** [tests](tests/), [TEST_SPECS.md](docs/TEST_SPECS.md), [run_release_gate.py](scripts/run_release_gate.py).
 - **Verification:** [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md), [M7_LIVE_EVIDENCE.md](docs/implementStatus/M7_LIVE_EVIDENCE.md), [M7_THRESHOLD_REVIEW.md](docs/M7_THRESHOLD_REVIEW.md).
 - **Decisions/release:** [DECISIONS.md](docs/DECISIONS.md), [CHANGELOG.md](docs/CHANGELOG.md), [M7_RELEASE_CHECKLIST.md](docs/M7_RELEASE_CHECKLIST.md), [M7_UAT_RECORD.md](docs/M7_UAT_RECORD.md).
-

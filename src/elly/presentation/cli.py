@@ -27,6 +27,7 @@ from ..domain.enums import CloudMode, PersistenceMode
 from ..domain.errors import EllyError, InputInvalidError, PermissionDeniedError
 from ..domain.models import AuditEvent, SessionRecord, TaskRequest
 from ..domain.enums import TaskStatus
+from ..privacy import ConsentProposal
 from . import render
 from .validators import normalize_and_validate
 
@@ -57,7 +58,7 @@ class Cli:
 
     app: Application
     session: SessionRecord
-    pending_consent: tuple[TaskRequest, object] | None = None
+    pending_consent: tuple[TaskRequest, ConsentProposal] | None = None
 
     @classmethod
     def start(cls, app: Application) -> "Cli":
@@ -127,11 +128,8 @@ class Cli:
                 return "Mode: cloud_permitted (hosted web research requires OPENAI_API_KEY)."
             return "Usage: /mode local | /mode cloud"
         if cmd == "/cancel":
-            cancel = getattr(self.app.generalist, "cancel", None)
-            if callable(cancel):
-                cancel()
-                return "Cancellation requested."
-            return "No cancellable operation is active."
+            self.app.cancel_active()
+            return "Cancellation requested."
         if cmd == "/profile":
             return self._profile_command(args)
         if cmd == "/history":
@@ -170,7 +168,7 @@ class Cli:
             if len(args) != 1 or self.pending_consent is None:
                 return f"Usage: {cmd} <proposal-id>"
             request, proposal = self.pending_consent
-            proposal_id = getattr(proposal, "proposal_id", "")
+            proposal_id = proposal.proposal_id
             if args[0] != proposal_id:
                 return "Consent proposal does not match the pending task."
             workflow = self.app.specialist_workflow
@@ -183,7 +181,7 @@ class Cli:
                         task_id=f"task-{request.request_id}", session_id=request.session_id,
                         event_type="consent.denied", at=self.app.clock.now(),
                         task_status=TaskStatus.BLOCKED,
-                        detail=f"proposal={proposal_id} provider={getattr(proposal, 'provider', '-')}",
+                        detail=f"proposal={proposal_id} provider={proposal.provider}",
                     ))
                     self.pending_consent = None
                     return "Consent denied; no specialist call was made."
@@ -195,8 +193,8 @@ class Cli:
                     task_id=f"task-{approved.request_id}", session_id=request.session_id,
                     event_type="consent.approved", at=self.app.clock.now(),
                     task_status=TaskStatus.AWAITING_CONSENT,
-                    detail=(f"proposal={proposal_id} provider={getattr(proposal, 'provider', '-')} "
-                            f"model={getattr(proposal, 'model', '-')}")
+                    detail=(f"proposal={proposal_id} provider={proposal.provider} "
+                            f"model={proposal.model}")
                 ))
                 self.pending_consent = None
                 future = self.app.submit(approved) if self.app.executor is not None else None
@@ -269,12 +267,8 @@ class Cli:
                 print()
                 break
             except KeyboardInterrupt:
-                cancel = getattr(self.app.generalist, "cancel", None)
-                if callable(cancel):
-                    cancel()
-                    print("Cancellation requested.")
-                else:
-                    print()
+                self.app.cancel_active()
+                print("Cancellation requested.")
                 continue
             out = self.dispatch(line)
             if out == EXIT:

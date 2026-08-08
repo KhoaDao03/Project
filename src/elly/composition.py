@@ -19,11 +19,20 @@ from .adapters.audit_log import StructuredAuditLog
 from .adapters.fake_generalist import FakeGeneralist
 from .adapters.ollama_generalist import OllamaGeneralist
 from .adapters.openai_web_research import OpenAIHostedWebSearch
+from .adapters.http_document_retriever import HttpDocumentRetriever
 from .adapters.sqlite_repository import SqliteSessionRepository
 from .adapters.system_clock import SystemClock
 from .application.conversation import ConversationOrchestrator
+from .application.capabilities import CapabilityRegistry
+from .application.capability_handlers import (
+    ResearchCapabilityHandler,
+    SpecialistCapabilityHandler,
+)
+from .application.context_builder import ContextBuilder
+from .application.routing import RoutingPolicy
 from .config import Config, load_config
-from .domain.enums import CloudMode, HealthState, PersistenceMode
+from .domain.enums import CloudMode, HealthState, PersistenceMode, Route
+from .domain.errors import ConfigInvalidError
 from .domain.models import HealthReport, SessionRecord
 from .ports.audit import AuditPort
 from .ports.clock import ClockPort
@@ -31,8 +40,11 @@ from .ports.generalist import GeneralistPort
 from .ports.repository import SessionRepositoryPort
 from .specialists.registry import SpecialistRegistry
 from .application.research import ResearchPipeline
+from .research.evidence_policy import EvidencePolicy
 from .application.specialists import SpecialistWorkflow
 from .privacy import ConsentWorkflow
+from .privacy import PrivacyPolicy
+from .application.authorization import CloudAuthorizationPolicy
 from .adapters.openai_specialist import OpenAISpecialistProvider
 from .research.fake_provider import FixtureWebResearchProvider
 from .specialists.fake_provider import FakeSpecialistProvider
@@ -41,12 +53,74 @@ from .operations import BackupService
 from .guardrails import BoundedTaskExecutor, GuardrailController, LimitPolicy
 
 
+def validate_required_dependencies(
+    *,
+    clock: ClockPort,
+    generalist: GeneralistPort,
+    repository: SessionRepositoryPort,
+    audit: AuditPort,
+) -> None:
+    """Fail early when a required application port is missing or incompatible."""
+    required = (
+        ("clock", clock, ClockPort),
+        ("generalist", generalist, GeneralistPort),
+        ("repository", repository, SessionRepositoryPort),
+        ("audit", audit, AuditPort),
+    )
+    for name, dependency, protocol in required:
+        if dependency is None or not isinstance(dependency, protocol):
+            raise ConfigInvalidError(
+                f"required dependency {name} does not implement {protocol.__name__}"
+            )
+
+
+def _specialist_capability_handlers(
+    specialist_registry: SpecialistRegistry,
+    specialist_workflow: SpecialistWorkflow | None,
+) -> tuple[SpecialistCapabilityHandler, ...]:
+    """Adapt every configured specialist manifest without adding core branches."""
+    handlers: list[SpecialistCapabilityHandler] = []
+    registered_ids: set[str] = set()
+    for manifest in specialist_registry.enabled():
+        route = (
+            Route.CODING_SPECIALIST
+            if manifest.role == "coding"
+            else Route.RESEARCH_SPECIALIST
+        )
+        handlers.append(
+            SpecialistCapabilityHandler(
+                manifest.id, route, manifest, specialist_workflow
+            )
+        )
+        registered_ids.add(manifest.id)
+    # Preserve explicit availability for the two V1 routes even when their
+    # manifests are absent or disabled; routing can report NOT_CONFIGURED.
+    for specialist_id, route in (
+        ("coding", Route.CODING_SPECIALIST),
+        ("research", Route.RESEARCH_SPECIALIST),
+    ):
+        if specialist_id not in registered_ids:
+            handlers.append(
+                SpecialistCapabilityHandler(
+                    specialist_id,
+                    route,
+                    specialist_registry.get(specialist_id),
+                    specialist_workflow,
+                )
+            )
+    return tuple(handlers)
+
+
 class Application:
     """Wired M6 application container.
 
     Holds the composed collaborators and exposes the small surface the CLI needs.
     Construct via `build()`.
     """
+
+    def cancel_active(self) -> bool:
+        """Cancel the active local or hosted operation through its provider port."""
+        return self.orchestrator.cancel_active()
 
     def __init__(
         self,
@@ -62,8 +136,15 @@ class Application:
         research: ResearchPipeline | None = None,
         specialist_workflow: SpecialistWorkflow | None = None,
         consent: ConsentWorkflow | None = None,
+        capability_registry: CapabilityRegistry | None = None,
     ) -> None:
         self.config = config
+        validate_required_dependencies(
+            clock=clock, generalist=generalist, repository=repository, audit=audit
+        )
+        # Composition is also the startup boundary: an un-migrated or damaged
+        # store must fail before the CLI accepts work.
+        repository.healthcheck()
         self.clock = clock
         self.generalist = generalist
         self.repository = repository
@@ -74,6 +155,34 @@ class Application:
         self.research = research
         self.specialist_workflow = specialist_workflow
         self.consent = consent
+        if capability_registry is None:
+            optional_handlers = []
+            if research is not None:
+                optional_handlers.append(
+                    ResearchCapabilityHandler(
+                        research,
+                        provider_id=config.research_provider,
+                        model_id=config.research_model_id,
+                        max_cost_usd=config.consent_max_cost_usd,
+                    )
+                )
+            if specialist_workflow is not None:
+                optional_handlers.extend(
+                    _specialist_capability_handlers(
+                        self.specialist_registry, specialist_workflow
+                    )
+                )
+            self.capability_registry = CapabilityRegistry(tuple(optional_handlers))
+        else:
+            self.capability_registry = capability_registry
+        self.capability_registry.validate()
+        self.routing_policy = RoutingPolicy(capabilities=self.capability_registry)
+        self.privacy_policy = PrivacyPolicy()
+        self.cloud_authorization_policy = CloudAuthorizationPolicy()
+        self.context_builder = ContextBuilder(
+            context_window=config.context_window_messages,
+            reserved_output_tokens=config.generalist_max_output_tokens,
+        )
         self.profile = ProfileService(repository, clock)
         self.backup = None
         self._maintenance_stop = threading.Event()
@@ -95,6 +204,11 @@ class Application:
             specialist_workflow=specialist_workflow,
             consent=consent,
             profile_service=self.profile,
+            capability_registry=self.capability_registry,
+            routing_policy=self.routing_policy,
+            context_builder=self.context_builder,
+            privacy_policy=self.privacy_policy,
+            cloud_authorization_policy=self.cloud_authorization_policy,
         )
 
     # -- session lifecycle -------------------------------------------------
@@ -124,26 +238,25 @@ class Application:
             self._maintenance_thread.join(timeout=2)
         if self.executor is not None:
             self.executor.shutdown()
-        close = getattr(self.repository, "close", None)
-        if callable(close):
-            close()
+        self.repository.close()
 
     def maintain_storage(self) -> None:
         """Apply configured retention and create a daily backup when enabled."""
         from datetime import timedelta
         now = self.clock.now()
-        purge_sessions = getattr(self.repository, "purge_sessions", None)
-        if callable(purge_sessions):
-            purge_sessions(now - timedelta(days=self.config.session_retention_days))
-        purge_profile = getattr(self.repository, "purge_expired_profile", None)
-        if callable(purge_profile):
-            self.profile.load_startup()
-        purge_sources = getattr(self.repository, "purge_task_sources", None)
-        if callable(purge_sources):
-            purge_sources(now - timedelta(days=self.config.evidence_retention_days))
-        purge_audit = getattr(self.repository, "purge_audit_events", None)
-        if callable(purge_audit):
-            purge_audit(now - timedelta(days=self.config.audit_retention_days))
+        self.repository.purge_sessions(
+            now - timedelta(days=self.config.session_retention_days)
+        )
+        self.profile.load_startup()
+        self.repository.purge_task_sources(
+            now - timedelta(days=self.config.evidence_retention_days)
+        )
+        self.repository.purge_task_provenance(
+            now - timedelta(days=self.config.evidence_retention_days)
+        )
+        self.repository.purge_audit_events(
+            now - timedelta(days=self.config.audit_retention_days)
+        )
         if self.backup is not None:
             self.backup.create_daily_if_due(self.config.backup_dir, now=now)
 
@@ -177,11 +290,7 @@ class Application:
             reports.append(self.specialist_workflow.provider.health())
         # Storage health: a trivial read proves the connection/schema is usable.
         try:
-            healthcheck = getattr(self.repository, "healthcheck", None)
-            if callable(healthcheck):
-                healthcheck()
-            else:
-                self.repository.recent_messages("___healthcheck___", 1)
+            self.repository.healthcheck()
             reports.append(HealthReport(component="storage(sqlite)", state=HealthState.HEALTHY))
         except Exception as exc:  # noqa: BLE001 - report, do not crash /status
             reports.append(
@@ -191,11 +300,8 @@ class Application:
                     detail=type(exc).__name__,
                 )
             )
-        audit_health = getattr(self.audit, "health", None)
         reports.append(
-            audit_health() if callable(audit_health)
-            else HealthReport(component="audit", state=HealthState.DEGRADED,
-                              detail="audit sink has no health probe")
+            self.audit.health()
         )
         reports.append(HealthReport(
             component="profile",
@@ -222,7 +328,7 @@ def build(toml_path: str | None = None) -> Application:
       - clock:      SystemClock (REAL).
     """
     config = load_config(toml_path)
-    logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
+    logging.basicConfig(level=logging._nameToLevel.get(config.log_level, logging.INFO))
 
     repository = SqliteSessionRepository(config.db_path)
     repository.apply_migrations()
@@ -264,6 +370,13 @@ def build(toml_path: str | None = None) -> Application:
             config.remote_call_reservation_usd
             if config.research_provider == "openai_web_search" else 0.0
         ),
+        evidence_policy=EvidencePolicy(
+            retriever=(
+                HttpDocumentRetriever()
+                if config.research_provider == "openai_web_search" else None
+            ),
+            retrieval_timeout_seconds=min(config.research_timeout_seconds, 15.0),
+        ),
     )
     consent = ConsentWorkflow()
     specialist_provider = (
@@ -285,6 +398,23 @@ def build(toml_path: str | None = None) -> Application:
         consent_max_cost_usd=config.consent_max_cost_usd,
     )
 
+    specialist_registry = SpecialistRegistry.from_directory(
+        config.specialist_manifest_dir,
+        default_model=config.specialist_default_model_id,
+        model_overrides=dict(config.specialist_model_overrides),
+    )
+    capability_registry = CapabilityRegistry(
+        (
+            ResearchCapabilityHandler(
+                research,
+                provider_id=config.research_provider,
+                model_id=config.research_model_id,
+                max_cost_usd=config.consent_max_cost_usd,
+            ),
+            *_specialist_capability_handlers(specialist_registry, specialist_workflow),
+        )
+    )
+
     app = Application(
         config=config,
         clock=SystemClock(),
@@ -298,16 +428,13 @@ def build(toml_path: str | None = None) -> Application:
         ),
         repository=repository,
         audit=StructuredAuditLog(repository=repository),
-        specialist_registry=SpecialistRegistry.from_directory(
-            config.specialist_manifest_dir,
-            default_model=config.specialist_default_model_id,
-            model_overrides=dict(config.specialist_model_overrides),
-        ),
+        specialist_registry=specialist_registry,
         guardrails=guardrails,
         executor=executor,
         research=research,
         specialist_workflow=specialist_workflow,
         consent=consent,
+        capability_registry=capability_registry,
     )
     if os.environ.get("ELLY_BACKUP_KEY"):
         app.backup = BackupService(db_path=config.db_path)

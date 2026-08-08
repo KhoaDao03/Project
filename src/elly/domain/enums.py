@@ -47,6 +47,20 @@ class Route(str, Enum):
     CODING_SPECIALIST = "coding_specialist"
 
 
+class RouteReasonCode(str, Enum):
+    """Safe diagnostic reason for an application-owned route decision."""
+
+    LOCAL_DEFAULT = "LOCAL_DEFAULT"
+    CURRENT_INFORMATION_REQUIRED = "CURRENT_INFORMATION_REQUIRED"
+    CODING_REQUEST = "CODING_REQUEST"
+    RESEARCH_SPECIALIST_REQUEST = "RESEARCH_SPECIALIST_REQUEST"
+    PROPOSAL_ACCEPTED = "PROPOSAL_ACCEPTED"
+    PROPOSAL_REJECTED = "PROPOSAL_REJECTED"
+    CAPABILITY_UNAVAILABLE = "CAPABILITY_UNAVAILABLE"
+    AUTHORIZATION_DENIED = "AUTHORIZATION_DENIED"
+    INVALID_REQUEST = "INVALID_REQUEST"
+
+
 class TaskStatus(str, Enum):
     """Execution outcome of a task (DESIGN §2.3, §5.4).
 
@@ -63,6 +77,20 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
     FAILED = "failed"
     BLOCKED = "blocked"
+
+
+class OutcomeCode(str, Enum):
+    """Stable reason/outcome vocabulary independent of task lifecycle."""
+
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    UNKNOWN = "unknown"
+    UNAVAILABLE = "unavailable"
+    CANCELLED = "cancelled"
+    AWAITING_CONSENT = "awaiting_consent"
+    POSSIBLE_DUPLICATE_EXECUTION = "possible_duplicate_execution"
 
 
 class EpistemicStatus(str, Enum):

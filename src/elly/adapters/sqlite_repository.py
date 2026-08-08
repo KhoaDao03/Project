@@ -26,10 +26,16 @@ from pathlib import Path
 
 from ..domain.enums import CloudMode, PersistenceMode
 from ..domain.errors import StorageFailureError
-from ..domain.models import AuditEvent, Message, SessionRecord
+from ..domain.models import (
+    AuditEvent,
+    Message,
+    OperationLease,
+    ProvenanceReference,
+    SessionRecord,
+)
 from ..memory import ProfileItem
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _MIGRATION_V1 = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -82,6 +88,29 @@ CREATE TABLE IF NOT EXISTS task_sources (
 );
 """
 _MIGRATION_V2_STATEMENTS = tuple(statement.strip() for statement in _MIGRATION_V2.split(";") if statement.strip())
+_MIGRATION_V3 = """
+CREATE TABLE IF NOT EXISTS task_operations (
+    operation_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    request_id TEXT NOT NULL,
+    capability_id TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    state TEXT NOT NULL,
+    possible_duplicate INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(task_id, capability_id, request_digest)
+);
+CREATE INDEX IF NOT EXISTS idx_task_operations_task ON task_operations(task_id);
+CREATE TABLE IF NOT EXISTS task_provenance (
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    kind TEXT NOT NULL,
+    reference_id TEXT NOT NULL,
+    recorded_at TEXT,
+    PRIMARY KEY(task_id, kind, reference_id)
+);
+"""
+_MIGRATION_V3_STATEMENTS = tuple(statement.strip() for statement in _MIGRATION_V3.split(";") if statement.strip())
 _PROFILE_TABLES = {
     "profile_items": """CREATE TABLE profile_items (
         item_id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
@@ -125,18 +154,26 @@ class SqliteSessionRepository:
             # rolls back and the schema_meta version is not advanced.
             self._conn.executescript(_MIGRATION_V1)
             row = self._conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()
-            if row is None or row[0] < _SCHEMA_VERSION:
+            current_version = int(row[0]) if row is not None else 1
+            migrations = ((2, _MIGRATION_V2_STATEMENTS), (3, _MIGRATION_V3_STATEMENTS))
+            for version, statements in migrations:
+                if current_version >= version:
+                    continue
                 self._conn.execute("BEGIN")
                 try:
-                    for statement in _MIGRATION_V2_STATEMENTS:
+                    for statement in statements:
                         self._conn.execute(statement)
                     if row is None:
                         self._conn.execute(
-                            "INSERT INTO schema_meta (id, version) VALUES (1, ?)", (_SCHEMA_VERSION,)
+                            "INSERT INTO schema_meta (id, version) VALUES (1, ?)", (version,)
                         )
+                        row = (version,)
                     else:
-                        self._conn.execute("UPDATE schema_meta SET version=? WHERE id=1", (_SCHEMA_VERSION,))
+                        self._conn.execute(
+                            "UPDATE schema_meta SET version=? WHERE id=1", (version,)
+                        )
                     self._conn.commit()
+                    current_version = version
                 except sqlite3.Error:
                     self._conn.rollback()
                     raise
@@ -197,14 +234,32 @@ class SqliteSessionRepository:
         except sqlite3.Error as exc:
             raise StorageFailureError(f"append_message failed: {type(exc).__name__}") from exc
 
-    def start_task(self, task_id: str, session_id: str, at: datetime) -> None:
-        """Record an in-flight task; restart reconciliation never replays it."""
+    def start_task(self, task_id: str, session_id: str, at: datetime) -> bool:
+        """Record an in-flight task and identify whether this is a new request.
+
+        A completed task is left untouched so a repeated request ID cannot reset
+        its durable state.  retryable terminal states are reopened; the
+        operation ledger makes the subsequent provider call idempotent.
+        """
         try:
             with self._conn:
-                self._conn.execute(
-                    "INSERT INTO tasks(task_id, session_id, status, started_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                cursor = self._conn.execute(
+                    "INSERT OR IGNORE INTO tasks(task_id, session_id, status, started_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                     (task_id, session_id, "running", _iso(at), _iso(at)),
                 )
+                if cursor.rowcount == 1:
+                    return True
+                row = self._conn.execute(
+                    "SELECT status FROM tasks WHERE task_id=?", (task_id,)
+                ).fetchone()
+                if row is None:
+                    raise StorageFailureError("task start was not recorded")
+                if row[0] in {"failed", "blocked", "cancelled", "interrupted", "awaiting_consent"}:
+                    self._conn.execute(
+                        "UPDATE tasks SET status='running', updated_at=? WHERE task_id=?",
+                        (_iso(at), task_id),
+                    )
+                return False
         except sqlite3.Error as exc:
             raise StorageFailureError(f"start_task failed: {type(exc).__name__}") from exc
 
@@ -327,6 +382,8 @@ class SqliteSessionRepository:
                 # Foreign keys are enabled; delete dependents explicitly so
                 # user-requested deletion is complete and transactional.
                 self._conn.execute("DELETE FROM task_sources WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id=?)", (session_id,))
+                self._conn.execute("DELETE FROM task_operations WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id=?)", (session_id,))
+                self._conn.execute("DELETE FROM task_provenance WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id=?)", (session_id,))
                 self._conn.execute("DELETE FROM audit_events WHERE session_id=?", (session_id,))
                 self._conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
                 self._conn.execute("DELETE FROM tasks WHERE session_id=?", (session_id,))
@@ -343,6 +400,14 @@ class SqliteSessionRepository:
                 for (session_id,) in rows:
                     self._conn.execute(
                         "DELETE FROM task_sources WHERE task_id IN "
+                        "(SELECT task_id FROM tasks WHERE session_id=?)", (session_id,)
+                    )
+                    self._conn.execute(
+                        "DELETE FROM task_operations WHERE task_id IN "
+                        "(SELECT task_id FROM tasks WHERE session_id=?)", (session_id,)
+                    )
+                    self._conn.execute(
+                        "DELETE FROM task_provenance WHERE task_id IN "
                         "(SELECT task_id FROM tasks WHERE session_id=?)", (session_id,)
                     )
                     self._conn.execute("DELETE FROM audit_events WHERE session_id=?", (session_id,))
@@ -364,6 +429,17 @@ class SqliteSessionRepository:
         except sqlite3.Error as exc:
             raise StorageFailureError(f"purge sources failed: {type(exc).__name__}") from exc
 
+    def purge_task_provenance(self, before: datetime) -> int:
+        try:
+            with self._conn:
+                cursor = self._conn.execute(
+                    "DELETE FROM task_provenance WHERE recorded_at IS NOT NULL AND recorded_at < ?",
+                    (_iso(before),),
+                )
+                return cursor.rowcount
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"purge provenance failed: {type(exc).__name__}") from exc
+
     def purge_audit_events(self, before: datetime) -> int:
         """Delete redacted audit metadata older than DEC-OQ-08 retention."""
         try:
@@ -379,7 +455,7 @@ class SqliteSessionRepository:
         """Verify the connection and every required schema-v2 table without mutation."""
         required = {
             "sessions", "messages", "tasks", "profile_items",
-            "audit_events", "task_sources",
+            "audit_events", "task_sources", "task_operations", "task_provenance",
         }
         try:
             self._conn.execute("SELECT 1").fetchone()
@@ -418,6 +494,103 @@ class SqliteSessionRepository:
                 self._conn.execute("INSERT OR IGNORE INTO task_sources(task_id,source,created_at) VALUES (?,?,?)", (task_id, source, _iso(at)))
         except sqlite3.Error as exc:
             raise StorageFailureError(f"add source failed: {type(exc).__name__}") from exc
+
+    def add_task_provenance(self, task_id: str, reference: ProvenanceReference) -> None:
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO task_provenance(task_id,kind,reference_id,recorded_at) VALUES (?,?,?,?)",
+                    (
+                        task_id,
+                        reference.kind,
+                        reference.reference_id,
+                        _iso(reference.recorded_at) if reference.recorded_at else None,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"add provenance failed: {type(exc).__name__}") from exc
+
+    def claim_operation(
+        self, *, task_id: str, request_id: str, capability_id: str,
+        request_digest: str, at: datetime,
+    ) -> OperationLease:
+        operation_id = f"op-{task_id}-{capability_id}-{request_digest[:16]}"
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO task_operations(operation_id,task_id,request_id,capability_id,request_digest,state,possible_duplicate,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (operation_id, task_id, request_id, capability_id, request_digest, "running", 0, _iso(at), _iso(at)),
+                )
+                row = self._conn.execute(
+                    "SELECT operation_id,state,possible_duplicate FROM task_operations WHERE task_id=? AND capability_id=? AND request_digest=?",
+                    (task_id, capability_id, request_digest),
+                ).fetchone()
+                if row is None:
+                    raise StorageFailureError("operation claim was not recorded")
+                operation_id_in_db, state, possible_duplicate = row
+                if state in {"failed", "cancelled"} and not possible_duplicate:
+                    # No external operation was recorded as having started; a
+                    # subsequent identical request may retry this failed work.
+                    self._conn.execute(
+                        "UPDATE task_operations SET state='running',updated_at=? WHERE operation_id=?",
+                        (_iso(at), operation_id_in_db),
+                    )
+                    state = "running"
+                    fresh = True
+                else:
+                    fresh = (
+                        operation_id_in_db == operation_id
+                        and state == "running"
+                        and possible_duplicate == 0
+                    )
+                if not fresh:
+                    self._conn.execute(
+                        "UPDATE task_operations SET possible_duplicate=1,updated_at=? WHERE operation_id=?",
+                        (_iso(at), operation_id_in_db),
+                    )
+                return OperationLease(
+                    operation_id_in_db,
+                    fresh,
+                    state,
+                    bool(possible_duplicate) or not fresh,
+                )
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"claim operation failed: {type(exc).__name__}") from exc
+
+    def complete_operation(self, operation_id: str, *, at: datetime) -> None:
+        self._update_operation_state(operation_id, "completed", at)
+
+    def fail_operation(
+        self, operation_id: str, *, at: datetime, possible_duplicate: bool = False
+    ) -> None:
+        self._update_operation_state(
+            operation_id, "failed", at, possible_duplicate=possible_duplicate
+        )
+
+    def _update_operation_state(
+        self,
+        operation_id: str,
+        state: str,
+        at: datetime,
+        *,
+        possible_duplicate: bool = False,
+    ) -> None:
+        try:
+            with self._conn:
+                if possible_duplicate:
+                    cursor = self._conn.execute(
+                        "UPDATE task_operations SET state=?,possible_duplicate=1,updated_at=? WHERE operation_id=?",
+                        (state, _iso(at), operation_id),
+                    )
+                else:
+                    cursor = self._conn.execute(
+                        "UPDATE task_operations SET state=?,updated_at=? WHERE operation_id=?",
+                        (state, _iso(at), operation_id),
+                    )
+                if cursor.rowcount != 1:
+                    raise StorageFailureError("operation record not found")
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"update operation failed: {type(exc).__name__}") from exc
 
     def task_sources(self, task_id: str) -> tuple[str, ...]:
         try:

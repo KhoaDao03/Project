@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from ..domain.models import EvidenceObject
+from ..domain.models import EvidenceObject, HealthReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +22,8 @@ class ProviderCitation:
     publisher: str = ""
     snippet: str = ""
     retrieved_at: datetime | None = None
+    published_at: datetime | None = None
+    supporting_passage: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,10 +44,14 @@ class WebResearchProvider(Protocol):
     Implementations must not expose provider-specific exceptions across this port.
     """
 
-    def health(self):
+    def health(self) -> HealthReport:
         ...
 
     def research(self, query: str, budget: ResearchBudget) -> ResearchResponse:
+        ...
+
+    def cancel(self) -> None:
+        """Interrupt active work when supported; otherwise safely no-op."""
         ...
 
 

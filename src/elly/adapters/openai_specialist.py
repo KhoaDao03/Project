@@ -6,6 +6,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+import threading
 
 from ..domain.enums import HealthState
 from ..domain.errors import (
@@ -30,6 +31,14 @@ class OpenAISpecialistProvider:
         self.cost_per_call_usd = cost_per_call_usd
         self.last_usage: dict[str, int] = {}
         self.last_cost_usd = 0.0
+        self._response_lock = threading.Lock()
+        self._active_response = None
+
+    def cancel(self) -> None:
+        with self._response_lock:
+            response = self._active_response
+        if response is not None:
+            response.close()
 
     def health(self) -> HealthReport:
         """Report credential configuration without probing or exposing the key."""
@@ -69,7 +78,13 @@ class OpenAISpecialistProvider:
         )
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                with self._response_lock:
+                    self._active_response = response
+                try:
+                    payload = json.loads(response.read().decode("utf-8"))
+                finally:
+                    with self._response_lock:
+                        self._active_response = None
         except urllib.error.HTTPError as exc:
             if exc.code in {401, 403}:
                 raise AuthenticationProviderError("OpenAI specialist authentication failed") from exc

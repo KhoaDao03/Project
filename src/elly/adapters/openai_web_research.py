@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -38,6 +39,14 @@ class OpenAIHostedWebSearch:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.max_output_tokens = max_output_tokens
+        self._response_lock = threading.Lock()
+        self._active_response = None
+
+    def cancel(self) -> None:
+        with self._response_lock:
+            response = self._active_response
+        if response is not None:
+            response.close()
 
     def health(self) -> HealthReport:
         """Report whether hosted search credentials are configured; make no call."""
@@ -92,7 +101,13 @@ class OpenAIHostedWebSearch:
         started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=budget.timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                with self._response_lock:
+                    self._active_response = response
+                try:
+                    payload = json.loads(response.read().decode("utf-8"))
+                finally:
+                    with self._response_lock:
+                        self._active_response = None
         except urllib.error.HTTPError as exc:
             if exc.code in {401, 403}:
                 raise AuthenticationProviderError("hosted web research authentication failed") from exc
@@ -163,7 +178,7 @@ def _response_citations(payload: dict) -> list[ProviderCitation]:
                     found.append(ProviderCitation(
                         url=url, title=str(annotation.get("title", "")),
                         publisher=str(annotation.get("publisher", "")),
-                        snippet=snippet,
+                        snippet=snippet, supporting_passage=snippet,
                     ))
                     seen.add(url)
         action = item.get("action", {})

@@ -96,6 +96,25 @@ class ConsentTests(unittest.TestCase):
             now=UTC,
         ))
 
+    def test_approval_cannot_be_reused_for_another_capability(self) -> None:
+        workflow = ConsentWorkflow(ttl_seconds=60)
+        proposal = workflow.propose(
+            task_id="t", provider="openai", model="m", purpose="same-purpose",
+            capability_id="web_research", payload="my code", categories=("local",),
+            max_cost=.25, now=UTC,
+        )
+        workflow.approve(proposal.proposal_id, now=UTC)
+        self.assertFalse(workflow.check(
+            proposal_id=proposal.proposal_id, payload="my code", provider="openai",
+            model="m", purpose="same-purpose", capability_id="coding",
+            categories=("local",), max_cost=.25, now=UTC,
+        ))
+        self.assertTrue(workflow.check(
+            proposal_id=proposal.proposal_id, payload="my code", provider="openai",
+            model="m", purpose="same-purpose", capability_id="web_research",
+            categories=("local",), max_cost=.25, now=UTC,
+        ))
+
     def test_consent_preview_redacts_the_secret_value(self) -> None:
         workflow = ConsentWorkflow()
         proposal = workflow.propose(

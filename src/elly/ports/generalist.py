@@ -44,3 +44,7 @@ class GeneralistPort(Protocol):
     def generate(self, request: GeneralistRequest) -> GeneralistResponse:
         """Produce a normalized response, or raise a typed EllyError on failure."""
         ...
+
+    def cancel(self) -> None:
+        """Request cancellation; adapters without active work may no-op."""
+        ...

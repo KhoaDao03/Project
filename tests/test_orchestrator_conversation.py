@@ -15,6 +15,7 @@ exact audit event names, so the sequencing remains free to evolve.
 from __future__ import annotations
 
 import unittest
+import threading
 from datetime import datetime, timezone
 
 from elly.adapters.audit_log import StructuredAuditLog
@@ -128,6 +129,39 @@ class OrchestratorConversationTests(unittest.TestCase):
         self.assertIs(outcome.result.task_status, TaskStatus.CANCELLED)
         self.assertEqual(outcome.result.partial_work, ("received prefix",))
         self.assertFalse(any(e.task_status is TaskStatus.COMPLETED for e in audit.by_task(outcome.result.task_id)))
+
+    def test_cancel_active_interrupts_the_bound_provider(self) -> None:
+        orch, repo, _audit, sid = _orchestrator(
+            persistence=PersistenceMode.STORE_WITH_RETENTION
+        )
+
+        class BlockingGeneralist(FakeGeneralist):
+            def __init__(self) -> None:
+                super().__init__()
+                self.started = threading.Event()
+                self.cancelled = threading.Event()
+
+            def generate(self, _request):  # type: ignore[no-untyped-def]
+                self.started.set()
+                self.cancelled.wait(timeout=2)
+                raise CancelledError("provider interrupted")
+
+            def cancel(self) -> None:
+                self.cancelled.set()
+
+        provider = BlockingGeneralist()
+        orch._generalist = provider
+        outcomes = []
+        worker = threading.Thread(
+            target=lambda: outcomes.append(orch.handle(_request(sid, "interrupt")))
+        )
+        worker.start()
+        self.assertTrue(provider.started.wait(timeout=1))
+        self.assertTrue(orch.cancel_active())
+        worker.join(timeout=2)
+        self.addCleanup(repo.close)
+        self.assertFalse(worker.is_alive())
+        self.assertIs(outcomes[0].result.task_status, TaskStatus.CANCELLED)
 
 
 if __name__ == "__main__":
