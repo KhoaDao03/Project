@@ -71,6 +71,12 @@ class StorageFailureError(EllyError):
     error_class = ErrorClass.STORAGE_FAILURE
 
 
+class ConflictError(EllyError):
+    """A compare-and-set operation lost a concurrent update."""
+
+    error_class = ErrorClass.CONFLICT
+
+
 class LimitExceededError(EllyError):
     """A configured resource or budget ceiling was reached."""
 

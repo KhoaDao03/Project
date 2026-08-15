@@ -7,15 +7,22 @@ the registry cannot become a service locator.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..domain.enums import Route
 from ..domain.errors import ConfigInvalidError
-from ..domain.models import ContextManifest, RouteRequest, TaskRequest, TaskResult
-from ..privacy import ConsentProposal
+from ..domain.models import (
+    ActionProposal,
+    CapabilityIntent,
+    ContextManifest,
+    RouteRequest,
+    TaskRequest,
+    TaskResult,
+)
+from ..privacy import ClassificationDecision, ConsentProposal
 
 if TYPE_CHECKING:
     from ..guardrails.controller import GuardrailController
@@ -37,12 +44,14 @@ class CapabilityDescriptor:
     description: str
     routes: tuple[Route, ...]
     request_schema: str
+    operations: tuple[str, ...] = ()
     requires_external_boundary: bool = False
     requires_consent: bool = False
     destination: str = ""
     model: str = ""
     purpose: str = ""
     max_cost_usd: float = 0.0
+    declared_action: ActionProposal = field(default_factory=ActionProposal.none)
 
     def __post_init__(self) -> None:
         if not isinstance(self.capability_id, str) or not self.capability_id.strip():
@@ -51,6 +60,15 @@ class CapabilityDescriptor:
             raise ConfigInvalidError("capability description must be non-empty")
         if not isinstance(self.request_schema, str) or not self.request_schema.strip():
             raise ConfigInvalidError("capability request_schema must be non-empty")
+        if not self.operations or any(
+            not isinstance(operation, str) or not operation.strip()
+            for operation in self.operations
+        ):
+            raise ConfigInvalidError("capability must declare at least one operation")
+        if len(set(self.operations)) != len(self.operations):
+            raise ConfigInvalidError("capability operations must be unique")
+        if not isinstance(self.declared_action, ActionProposal):
+            raise ConfigInvalidError("capability declared_action has an invalid type")
         if not self.routes:
             raise ConfigInvalidError("capability must declare at least one route")
         if any(not isinstance(route, Route) for route in self.routes):
@@ -86,6 +104,26 @@ class CapabilityMatch:
 
 
 @dataclass(frozen=True, slots=True)
+class CapabilityPreparation:
+    """Side-effect-free validation result for one structured capability intent."""
+
+    accepted: bool
+    reason_code: str
+    clarification_fields: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.accepted, bool):
+            raise ConfigInvalidError("capability preparation accepted must be a bool")
+        if not isinstance(self.reason_code, str) or not self.reason_code.strip():
+            raise ConfigInvalidError("capability preparation reason_code is required")
+        if not isinstance(self.clarification_fields, tuple) or any(
+            not isinstance(field, str) or not field.strip()
+            for field in self.clarification_fields
+        ):
+            raise ConfigInvalidError("capability preparation clarification fields are invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class CapabilityRequest:
     """Common dispatch envelope; handlers keep capability-specific types inside."""
 
@@ -97,10 +135,21 @@ class CapabilityRequest:
     execution_at: datetime | None = None
     request_guardrails: "GuardrailController | None" = None
     cancellation: "CancellationToken | None" = None
+    operation: str = ""
+    intent: CapabilityIntent | None = None
+    classification: ClassificationDecision | None = None
 
     def __post_init__(self) -> None:
         if not self.context_text.strip():
             raise ConfigInvalidError("capability context_text must be non-empty")
+        if not isinstance(self.operation, str):
+            raise ConfigInvalidError("capability operation must be text")
+        if self.intent is not None and not isinstance(self.intent, CapabilityIntent):
+            raise ConfigInvalidError("capability intent has an invalid type")
+        if self.classification is not None and not isinstance(
+            self.classification, ClassificationDecision
+        ):
+            raise ConfigInvalidError("capability classification has an invalid type")
         if not self.task_id:
             object.__setattr__(self, "task_id", f"task-{self.task.request_id}")
 
@@ -112,6 +161,7 @@ class CapabilityExecution:
     result: TaskResult
     manifest: ContextManifest
     consent_proposal: ConsentProposal | None = None
+    action_proposal: ActionProposal | None = None
 
 
 @runtime_checkable
@@ -123,6 +173,16 @@ class CapabilityHandler(Protocol):
         ...
 
     def status(self) -> CapabilityStatus:
+        ...
+
+    def prepare(
+        self, intent: CapabilityIntent, request: CapabilityRequest
+    ) -> CapabilityPreparation:
+        """Validate structured operation/input without provider or state effects."""
+        ...
+
+    def propose_action(self, request: CapabilityRequest) -> ActionProposal:
+        """Describe the effect this operation would create, without executing it."""
         ...
 
     def can_handle(self, request: CapabilityRequest) -> CapabilityMatch:
@@ -141,7 +201,7 @@ class CapabilityRegistry:
             self.register(handler)
 
     def register(self, handler: CapabilityHandler) -> None:
-        if not isinstance(handler, CapabilityHandler):
+        if not _is_capability_handler(handler):
             raise ConfigInvalidError(
                 "optional registry accepts only CapabilityHandler implementations"
             )
@@ -182,7 +242,7 @@ class CapabilityRegistry:
     def validate(self) -> None:
         """Re-check registered contracts during application startup/health checks."""
         for handler in self._handlers.values():
-            if not isinstance(handler, CapabilityHandler):
+            if not _is_capability_handler(handler):
                 raise ConfigInvalidError(
                     "optional registry contains a non-capability dependency"
                 )
@@ -195,3 +255,11 @@ class CapabilityRegistry:
                 raise ConfigInvalidError(
                     f"capability {descriptor.capability_id} returned invalid status"
                 )
+
+
+def _is_capability_handler(handler: object) -> bool:
+    """Accept the Phase 4 contract while defaulting missing action metadata to read-only."""
+    if isinstance(handler, CapabilityHandler):
+        return True
+    required = ("descriptor", "status", "prepare", "can_handle", "execute")
+    return all(hasattr(handler, attribute) for attribute in required)

@@ -20,22 +20,34 @@ inside this adapter.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
+from types import TracebackType
 
-from ..domain.enums import CloudMode, PersistenceMode
-from ..domain.errors import StorageFailureError
+from ..domain.enums import (
+    CloudMode,
+    EpistemicStatus,
+    OutcomeCode,
+    PersistenceMode,
+    Route,
+    TaskStatus,
+    ValidationStatus,
+)
+from ..domain.errors import ConflictError, StorageFailureError
 from ..domain.models import (
     AuditEvent,
     Message,
     OperationLease,
     ProvenanceReference,
     SessionRecord,
+    TaskResult,
 )
 from ..memory import ProfileItem
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 _MIGRATION_V1 = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -111,6 +123,28 @@ CREATE TABLE IF NOT EXISTS task_provenance (
 );
 """
 _MIGRATION_V3_STATEMENTS = tuple(statement.strip() for statement in _MIGRATION_V3.split(";") if statement.strip())
+_MIGRATION_V4 = """
+ALTER TABLE sessions ADD COLUMN updated_at TEXT;
+UPDATE sessions SET updated_at=created_at WHERE updated_at IS NULL;
+ALTER TABLE sessions ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS task_results (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(task_id),
+    task_status TEXT NOT NULL,
+    outcome_code TEXT NOT NULL,
+    epistemic_status TEXT NOT NULL,
+    validation_status TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    answer_retained INTEGER NOT NULL DEFAULT 1,
+    route TEXT NOT NULL,
+    claims_json TEXT NOT NULL,
+    citations_json TEXT NOT NULL,
+    partial_work_json TEXT NOT NULL,
+    failures_json TEXT NOT NULL,
+    next_actions_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+_MIGRATION_V4_STATEMENTS = tuple(statement.strip() for statement in _MIGRATION_V4.split(";") if statement.strip())
 _PROFILE_TABLES = {
     "profile_items": """CREATE TABLE profile_items (
         item_id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
@@ -131,6 +165,50 @@ def _parse(dt: str) -> datetime:
     return datetime.fromisoformat(dt).astimezone(timezone.utc)
 
 
+class _SerializedConnection:
+    """Serialize a shared SQLite connection across asynchronous task workers."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self._lock = RLock()
+
+    def execute(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
+        with self._lock:
+            return self._connection.execute(sql, parameters)
+
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:
+        with self._lock:
+            return self._connection.executescript(sql_script)
+
+    def commit(self) -> None:
+        with self._lock:
+            self._connection.commit()
+
+    def rollback(self) -> None:
+        with self._lock:
+            self._connection.rollback()
+
+    def close(self) -> None:
+        with self._lock:
+            self._connection.close()
+
+    def __enter__(self) -> "_SerializedConnection":
+        self._lock.acquire()
+        self._connection.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        try:
+            return self._connection.__exit__(exc_type, exc_value, traceback)
+        finally:
+            self._lock.release()
+
+
 class SqliteSessionRepository:
     """SQLite-backed session/message repository (real, M1)."""
 
@@ -139,9 +217,8 @@ class SqliteSessionRepository:
         try:
             if db_path != ":memory:":
                 Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-            # check_same_thread=False is safe here: M1 is single-process/single-user
-            # and access is serialized by the CLI loop.
-            self._conn = sqlite3.connect(db_path, check_same_thread=False)
+            connection = sqlite3.connect(db_path, check_same_thread=False)
+            self._conn = _SerializedConnection(connection)
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA foreign_keys=ON;")
         except sqlite3.Error as exc:  # pragma: no cover - construction failure is rare
@@ -159,7 +236,11 @@ class SqliteSessionRepository:
                 raise StorageFailureError(
                     "database schema is newer than this Elly version supports"
                 )
-            migrations = ((2, _MIGRATION_V2_STATEMENTS), (3, _MIGRATION_V3_STATEMENTS))
+            migrations = (
+                (2, _MIGRATION_V2_STATEMENTS),
+                (3, _MIGRATION_V3_STATEMENTS),
+                (4, _MIGRATION_V4_STATEMENTS),
+            )
             for version, statements in migrations:
                 if current_version >= version:
                     continue
@@ -185,16 +266,21 @@ class SqliteSessionRepository:
             raise StorageFailureError(f"migration failed: {type(exc).__name__}") from exc
 
     def create_session(self, session: SessionRecord) -> None:
+        if session.updated_at is None:
+            raise StorageFailureError("session updated_at is required")
         try:
             with self._conn:
                 self._conn.execute(
-                    "INSERT INTO sessions (session_id, persistence_mode, cloud_mode, created_at)"
-                    " VALUES (?, ?, ?, ?)",
+                    "INSERT INTO sessions "
+                    "(session_id, persistence_mode, cloud_mode, created_at, updated_at, version)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         session.session_id,
                         session.persistence_mode.value,
                         session.cloud_mode.value,
                         _iso(session.created_at),
+                        _iso(session.updated_at),
+                        session.version,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
@@ -205,7 +291,7 @@ class SqliteSessionRepository:
     def get_session(self, session_id: str) -> SessionRecord | None:
         try:
             row = self._conn.execute(
-                "SELECT session_id, persistence_mode, cloud_mode, created_at"
+                "SELECT session_id, persistence_mode, cloud_mode, created_at, updated_at, version"
                 " FROM sessions WHERE session_id=?",
                 (session_id,),
             ).fetchone()
@@ -218,7 +304,58 @@ class SqliteSessionRepository:
             persistence_mode=PersistenceMode(row[1]),
             cloud_mode=CloudMode(row[2]),
             created_at=_parse(row[3]),
+            updated_at=_parse(row[4]) if row[4] else _parse(row[3]),
+            version=int(row[5]),
         )
+
+    def update_cloud_mode(
+        self,
+        session_id: str,
+        expected_version: int,
+        new_mode: CloudMode,
+        at: datetime,
+        audit_event: AuditEvent | None = None,
+    ) -> SessionRecord:
+        """Atomically compare-and-set a session mode and optional audit event."""
+        if expected_version < 1:
+            raise ConflictError("session version is invalid")
+        try:
+            with self._conn:
+                cursor = self._conn.execute(
+                    "UPDATE sessions SET cloud_mode=?, updated_at=?, version=version+1 "
+                    "WHERE session_id=? AND version=?",
+                    (new_mode.value, _iso(at), session_id, expected_version),
+                )
+                if cursor.rowcount != 1:
+                    exists = self._conn.execute(
+                        "SELECT 1 FROM sessions WHERE session_id=?", (session_id,)
+                    ).fetchone()
+                    if exists is None:
+                        raise StorageFailureError("session not found")
+                    raise ConflictError("session version conflict")
+                if audit_event is not None:
+                    self._insert_audit_event(audit_event)
+                row = self._conn.execute(
+                    "SELECT session_id, persistence_mode, cloud_mode, created_at, updated_at, version "
+                    "FROM sessions WHERE session_id=?",
+                    (session_id,),
+                ).fetchone()
+                if row is None:
+                    raise StorageFailureError("updated session could not be read")
+                return SessionRecord(
+                    session_id=row[0],
+                    persistence_mode=PersistenceMode(row[1]),
+                    cloud_mode=CloudMode(row[2]),
+                    created_at=_parse(row[3]),
+                    updated_at=_parse(row[4]),
+                    version=int(row[5]),
+                )
+        except ConflictError:
+            raise
+        except StorageFailureError:
+            raise
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"update cloud mode failed: {type(exc).__name__}") from exc
 
     def append_message(self, session_id: str, message: Message) -> None:
         session = self.get_session(session_id)
@@ -295,6 +432,88 @@ class SqliteSessionRepository:
         except sqlite3.Error as exc:
             raise StorageFailureError(f"task lookup failed: {type(exc).__name__}") from exc
         return row[0] if row else None
+
+    def task_session_id(self, task_id: str) -> str | None:
+        try:
+            row = self._conn.execute(
+                "SELECT session_id FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"task session lookup failed: {type(exc).__name__}") from exc
+        return row[0] if row else None
+
+    def save_task_result(self, result: TaskResult, at: datetime) -> None:
+        """Persist the normalized result while honoring no-store answer privacy."""
+        try:
+            session_row = self._conn.execute(
+                "SELECT persistence_mode FROM sessions WHERE session_id=(SELECT session_id FROM tasks WHERE task_id=?)",
+                (result.task_id,),
+            ).fetchone()
+            if session_row is None:
+                raise StorageFailureError("task result session was not found")
+            retain_answer = session_row[0] == PersistenceMode.STORE_WITH_RETENTION.value
+            answer = result.answer if retain_answer else ""
+            claims = result.claims if retain_answer else ()
+            citations = result.citations
+            partial_work = result.partial_work if retain_answer else ()
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO task_results "
+                    "(task_id, task_status, outcome_code, epistemic_status, validation_status, "
+                    "answer, answer_retained, route, claims_json, citations_json, partial_work_json, "
+                    "failures_json, next_actions_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        result.task_id,
+                        result.task_status.value,
+                        result.outcome_code.value,
+                        result.epistemic_status.value,
+                        result.validation_status.value,
+                        answer,
+                        int(retain_answer),
+                        result.route_summary.value,
+                        json.dumps(list(claims)),
+                        json.dumps(list(citations)),
+                        json.dumps(list(partial_work)),
+                        json.dumps(list(result.failures)),
+                        json.dumps(list(result.next_actions)),
+                        _iso(at),
+                    ),
+                )
+        except StorageFailureError:
+            raise
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            raise StorageFailureError(f"save task result failed: {type(exc).__name__}") from exc
+
+    def get_task_result(self, task_id: str) -> TaskResult | None:
+        try:
+            row = self._conn.execute(
+                "SELECT task_id, task_status, outcome_code, epistemic_status, validation_status, "
+                "answer, answer_retained, route, claims_json, citations_json, partial_work_json, "
+                "failures_json, next_actions_json FROM task_results WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise StorageFailureError(f"get task result failed: {type(exc).__name__}") from exc
+        if row is None:
+            return None
+        try:
+            return TaskResult(
+                task_id=row[0],
+                task_status=TaskStatus(row[1]),
+                outcome_code=OutcomeCode(row[2]),
+                epistemic_status=EpistemicStatus(row[3]),
+                validation_status=ValidationStatus(row[4]),
+                answer=row[5],
+                answer_retained=bool(row[6]),
+                route_summary=Route(row[7]),
+                claims=tuple(json.loads(row[8])),
+                citations=tuple(json.loads(row[9])),
+                partial_work=tuple(json.loads(row[10])),
+                failures=tuple(json.loads(row[11])),
+                next_actions=tuple(json.loads(row[12])),
+            )
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            raise StorageFailureError("stored task result is invalid") from exc
 
     # ---- M6 profile/data controls ---------------------------------------
 
@@ -375,8 +594,21 @@ class SqliteSessionRepository:
 
     def list_sessions(self) -> list[SessionRecord]:
         try:
-            rows = self._conn.execute("SELECT session_id,persistence_mode,cloud_mode,created_at FROM sessions ORDER BY created_at").fetchall()
-            return [SessionRecord(r[0], PersistenceMode(r[1]), CloudMode(r[2]), _parse(r[3])) for r in rows]
+            rows = self._conn.execute(
+                "SELECT session_id,persistence_mode,cloud_mode,created_at,updated_at,version "
+                "FROM sessions ORDER BY created_at"
+            ).fetchall()
+            return [
+                SessionRecord(
+                    r[0],
+                    PersistenceMode(r[1]),
+                    CloudMode(r[2]),
+                    _parse(r[3]),
+                    _parse(r[4]) if r[4] else _parse(r[3]),
+                    int(r[5]),
+                )
+                for r in rows
+            ]
         except sqlite3.Error as exc:
             raise StorageFailureError(f"list sessions failed: {type(exc).__name__}") from exc
 
@@ -388,6 +620,7 @@ class SqliteSessionRepository:
                 self._conn.execute("DELETE FROM task_sources WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id=?)", (session_id,))
                 self._conn.execute("DELETE FROM task_operations WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id=?)", (session_id,))
                 self._conn.execute("DELETE FROM task_provenance WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id=?)", (session_id,))
+                self._conn.execute("DELETE FROM task_results WHERE task_id IN (SELECT task_id FROM tasks WHERE session_id=?)", (session_id,))
                 self._conn.execute("DELETE FROM audit_events WHERE session_id=?", (session_id,))
                 self._conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
                 self._conn.execute("DELETE FROM tasks WHERE session_id=?", (session_id,))
@@ -412,6 +645,10 @@ class SqliteSessionRepository:
                     )
                     self._conn.execute(
                         "DELETE FROM task_provenance WHERE task_id IN "
+                        "(SELECT task_id FROM tasks WHERE session_id=?)", (session_id,)
+                    )
+                    self._conn.execute(
+                        "DELETE FROM task_results WHERE task_id IN "
                         "(SELECT task_id FROM tasks WHERE session_id=?)", (session_id,)
                     )
                     self._conn.execute("DELETE FROM audit_events WHERE session_id=?", (session_id,))
@@ -460,6 +697,7 @@ class SqliteSessionRepository:
         required = {
             "sessions", "messages", "tasks", "profile_items",
             "audit_events", "task_sources", "task_operations", "task_provenance",
+            "task_results",
         }
         try:
             self._conn.execute("SELECT 1").fetchone()
@@ -477,12 +715,25 @@ class SqliteSessionRepository:
     def append_audit(self, event: AuditEvent) -> None:
         try:
             with self._conn:
-                self._conn.execute(
-                    "INSERT INTO audit_events(task_id,session_id,event_type,at,route,task_status,error_class,detail) VALUES (?,?,?,?,?,?,?,?)",
-                    (event.task_id, event.session_id, event.event_type, _iso(event.at), event.route.value if event.route else None, event.task_status.value if event.task_status else None, event.error_class.value if event.error_class else None, event.detail),
-                )
+                self._insert_audit_event(event)
         except sqlite3.Error as exc:
             raise StorageFailureError(f"append audit failed: {type(exc).__name__}") from exc
+
+    def _insert_audit_event(self, event: AuditEvent) -> None:
+        self._conn.execute(
+            "INSERT INTO audit_events(task_id,session_id,event_type,at,route,task_status,error_class,detail) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                event.task_id,
+                event.session_id,
+                event.event_type,
+                _iso(event.at),
+                event.route.value if event.route else None,
+                event.task_status.value if event.task_status else None,
+                event.error_class.value if event.error_class else None,
+                event.detail,
+            ),
+        )
 
     def audit_by_task(self, task_id: str) -> list[AuditEvent]:
         try:

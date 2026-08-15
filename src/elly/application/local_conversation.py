@@ -36,8 +36,18 @@ class LocalConversationUseCase:
 
     @property
     def generalist(self) -> GeneralistPort:
-        """Expose the bound port for composition/test-double replacement checks."""
+        """Return the provider bound by the composition root."""
         return self._generalist
+
+    @property
+    def model_id(self) -> str:
+        """Return the configured model identifier for redacted audit metadata."""
+        return self._model_id
+
+    @property
+    def max_output_tokens(self) -> int:
+        """Return the configured output ceiling used by context construction."""
+        return self._max_output_tokens
 
     def execute(
         self,

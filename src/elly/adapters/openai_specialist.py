@@ -9,7 +9,15 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from ..domain.enums import HealthState
+from ..domain.enums import (
+    ActionCategory,
+    ActionDataSensitivity,
+    ActionImpactFlag,
+    ActionProposalSource,
+    ActionReversibility,
+    ActionSideEffect,
+    HealthState,
+)
 from ..domain.errors import (
     AuthenticationProviderError,
     MalformedResultError,
@@ -20,7 +28,7 @@ from ..domain.errors import (
     RateLimitProviderError,
     TransientProviderError,
 )
-from ..domain.models import HealthReport
+from ..domain.models import ActionProposal, ActionTarget, HealthReport
 from ..specialists.contracts import SpecialistResult, SpecialistTask
 
 
@@ -65,8 +73,34 @@ class OpenAISpecialistProvider:
                 "key_evidence": {"type": "array", "items": {"type": "string"}},
                 "sources": {"type": "array", "items": {"type": "string"}},
                 "recommended_action": {"type": ["string", "null"]},
+                "action_proposal": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "category": {"type": "string", "enum": [item.value for item in ActionCategory]},
+                        "target": {
+                            "type": ["object", "null"],
+                            "properties": {
+                                "kind": {"type": "string"},
+                                "reference": {"type": "string"},
+                            },
+                            "required": ["kind", "reference"],
+                            "additionalProperties": False,
+                        },
+                        "side_effect": {"type": "string", "enum": [item.value for item in ActionSideEffect]},
+                        "reversibility": {"type": "string", "enum": [item.value for item in ActionReversibility]},
+                        "data_sensitivity": {"type": "string", "enum": [item.value for item in ActionDataSensitivity]},
+                        "impact_flags": {"type": "array", "items": {"type": "string", "enum": [item.value for item in ActionImpactFlag]}},
+                        "confirmation_required": {"type": "boolean"},
+                        "source": {"type": "string", "enum": [item.value for item in ActionProposalSource]},
+                    },
+                    "required": [
+                        "category", "target", "side_effect", "reversibility",
+                        "data_sensitivity", "impact_flags", "confirmation_required", "source",
+                    ],
+                    "additionalProperties": False,
+                },
             },
-            "required": ["status", "answer", "assumptions", "uncertainties", "key_evidence", "sources", "recommended_action"],
+            "required": ["status", "answer", "assumptions", "uncertainties", "key_evidence", "sources", "recommended_action", "action_proposal"],
             "additionalProperties": False,
         }
         body = {
@@ -124,6 +158,7 @@ class OpenAISpecialistProvider:
                     raise TypeError(f"specialist {field} must be an array of strings")
             if value.get("recommended_action") is not None and not isinstance(value["recommended_action"], str):
                 raise TypeError("specialist recommended_action must be text or null")
+            action_proposal = _parse_action_proposal(value.get("action_proposal"))
             result = SpecialistResult(
                 status=value["status"], answer=value["answer"],
                 assumptions=tuple(value["assumptions"]),
@@ -131,6 +166,7 @@ class OpenAISpecialistProvider:
                 key_evidence=tuple(value["key_evidence"]),
                 sources=tuple(value["sources"]),
                 recommended_action=value.get("recommended_action"),
+                action_proposal=action_proposal,
                 truncated=payload.get("status") == "incomplete",
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -158,3 +194,37 @@ def _http_error_code(exc: urllib.error.HTTPError) -> str:
         return value if isinstance(value, str) else ""
     except (AttributeError, json.JSONDecodeError, OSError, UnicodeDecodeError):
         return ""
+
+
+def _parse_action_proposal(value: object) -> ActionProposal | None:
+    """Strictly parse a model-proposed action object; never coerce fields."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("specialist action_proposal must be an object or null")
+    target_value = value.get("target")
+    target = None
+    if target_value is not None:
+        if not isinstance(target_value, dict):
+            raise TypeError("specialist action target must be an object or null")
+        if not isinstance(target_value.get("kind"), str) or not isinstance(
+            target_value.get("reference"), str
+        ):
+            raise TypeError("specialist action target fields must be strings")
+        target = ActionTarget(target_value["kind"], target_value["reference"])
+    if not isinstance(value.get("impact_flags"), list) or any(
+        not isinstance(item, str) for item in value["impact_flags"]
+    ):
+        raise TypeError("specialist action impact_flags must be an array of strings")
+    if not isinstance(value.get("confirmation_required"), bool):
+        raise TypeError("specialist action confirmation_required must be a bool")
+    return ActionProposal(
+        category=ActionCategory(value["category"]),
+        target=target,
+        side_effect=ActionSideEffect(value["side_effect"]),
+        reversibility=ActionReversibility(value["reversibility"]),
+        data_sensitivity=ActionDataSensitivity(value["data_sensitivity"]),
+        impact_flags=tuple(ActionImpactFlag(item) for item in value["impact_flags"]),
+        confirmation_required=value["confirmation_required"],
+        source=ActionProposalSource(value["source"]),
+    )

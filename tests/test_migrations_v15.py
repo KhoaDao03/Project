@@ -1,4 +1,4 @@
-"""Representative V1 schema-v2 to V1.5 schema-v3 compatibility coverage."""
+"""Representative V1 schema-v2 to V1.5/V2 schema-v4 compatibility coverage."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from elly.adapters.fake_generalist import FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.application.conversation import ConversationOrchestrator
+from elly.application.local_conversation import LocalConversationUseCase
 from elly.domain.enums import CloudMode, PersistenceMode, TaskStatus
 from elly.domain.errors import StorageFailureError
 from elly.domain.models import Message, TaskRequest
@@ -39,7 +40,7 @@ class V15MigrationTests(unittest.TestCase):
         self.repository = SqliteSessionRepository(str(self.path))
         self.addCleanup(self.repository.close)
 
-    def test_representative_v2_records_survive_v3_migration(self) -> None:
+    def test_representative_v2_records_survive_v4_migration(self) -> None:
         self.repository.apply_migrations()
 
         self.assertEqual(
@@ -59,19 +60,21 @@ class V15MigrationTests(unittest.TestCase):
         version = self.repository._conn.execute(
             "SELECT version FROM schema_meta WHERE id=1"
         ).fetchone()[0]
-        self.assertEqual(3, version)
+        self.assertEqual(4, version)
         self.repository.healthcheck()
 
     def test_complete_new_task_runs_on_the_migrated_database(self) -> None:
         self.repository.apply_migrations()
         orchestrator = ConversationOrchestrator(
             clock=FixedClock(UTC, step_seconds=1),
-            generalist=FakeGeneralist(),
             repository=self.repository,
             audit=StructuredAuditLog(repository=self.repository),
             context_window=20,
-            model_id="fake-generalist-v1",
-            max_output_tokens=64,
+            local_conversation=LocalConversationUseCase(
+                generalist=FakeGeneralist(),
+                model_id="fake-generalist-v1",
+                max_output_tokens=64,
+            ),
         )
 
         outcome = orchestrator.handle(

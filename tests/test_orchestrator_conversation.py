@@ -23,6 +23,7 @@ from elly.adapters.fake_generalist import FailureMode, FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.application.conversation import ConversationOrchestrator
+from elly.application.local_conversation import LocalConversationUseCase
 from elly.domain.enums import (
     CloudMode,
     EpistemicStatus,
@@ -38,7 +39,8 @@ UTC = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
 
 
 def _orchestrator(
-    *, failure: FailureMode = FailureMode.NONE, persistence: PersistenceMode
+    *, failure: FailureMode = FailureMode.NONE, persistence: PersistenceMode,
+    provider: FakeGeneralist | None = None,
 ) -> tuple[ConversationOrchestrator, SqliteSessionRepository, StructuredAuditLog, str]:
     repo = SqliteSessionRepository(":memory:")
     repo.apply_migrations()
@@ -52,12 +54,14 @@ def _orchestrator(
     audit = StructuredAuditLog()
     orch = ConversationOrchestrator(
         clock=FixedClock(UTC, step_seconds=1),
-        generalist=FakeGeneralist(failure=failure),
         repository=repo,
         audit=audit,
         context_window=20,
-        model_id="fake-generalist-v1",
-        max_output_tokens=64,
+        local_conversation=LocalConversationUseCase(
+            generalist=provider or FakeGeneralist(failure=failure),
+            model_id="fake-generalist-v1",
+            max_output_tokens=64,
+        ),
     )
     return orch, repo, audit, session.session_id
 
@@ -117,13 +121,14 @@ class OrchestratorConversationTests(unittest.TestCase):
         self.assertGreaterEqual(len(outcome.manifest.included_message_ids), 1)
 
     def test_cancellation_is_not_success_and_preserves_partial_work(self) -> None:
-        orch, repo, audit, sid = _orchestrator(persistence=PersistenceMode.STORE_WITH_RETENTION)
-
         class CancelledGeneralist(FakeGeneralist):
             def generate(self, _request):  # type: ignore[no-untyped-def]
                 raise CancelledError("local generation cancelled", partial_work="received prefix")
 
-        orch._generalist = CancelledGeneralist()  # test-only provider substitution
+        orch, repo, audit, sid = _orchestrator(
+            persistence=PersistenceMode.STORE_WITH_RETENTION,
+            provider=CancelledGeneralist(),
+        )
         self.addCleanup(repo.close)
         outcome = orch.handle(_request(sid, "hello"))
         self.assertIs(outcome.result.task_status, TaskStatus.CANCELLED)
@@ -131,10 +136,6 @@ class OrchestratorConversationTests(unittest.TestCase):
         self.assertFalse(any(e.task_status is TaskStatus.COMPLETED for e in audit.by_task(outcome.result.task_id)))
 
     def test_cancel_active_interrupts_the_bound_provider(self) -> None:
-        orch, repo, _audit, sid = _orchestrator(
-            persistence=PersistenceMode.STORE_WITH_RETENTION
-        )
-
         class BlockingGeneralist(FakeGeneralist):
             def __init__(self) -> None:
                 super().__init__()
@@ -150,7 +151,10 @@ class OrchestratorConversationTests(unittest.TestCase):
                 self.cancelled.set()
 
         provider = BlockingGeneralist()
-        orch._generalist = provider
+        orch, repo, _audit, sid = _orchestrator(
+            persistence=PersistenceMode.STORE_WITH_RETENTION,
+            provider=provider,
+        )
         outcomes = []
         worker = threading.Thread(
             target=lambda: outcomes.append(orch.handle(_request(sid, "interrupt")))

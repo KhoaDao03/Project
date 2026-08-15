@@ -15,6 +15,10 @@ import os
 import threading
 import uuid
 from concurrent.futures import Future
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .api.application import EllyApplication
 
 from .adapters.audit_log import StructuredAuditLog
 from .adapters.fake_generalist import FakeGeneralist
@@ -24,16 +28,21 @@ from .adapters.openai_specialist import OpenAISpecialistProvider
 from .adapters.openai_web_research import OpenAIHostedWebSearch
 from .adapters.sqlite_repository import SqliteSessionRepository
 from .adapters.system_clock import SystemClock
+from .application.action_authorization import ActionAuthorizationService
 from .application.authorization import CloudAuthorizationPolicy
-from .application.capabilities import CapabilityHandler, CapabilityRegistry
+from .application.capabilities import CapabilityRegistry
 from .application.capability_handlers import (
     ResearchCapabilityHandler,
     SpecialistCapabilityHandler,
 )
+from .application.capability_workflow import CapabilityExecutionWorkflow
+from .application.completion import CompletionService
 from .application.context_builder import ContextBuilder
 from .application.conversation import ConversationOrchestrator
+from .application.local_conversation import LocalConversationUseCase
 from .application.research import ResearchPipeline
 from .application.routing import RoutingPolicy
+from .application.specialist_policy import SpecialistExecutionPolicy
 from .application.specialists import SpecialistWorkflow
 from .config import Config, load_config
 from .domain.enums import CloudMode, HealthState, PersistenceMode, Route
@@ -45,6 +54,7 @@ from .operations import BackupService
 from .ports.audit import AuditPort
 from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
+from .ports.intent import IntentInterpreterPort
 from .ports.repository import SessionRepositoryPort
 from .privacy import ConsentWorkflow, PrivacyPolicy
 from .research.evidence_policy import EvidencePolicy
@@ -122,6 +132,10 @@ class Application:
         """Cancel the active local or hosted operation through its provider port."""
         return self.orchestrator.cancel_active()
 
+    def cancel_task(self, task_id: str) -> bool:
+        """Cancel one identified in-flight operation through its provider port."""
+        return self.orchestrator.cancel_task(task_id)
+
     def __init__(
         self,
         *,
@@ -133,10 +147,15 @@ class Application:
         specialist_registry: SpecialistRegistry | None = None,
         guardrails: GuardrailController | None = None,
         executor: BoundedTaskExecutor | None = None,
+        local_conversation: LocalConversationUseCase | None = None,
+        capability_workflow: CapabilityExecutionWorkflow | None = None,
+        completion: CompletionService | None = None,
         research: ResearchPipeline | None = None,
         specialist_workflow: SpecialistWorkflow | None = None,
         consent: ConsentWorkflow | None = None,
         capability_registry: CapabilityRegistry | None = None,
+        intent_interpreter: IntentInterpreterPort | None = None,
+        action_authorization: ActionAuthorizationService | None = None,
     ) -> None:
         self.config = config
         validate_required_dependencies(
@@ -155,30 +174,35 @@ class Application:
         self.research = research
         self.specialist_workflow = specialist_workflow
         self.consent = consent
-        if capability_registry is None:
-            optional_handlers: list[CapabilityHandler] = []
-            if research is not None:
-                optional_handlers.append(
-                    ResearchCapabilityHandler(
-                        research,
-                        provider_id=config.research_provider,
-                        model_id=config.research_model_id,
-                        max_cost_usd=config.consent_max_cost_usd,
-                    )
-                )
-            if specialist_workflow is not None:
-                optional_handlers.extend(
-                    _specialist_capability_handlers(
-                        self.specialist_registry, specialist_workflow
-                    )
-                )
-            self.capability_registry = CapabilityRegistry(tuple(optional_handlers))
-        else:
-            self.capability_registry = capability_registry
+        self.local_conversation = local_conversation or LocalConversationUseCase(
+            generalist=generalist,
+            model_id=config.generalist_model_id,
+            max_output_tokens=config.generalist_max_output_tokens,
+            guardrails=guardrails,
+        )
+        self.capability_registry = capability_registry or CapabilityRegistry()
         self.capability_registry.validate()
-        self.routing_policy = RoutingPolicy(capabilities=self.capability_registry)
+        self.routing_policy = RoutingPolicy(
+            capabilities=self.capability_registry,
+            intent_interpreter=intent_interpreter,
+        )
         self.privacy_policy = PrivacyPolicy()
         self.cloud_authorization_policy = CloudAuthorizationPolicy()
+        self.action_authorization = action_authorization or ActionAuthorizationService()
+        self.completion = completion or CompletionService(
+            clock=clock,
+            repository=repository,
+            audit=audit,
+        )
+        self.capability_workflow = capability_workflow or CapabilityExecutionWorkflow(
+            clock=clock,
+            capability_registry=self.capability_registry,
+            completion=self.completion,
+            consent=consent,
+            privacy_policy=self.privacy_policy,
+            cloud_authorization_policy=self.cloud_authorization_policy,
+            action_authorization=self.action_authorization,
+        )
         self.context_builder = ContextBuilder(
             context_window=config.context_window_messages,
             reserved_output_tokens=config.generalist_max_output_tokens,
@@ -189,26 +213,16 @@ class Application:
         self._maintenance_thread: threading.Thread | None = None
         self.orchestrator = ConversationOrchestrator(
             clock=clock,
-            generalist=generalist,
             repository=repository,
             audit=audit,
             context_window=config.context_window_messages,
-            model_id=config.generalist_model_id,
-            max_output_tokens=config.generalist_max_output_tokens,
+            local_conversation=self.local_conversation,
+            completion=self.completion,
+            capability_workflow=self.capability_workflow,
             guardrails=guardrails,
-            research=research,
-            research_model_id=config.research_model_id,
-            research_provider_id=config.research_provider,
-            consent_max_cost_usd=config.consent_max_cost_usd,
-            specialist_registry=self.specialist_registry,
-            specialist_workflow=specialist_workflow,
-            consent=consent,
             profile_service=self.profile,
-            capability_registry=self.capability_registry,
             routing_policy=self.routing_policy,
             context_builder=self.context_builder,
-            privacy_policy=self.privacy_policy,
-            cloud_authorization_policy=self.cloud_authorization_policy,
         )
 
     # -- session lifecycle -------------------------------------------------
@@ -387,8 +401,10 @@ def build(toml_path: str | None = None) -> Application:
         )
     )
     specialist_workflow = SpecialistWorkflow(
-        provider=specialist_provider, consent=consent,
-        max_output_tokens=config.specialist_max_output_tokens,
+        provider=specialist_provider,
+        policy=SpecialistExecutionPolicy(
+            max_output_tokens=config.specialist_max_output_tokens,
+        ),
         guardrails=guardrails,
         provider_name=config.specialist_provider,
         call_cost_usd=(
@@ -441,3 +457,10 @@ def build(toml_path: str | None = None) -> Application:
     app.maintain_storage()
     app.start_maintenance_scheduler()
     return app
+
+
+def build_application(toml_path: str | None = None) -> "EllyApplication":
+    """Build the public V2 façade over the composed application scope."""
+    from .api.application import EllyApplication
+
+    return EllyApplication(build(toml_path))

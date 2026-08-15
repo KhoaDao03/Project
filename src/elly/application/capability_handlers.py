@@ -6,8 +6,7 @@ from dataclasses import dataclass
 
 from ..domain.enums import EpistemicStatus, HealthState, Route
 from ..domain.errors import PermissionDeniedError
-from ..domain.models import ProvenanceReference
-from ..privacy import classify_payload
+from ..domain.models import ActionProposal, CapabilityIntent, ProvenanceReference
 from ..specialists.contracts import SpecialistTask
 from ..specialists.manifest import SpecialistManifest
 from .capabilities import (
@@ -15,11 +14,13 @@ from .capabilities import (
     CapabilityDescriptor,
     CapabilityExecution,
     CapabilityMatch,
+    CapabilityPreparation,
     CapabilityRequest,
     CapabilityStatus,
 )
 from .research import ResearchPipeline
 from .response_composer import compose_research, compose_specialist
+from .specialist_policy import SpecialistPolicyRequest
 from .specialists import SpecialistWorkflow
 
 
@@ -39,6 +40,7 @@ class ResearchCapabilityHandler:
             description="Research current public information with validated sources",
             routes=(Route.WEB_RESEARCH,),
             request_schema="research-request-v1",
+            operations=("research.search",),
             requires_external_boundary=True,
             requires_consent=True,
             destination=self.provider_id,
@@ -61,6 +63,23 @@ class ResearchCapabilityHandler:
     def can_handle(self, request: CapabilityRequest) -> CapabilityMatch:
         accepted = request.route_request.contextual_text is not None or request.route_request.text.strip() != ""
         return CapabilityMatch(accepted, "RESEARCH_REQUEST" if accepted else "EMPTY_REQUEST")
+
+    def prepare(
+        self, intent: CapabilityIntent, request: CapabilityRequest
+    ) -> CapabilityPreparation:
+        if intent.proposed_capability_id != self.descriptor.capability_id:
+            return CapabilityPreparation(False, "CAPABILITY_ID_MISMATCH")
+        if intent.operation != "research.search":
+            return CapabilityPreparation(False, "OPERATION_NOT_SUPPORTED")
+        if not intent.arguments.get("subject"):
+            return CapabilityPreparation(
+                False, "RESEARCH_QUERY_REQUIRED", ("subject",)
+            )
+        return CapabilityPreparation(True, "RESEARCH_INPUT_ACCEPTED")
+
+    def propose_action(self, _request: CapabilityRequest) -> ActionProposal:
+        """Research is read-only; it declares no state-changing effect."""
+        return self.descriptor.declared_action
 
     def execute(self, request: CapabilityRequest) -> CapabilityExecution:
         if self.pipeline is None:
@@ -101,6 +120,7 @@ class SpecialistCapabilityHandler:
             description=f"{self.capability_id} specialist capability",
             routes=(self.route,),
             request_schema="specialist-task-v1",
+            operations=("specialist.analyze",),
             requires_external_boundary=True,
             requires_consent=True,
             destination=self.workflow.provider_name if self.workflow is not None else "",
@@ -127,24 +147,44 @@ class SpecialistCapabilityHandler:
             return CapabilityMatch(False, "EMPTY_REQUEST")
         return CapabilityMatch(True, "SPECIALIST_REQUEST")
 
+    def prepare(
+        self, intent: CapabilityIntent, request: CapabilityRequest
+    ) -> CapabilityPreparation:
+        if intent.proposed_capability_id != self.descriptor.capability_id:
+            return CapabilityPreparation(False, "CAPABILITY_ID_MISMATCH")
+        if intent.operation != "specialist.analyze":
+            return CapabilityPreparation(False, "OPERATION_NOT_SUPPORTED")
+        if not intent.arguments.get("subject"):
+            return CapabilityPreparation(
+                False, "SPECIALIST_SUBJECT_REQUIRED", ("subject",)
+            )
+        return CapabilityPreparation(True, "SPECIALIST_INPUT_ACCEPTED")
+
+    def propose_action(self, _request: CapabilityRequest) -> ActionProposal:
+        """Specialist analysis is read-only; recommendations are data, not actions."""
+        return self.descriptor.declared_action
+
     def execute(self, request: CapabilityRequest) -> CapabilityExecution:
         if self.manifest is None or self.workflow is None:
             raise PermissionDeniedError(f"{self.capability_id} capability is unavailable")
+        if request.classification is None:
+            raise PermissionDeniedError(
+                "specialist execution requires centralized cloud classification"
+            )
         specialist_task = SpecialistTask(
             task_id=request.task_id,
             specialist_id=self.manifest.id,
             goal=request.task.text,
             context=request.context_text,
-            privacy_class=classify_payload(request.context_text).value,
+            privacy_class=request.classification.classification.value,
             approval_id=request.task.approval_id,
         )
         execution = self.workflow.execute(
-            task=specialist_task,
-            manifest=self.manifest,
-            cloud_mode=request.task.cloud_mode,
-            now=request.execution_at or request.task.submitted_at,
+            request=SpecialistPolicyRequest(
+                task=specialist_task,
+                manifest=self.manifest,
+            ),
             request_guardrails=request.request_guardrails,
-            authorization_granted=True,
             cancellation=request.cancellation,
         )
         specialist_result = execution.result
@@ -179,5 +219,4 @@ class SpecialistCapabilityHandler:
         return CapabilityExecution(
             result=result,
             manifest=request.context_manifest,
-            consent_proposal=execution.proposal,
         )

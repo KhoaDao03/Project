@@ -59,6 +59,81 @@ class RouteReasonCode(str, Enum):
     CAPABILITY_UNAVAILABLE = "CAPABILITY_UNAVAILABLE"
     AUTHORIZATION_DENIED = "AUTHORIZATION_DENIED"
     INVALID_REQUEST = "INVALID_REQUEST"
+    INTENT_CLARIFICATION_REQUIRED = "INTENT_CLARIFICATION_REQUIRED"
+    INTENT_REJECTED = "INTENT_REJECTED"
+
+
+class IntentAmbiguity(str, Enum):
+    """Deterministic interpretation state for an untrusted capability proposal."""
+
+    CLEAR = "clear"
+    AMBIGUOUS = "ambiguous"
+    MISSING_FIELDS = "missing_fields"
+    NONE_PROPOSED = "none_proposed"
+
+
+class IntentEntitySource(str, Enum):
+    """How an intent entity was obtained; never treated as authorization."""
+
+    EXPLICIT = "explicit"
+    CONTEXTUAL = "contextual"
+    INFERRED = "inferred"
+
+
+class ActionCategory(str, Enum):
+    """Normalized category for a proposed side effect."""
+
+    NONE = "none"
+    CONTENT_DRAFT = "content_draft"
+    EXTERNAL_COMMUNICATION = "external_communication"
+    DELETE = "delete"
+    FINANCIAL_TRANSACTION = "financial_transaction"
+    ACCOUNT_CHANGE = "account_change"
+    EXTERNAL_WRITE = "external_write"
+    IRREVERSIBLE_OPERATION = "irreversible_operation"
+
+
+class ActionSideEffect(str, Enum):
+    """Where a proposed action would change state, if executed."""
+
+    NONE = "none"
+    LOCAL_STATE = "local_state"
+    EXTERNAL_STATE = "external_state"
+
+
+class ActionReversibility(str, Enum):
+    """How safely a proposed side effect can be undone."""
+
+    REVERSIBLE = "reversible"
+    PARTIALLY_REVERSIBLE = "partially_reversible"
+    IRREVERSIBLE = "irreversible"
+    UNKNOWN = "unknown"
+
+
+class ActionDataSensitivity(str, Enum):
+    """Sensitivity of data involved in a proposed action."""
+
+    PUBLIC = "public"
+    LOCAL = "local"
+    RESTRICTED = "restricted"
+    UNCLASSIFIED = "unclassified"
+
+
+class ActionImpactFlag(str, Enum):
+    """Independent impact dimensions used by the deterministic risk policy."""
+
+    FINANCIAL = "financial"
+    LEGAL = "legal"
+    ACCOUNT = "account"
+    COMMUNICATION = "communication"
+    DELETION = "deletion"
+
+
+class ActionProposalSource(str, Enum):
+    """Whether an action description came from application code or a model."""
+
+    CAPABILITY_DECLARED = "capability_declared"
+    MODEL_PROPOSED = "model_proposed"
 
 
 class TaskStatus(str, Enum):
@@ -72,11 +147,13 @@ class TaskStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
     AWAITING_CONSENT = "awaiting_consent"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
     COMPLETED = "completed"
     PARTIAL = "partial"
     CANCELLED = "cancelled"
     FAILED = "failed"
     BLOCKED = "blocked"
+    INTERRUPTED = "interrupted"
 
 
 class OutcomeCode(str, Enum):
@@ -90,6 +167,8 @@ class OutcomeCode(str, Enum):
     UNAVAILABLE = "unavailable"
     CANCELLED = "cancelled"
     AWAITING_CONSENT = "awaiting_consent"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    CLARIFICATION_REQUIRED = "clarification_required"
     POSSIBLE_DUPLICATE_EXECUTION = "possible_duplicate_execution"
 
 
@@ -133,6 +212,7 @@ class ErrorClass(str, Enum):
     UNSUPPORTED_CONTENT = "UNSUPPORTED_CONTENT"
     STORAGE_FAILURE = "STORAGE_FAILURE"
     CANCELLED = "CANCELLED"
+    CONFLICT = "CONFLICT"
 
 
 class HealthState(str, Enum):

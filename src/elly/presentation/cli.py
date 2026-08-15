@@ -1,259 +1,157 @@
-"""Terminal REPL (FR-001 surface, UC-01/UC-10) — M5.
-
-Design: `Cli.dispatch(line)` maps one input line to output text and is fully
-unit-testable without stdin. `Cli.run()` is the thin interactive loop.
-
-M1 commands (DESIGN §6.1 subset):
-  plain text        submit a request in the active session
-  /new [--no-store] start a clean session (optionally no-store)
-  /mode local       set local-only (the only mode with a path in M1)
-  /mode cloud       INTENTIONALLY UNAVAILABLE in M2 -> explicit denial (M5)
-  /status           dependency health + active mode
-  /help             list commands
-  /cancel           request cancellation of the active local generation
-  /exit             leave
-
-Security: untrusted input is validated before any orchestration (FR-001). Model
-output is rendered as data; the CLI never executes anything a model "asks" for.
-"""
+"""Terminal presentation adapter backed exclusively by the public API."""
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
+from typing import cast
 
-from ..composition import Application
-from ..domain.enums import CloudMode, PersistenceMode, TaskStatus
-from ..domain.errors import EllyError, InputInvalidError
-from ..domain.models import AuditEvent, SessionRecord, TaskRequest
-from ..privacy import ConsentProposal
+from ..api.application import EllyApplication
+from ..api.contracts import (
+    ActionConfirmationView,
+    ApiFailureCode,
+    ConsentView,
+    SessionView,
+    SubmitRequest,
+)
+from ..domain.enums import TaskStatus
 from . import render
-from .validators import normalize_and_validate
-
-EXIT = "__EXIT__"
-
-_HELP = """Commands:
-  <text>             ask Elly (local generalist or current-information research)
-  /new [--no-store]  start a new session
-  /mode local        set local-only mode
-  /mode cloud        permit policy-controlled hosted web research
-  /approve <id>      approve one exact specialist consent proposal
-  /deny <id>         deny one specialist consent proposal
-  /profile list|add|correct|delete ...
-  /history list|delete <session-id>
-  /trace <task-id>   show redacted durable task events
-  /sources <task-id> show stored source metadata
-  /backup <path>     create an encrypted backup
-  /restore <path>    restore an encrypted backup
-  /status            show dependency health and active mode
-  /cancel            request cancellation of the active local generation
-  /help              show this help
-  /exit              quit"""
+from .commands import CommandDispatcher, CommandRegistry, build_command_registry
+from .commands.base import _UNSET, CommandContext, CommandResult, PublicApplication
+from .commands.lifecycle import EXIT
 
 
 @dataclass
 class Cli:
-    """Interactive terminal for the M3 guarded local assistant."""
+    """Thin REPL adapter: parse, dispatch, submit, render, and cache public views."""
 
-    app: Application
-    session: SessionRecord
-    pending_consent: tuple[TaskRequest, ConsentProposal] | None = None
+    api: PublicApplication
+    session: SessionView | None = None
+    pending_consent: tuple[SessionView, ConsentView] | None = None
+    pending_action: ActionConfirmationView | None = None
+    last_task_id: str | None = None
+    _legacy_app: object | None = field(default=None, repr=False)
+    _owns_api: bool = field(default=False, repr=False)
+    registry: CommandRegistry = field(init=False, repr=False)
+    dispatcher: CommandDispatcher = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.registry = build_command_registry()
+        self.dispatcher = CommandDispatcher(self.registry)
 
     @classmethod
-    def start(cls, app: Application) -> "Cli":
-        return cls(app=app, session=app.new_session())
+    def start(cls, app: object) -> "Cli":
+        """Start from a public façade; wrap the old composition object temporarily for compatibility."""
+        if isinstance(app, EllyApplication) or callable(getattr(app, "create_session", None)):
+            api = cast(PublicApplication, app)
+            legacy_app = None
+            owns_api = False
+        else:
+            # This compatibility path lets older embedders pass the composition
+            # object while all command behavior still goes through the façade.
+            api = EllyApplication(app)  # type: ignore[arg-type]
+            legacy_app = app
+            owns_api = True
+        created = api.create_session()
+        if not created.is_success:
+            assert created.failure is not None
+            raise RuntimeError(created.failure.safe_message)
+        assert created.value is not None
+        return cls(
+            api=api,
+            session=created.value,
+            _legacy_app=legacy_app,
+            _owns_api=owns_api,
+        )
+
+    @property
+    def app(self) -> object:
+        """Compatibility view for callers that still own the old composition object.
+
+        Handlers never use this property. New entry points receive the public
+        ``EllyApplication`` directly, so ``app`` resolves to that façade.
+        """
+        return self._legacy_app if self._legacy_app is not None else self.api
+
+    def close(self) -> None:
+        """Close a façade created by the compatibility start path."""
+        if self._owns_api and hasattr(self.api, "close"):
+            self.api.close()
 
     # -- single-line dispatch (unit-testable) ------------------------------
 
     def dispatch(self, line: str) -> str:
         raw = line.strip()
         if not raw:
-            # Empty line at the prompt: gentle no-op, no model call (AT-01.2).
             return "(empty input ignored)"
         if raw.startswith("/"):
-            return self._command(raw)
-        return self._submit(raw)
+            result = self.dispatcher.dispatch(raw, self._context())
+        else:
+            result = self._submit(raw)
+        return self._apply(result)
 
-    def _command(self, raw: str) -> str:
-        parts = raw.split()
-        cmd, args = parts[0], parts[1:]
-        if cmd == "/help":
-            return _HELP
-        if cmd == "/exit":
-            return EXIT
-        if cmd == "/status":
-            active = f"Mode: {self.session.cloud_mode.value} / {self.session.persistence_mode.value}"
-            limits = self.app.config
-            guardrails = (
-                f"Limits: steps={limits.max_steps}, provider_calls={limits.max_provider_calls}, "
-                f"retries={limits.max_retries}, concurrency={limits.max_concurrency}, queue={limits.max_queue_size}, "
-                f"timeout={limits.tool_timeout_seconds:g}s/{limits.total_timeout_seconds:g}s"
-            )
-            spent = self.app.guardrails.cost.reserved_usd if self.app.guardrails else 0.0
-            remaining = self.app.guardrails.cost.remaining_usd if self.app.guardrails else 0.0
-            warning = self.app.guardrails.cost.warning_level if self.app.guardrails else "unavailable"
-            runtime = (
-                f"Runtime: generalist={limits.generalist_provider}/{limits.generalist_model_id}; "
-                f"research={limits.research_provider}/{limits.research_model_id}; "
-                f"specialists={limits.specialist_provider}/{limits.specialist_default_model_id}"
-            )
-            pricing = (
-                f"Pricing: remote reservation=${limits.remote_call_reservation_usd:.4f}/call; "
-                f"consent max=${limits.consent_max_cost_usd:.4f}; "
-                f"monthly budget=${limits.monthly_budget_usd:.2f}"
-            )
-            return (
-                render.render_health(self.app.health()) + "\n" + active + "\n"
-                + runtime + "\n" + pricing + "\n" + guardrails
-                + f"\nBudget used/reserved: ${spent:.4f}; remaining: ${remaining:.4f}; warning: {warning}"
-            )
-        if cmd == "/new":
-            no_store = "--no-store" in args
-            mode = PersistenceMode.NO_STORE if no_store else PersistenceMode.STORE_WITH_RETENTION
-            self.session = self.app.new_session(persistence_mode=mode)
-            return f"Started {self.session.session_id} ({mode.value})."
-        if cmd == "/mode":
-            if args == ["local"]:
-                self.session = SessionRecord(
-                    session_id=self.session.session_id, persistence_mode=self.session.persistence_mode,
-                    cloud_mode=CloudMode.LOCAL_ONLY, created_at=self.session.created_at,
-                )
-                return "Mode: local_only."
-            if args == ["cloud"]:
-                self.session = SessionRecord(
-                    session_id=self.session.session_id, persistence_mode=self.session.persistence_mode,
-                    cloud_mode=CloudMode.CLOUD_PERMITTED, created_at=self.session.created_at,
-                )
-                return "Mode: cloud_permitted (hosted web research requires OPENAI_API_KEY)."
-            return "Usage: /mode local | /mode cloud"
-        if cmd == "/cancel":
-            self.app.cancel_active()
-            return "Cancellation requested."
-        if cmd == "/profile":
-            return self._profile_command(args)
-        if cmd == "/history":
-            return self._history_command(args)
-        if cmd == "/trace" and len(args) == 1:
-            events = self.app.repository.audit_by_task(args[0])
-            if not events:
-                return "No trace found."
-            return "\n".join(
-                f"{e.at.isoformat()} {e.event_type} "
-                f"route={e.route.value if e.route else '-'} "
-                f"status={e.task_status.value if e.task_status else '-'} "
-                f"error={e.error_class.value if e.error_class else '-'}"
-                + (f" detail={e.detail}" if e.detail else "")
-                for e in events
-            )
-        if cmd == "/sources" and len(args) == 1:
-            sources = self.app.repository.task_sources(args[0])
-            return "\n".join(sources) if sources else "No sources found."
-        if cmd == "/backup" and len(args) == 1:
-            if self.app.backup is None:
-                return "Backup unavailable: ELLY_BACKUP_KEY is not configured."
-            try:
-                return f"Backup created: {self.app.backup.create(args[0])}"
-            except EllyError as exc:
-                return f"Backup failed: {exc.summary}"
-        if cmd == "/restore" and len(args) == 1:
-            if self.app.backup is None:
-                return "Restore unavailable: ELLY_BACKUP_KEY is not configured."
-            try:
-                self.app.backup.restore(args[0])
-                return "Backup restored after integrity validation; restart Elly before using the restored database."
-            except EllyError as exc:
-                return f"Restore failed: {exc.summary}"
-        if cmd in {"/approve", "/deny"}:
-            if len(args) != 1 or self.pending_consent is None:
-                return f"Usage: {cmd} <proposal-id>"
-            request, proposal = self.pending_consent
-            proposal_id = proposal.proposal_id
-            if args[0] != proposal_id:
-                return "Consent proposal does not match the pending task."
-            workflow = self.app.specialist_workflow
-            if workflow is None:
-                return "Specialist capability is unavailable."
-            try:
-                if cmd == "/deny":
-                    workflow.consent.deny(proposal_id)
-                    self.app.audit.append(AuditEvent(
-                        task_id=f"task-{request.request_id}", session_id=request.session_id,
-                        event_type="consent.denied", at=self.app.clock.now(),
-                        task_status=TaskStatus.BLOCKED,
-                        detail=f"proposal={proposal_id} provider={proposal.provider}",
-                    ))
-                    self.pending_consent = None
-                    return "Consent denied; no specialist call was made."
-                workflow.consent.approve(proposal_id)
-                approved = replace(request, request_id=f"{request.request_id}-approved", approval_id=proposal_id)
-                # Approval must be durable before the external call. An audit
-                # failure raises and the call is not submitted (AT-13.4).
-                self.app.audit.append(AuditEvent(
-                    task_id=f"task-{approved.request_id}", session_id=request.session_id,
-                    event_type="consent.approved", at=self.app.clock.now(),
-                    task_status=TaskStatus.AWAITING_CONSENT,
-                    detail=(f"proposal={proposal_id} provider={proposal.provider} "
-                            f"model={proposal.model}")
-                ))
-                self.pending_consent = None
-                future = self.app.submit(approved) if self.app.executor is not None else None
-                outcome = future.result() if future is not None else self.app.orchestrator.handle(approved)
-                return render.render_result(outcome.result)
-            except EllyError as exc:
-                return f"Blocked: {exc.summary}"
-        return f"Unknown command: {cmd} (try /help)"
-
-    def _profile_command(self, args: list[str]) -> str:
-        if not args or args[0] == "list":
-            items = self.app.profile.list()
-            return "\n".join(f"{item.item_id}: {item.key}={item.value} [{item.sensitivity}] confirmed" for item in items) or "No confirmed profile items."
-        if args[0] == "add" and len(args) >= 3 and "=" in args[1]:
-            key, value = args[1].split("=", 1)
-            item = self.app.profile.add(item_id=args[2], key=key, value=value, sensitivity=args[3] if len(args) > 3 else "local")
-            return f"Profile item confirmed: {item.item_id}"
-        if args[0] == "correct" and len(args) >= 4 and "=" in args[2]:
-            key, value = args[2].split("=", 1)
-            item = self.app.profile.correct(args[1], key=key, value=value)
-            return f"Profile item corrected: {item.item_id}"
-        if args[0] == "delete" and len(args) == 2:
-            return "Profile item deleted." if self.app.profile.delete(args[1]) else "Profile item not found."
-        return "Usage: /profile list | add key=value item-id [sensitivity] | correct item-id key=value | delete item-id"
-
-    def _history_command(self, args: list[str]) -> str:
-        if args == ["list"]:
-            sessions = self.app.repository.list_sessions()
-            return "\n".join(f"{s.session_id} {s.created_at.isoformat()} {s.persistence_mode.value}" for s in sessions) or "No sessions."
-        if len(args) == 2 and args[0] == "delete":
-            return "Session deleted." if self.app.repository.delete_session(args[1]) else "Session not found."
-        return "Usage: /history list | delete session-id"
-
-    def _submit(self, text: str) -> str:
-        try:
-            clean = normalize_and_validate(text, max_chars=self.app.config.max_input_chars)
-        except InputInvalidError as exc:
-            return f"Input rejected: {exc.summary}"
-
-        request = TaskRequest(
-            request_id=f"req-{uuid.uuid4().hex[:12]}",
-            session_id=self.session.session_id,
-            text=clean,
-            cloud_mode=self.session.cloud_mode,
-            persistence_mode=self.session.persistence_mode,
-            submitted_at=self.app.clock.now(),
+    def _context(self) -> CommandContext:
+        return CommandContext(
+            api=self.api,
+            session=self.session,
+            pending_consent=(
+                self.pending_consent[1] if self.pending_consent is not None else None
+            ),
+            pending_action=self.pending_action,
+            last_task_id=self.last_task_id,
+            help_text=self.registry.help_text,
         )
-        try:
-            if self.app.executor is None:
-                outcome = self.app.orchestrator.handle(request)
-            else:
-                outcome = self.app.submit(request).result()
-        except EllyError as exc:
-            # A storage/typed failure that reached the boundary — surface as blocked,
-            # never a fabricated success (FR-006). Provider/validation failures are
-            # already mapped to a blocked TaskResult inside handle().
-            return f"Blocked: {exc.summary}"
-        if outcome.consent_proposal is not None:
-            self.pending_consent = (request, outcome.consent_proposal)
-        return render.render_result(outcome.result)
+
+    def _apply(self, result: CommandResult) -> str:
+        if result.session is not _UNSET:
+            self.session = cast(SessionView | None, result.session)
+        if result.pending_consent is not _UNSET:
+            consent = cast(ConsentView | None, result.pending_consent)
+            self.pending_consent = (
+                (self.session, consent)
+                if consent is not None and self.session is not None
+                else None
+            )
+        if result.pending_action is not _UNSET:
+            self.pending_action = cast(ActionConfirmationView | None, result.pending_action)
+        if result.last_task_id is not _UNSET:
+            self.last_task_id = cast(str | None, result.last_task_id)
+        return result.text
+
+    def _submit(self, text: str) -> CommandResult:
+        if self.session is None:
+            return CommandResult("No active session.")
+        result = self.api.submit_and_wait(
+            SubmitRequest(
+                request_id=f"req-{uuid.uuid4().hex[:12]}",
+                session_id=self.session.session_id,
+                text=text,
+            )
+        )
+        if not result.is_success:
+            assert result.failure is not None
+            prefix = (
+                "Input rejected: "
+                if result.failure.code is ApiFailureCode.INVALID_INPUT
+                else "Blocked: "
+            )
+            return CommandResult(prefix + result.failure.safe_message)
+        assert result.value is not None
+        task = result.value
+        pending_consent: ConsentView | None = None
+        if task.status is TaskStatus.AWAITING_CONSENT:
+            pending = self.api.list_consents()
+            if pending.is_success and pending.value is not None:
+                pending_consent = next(
+                    (proposal for proposal in pending.value if proposal.task_id == task.task_id),
+                    None,
+                )
+        return CommandResult(
+            render.render_task_view(task),
+            pending_consent=pending_consent,
+            pending_action=task.action_confirmation,
+            last_task_id=task.task_id,
+        )
 
     # -- interactive loop --------------------------------------------------
 
@@ -266,10 +164,14 @@ class Cli:
                 print()
                 break
             except KeyboardInterrupt:
-                self.app.cancel_active()
+                if self.last_task_id is not None:
+                    self.api.cancel_task(self.last_task_id)
                 print("Cancellation requested.")
                 continue
             out = self.dispatch(line)
             if out == EXIT:
                 break
             print(out)
+
+
+__all__ = ["Cli", "EXIT"]

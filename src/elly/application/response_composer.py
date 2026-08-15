@@ -24,8 +24,14 @@ from ..domain.enums import (
     TaskStatus,
     ValidationStatus,
 )
-from ..domain.models import ClaimSupport, ProvenanceReference, TaskResult
+from ..domain.models import (
+    ActionConfirmationProposal,
+    ClaimSupport,
+    ProvenanceReference,
+    TaskResult,
+)
 from ..privacy import ConsentProposal
+from .action_authorization import safe_action_target_reference
 
 
 def compose_success(*, task_id: str, answer: str, route: Route = Route.LOCAL_GENERALIST,
@@ -196,4 +202,53 @@ def compose_consent_required(
         route_summary=route,
         next_actions=(f"/approve {proposal.proposal_id}", f"/deny {proposal.proposal_id}"),
         outcome_code=OutcomeCode.AWAITING_CONSENT,
+    )
+
+
+def compose_clarification(
+    *, task_id: str, fields: tuple[str, ...], route: Route = Route.LOCAL_GENERALIST
+) -> TaskResult:
+    """Compose a typed clarification without selecting or executing a provider."""
+    safe_fields = tuple(dict.fromkeys(field for field in fields if field.strip()))
+    labels = ", ".join(safe_fields) if safe_fields else "the requested capability"
+    return TaskResult(
+        task_id=task_id,
+        task_status=TaskStatus.BLOCKED,
+        epistemic_status=EpistemicStatus.BLOCKED,
+        validation_status=ValidationStatus.QUALIFIED,
+        answer=f"I need clarification before proceeding: {labels}.",
+        route_summary=route,
+        next_actions=tuple(f"provide {field}" for field in safe_fields),
+        outcome_code=OutcomeCode.CLARIFICATION_REQUIRED,
+    )
+
+
+def compose_action_confirmation(
+    *,
+    task_id: str,
+    proposal: ActionConfirmationProposal,
+    route: Route,
+) -> TaskResult:
+    """Compose a redacted pause for one exact consequential-action approval."""
+    target = (
+        f"{proposal.proposal.target.kind}={safe_action_target_reference(proposal.proposal.target)}"
+        if proposal.proposal.target is not None
+        else "unspecified"
+    )
+    return TaskResult(
+        task_id=task_id,
+        task_status=TaskStatus.AWAITING_CONFIRMATION,
+        epistemic_status=EpistemicStatus.BLOCKED,
+        validation_status=ValidationStatus.QUALIFIED,
+        answer=(
+            "Confirmation required before performing this action. "
+            f"category={proposal.proposal.category.value}; target={target}; "
+            f"confirmation={proposal.confirmation_id}; expires={proposal.expires_at.isoformat()}"
+        ),
+        route_summary=route,
+        next_actions=(
+            f"/approve-action {proposal.confirmation_id}",
+            f"/deny-action {proposal.confirmation_id}",
+        ),
+        outcome_code=OutcomeCode.AWAITING_CONFIRMATION,
     )

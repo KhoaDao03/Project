@@ -32,7 +32,7 @@ class EnumStabilityTests(unittest.TestCase):
         expected = {
             "INPUT_INVALID", "CONFIG_INVALID", "PERMISSION_DENIED", "LIMIT_EXCEEDED",
             "TRANSIENT_PROVIDER", "PERMANENT_PROVIDER", "TIMEOUT", "MALFORMED_RESULT",
-            "UNSAFE_URL", "UNSUPPORTED_CONTENT", "STORAGE_FAILURE", "CANCELLED",
+            "UNSAFE_URL", "UNSUPPORTED_CONTENT", "STORAGE_FAILURE", "CANCELLED", "CONFLICT",
         }
         self.assertEqual({e.value for e in ErrorClass}, expected)
 

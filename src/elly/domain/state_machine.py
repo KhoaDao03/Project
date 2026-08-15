@@ -18,13 +18,14 @@ from __future__ import annotations
 from .enums import ErrorClass, TaskStatus
 from .errors import EllyError
 
-# Allowed forward transitions. Mirrors the DESIGN §5.4 diagram. AWAITING_CONSENT,
-# CANCELLED, and PARTIAL edges exist in the contract but are unreachable in M1.
+# Allowed forward transitions. Consent and confirmation pauses resume through a
+# fresh application submission after the exact approval is checked.
 _ALLOWED: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.QUEUED: frozenset({TaskStatus.RUNNING, TaskStatus.CANCELLED}),
     TaskStatus.RUNNING: frozenset(
         {
             TaskStatus.AWAITING_CONSENT,
+            TaskStatus.AWAITING_CONFIRMATION,
             TaskStatus.COMPLETED,
             TaskStatus.PARTIAL,
             TaskStatus.CANCELLED,
@@ -33,12 +34,18 @@ _ALLOWED: dict[TaskStatus, frozenset[TaskStatus]] = {
         }
     ),
     TaskStatus.AWAITING_CONSENT: frozenset({TaskStatus.RUNNING, TaskStatus.BLOCKED}),
+    TaskStatus.AWAITING_CONFIRMATION: frozenset(
+        {TaskStatus.RUNNING, TaskStatus.BLOCKED}
+    ),
     # Terminal states have no outgoing transitions.
     TaskStatus.COMPLETED: frozenset(),
     TaskStatus.PARTIAL: frozenset(),
     TaskStatus.CANCELLED: frozenset(),
     TaskStatus.FAILED: frozenset(),
     TaskStatus.BLOCKED: frozenset(),
+    # Restart recovery is terminal until an explicit retry submits the task
+    # again; it must never be presented as a successful completion.
+    TaskStatus.INTERRUPTED: frozenset(),
 }
 
 TERMINAL: frozenset[TaskStatus] = frozenset(

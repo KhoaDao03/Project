@@ -10,6 +10,7 @@ from elly.adapters.fake_generalist import FailureMode, FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.application.conversation import ConversationOrchestrator
+from elly.application.local_conversation import LocalConversationUseCase
 from elly.domain.enums import CloudMode, OutcomeCode, PersistenceMode, TaskStatus
 from elly.domain.errors import StorageFailureError
 from elly.domain.models import SessionRecord, TaskRequest
@@ -98,12 +99,14 @@ class OrchestratorIdempotencyTests(unittest.TestCase):
         self.provider = FakeGeneralist()
         self.orchestrator = ConversationOrchestrator(
             clock=FixedClock(UTC, step_seconds=1),
-            generalist=self.provider,
             repository=self.repo,
             audit=StructuredAuditLog(),
             context_window=20,
-            model_id="fake-generalist-v1",
-            max_output_tokens=64,
+            local_conversation=LocalConversationUseCase(
+                generalist=self.provider,
+                model_id="fake-generalist-v1",
+                max_output_tokens=64,
+            ),
         )
 
     def tearDown(self) -> None:
@@ -132,12 +135,14 @@ class OrchestratorIdempotencyTests(unittest.TestCase):
     def test_failed_request_can_retry_without_duplicate_user_turn(self) -> None:
         failing = ConversationOrchestrator(
             clock=FixedClock(UTC, step_seconds=1),
-            generalist=FakeGeneralist(failure=FailureMode.TRANSIENT),
             repository=self.repo,
             audit=StructuredAuditLog(),
             context_window=20,
-            model_id="fake-generalist-v1",
-            max_output_tokens=64,
+            local_conversation=LocalConversationUseCase(
+                generalist=FakeGeneralist(failure=FailureMode.TRANSIENT),
+                model_id="fake-generalist-v1",
+                max_output_tokens=64,
+            ),
         )
         first = failing.handle(self._request())
         self.assertIs(first.result.task_status, TaskStatus.BLOCKED)
@@ -201,12 +206,14 @@ class ReliabilityOutcomeTests(unittest.TestCase):
         self.addCleanup(repo.close)
         orchestrator = ConversationOrchestrator(
             clock=FixedClock(UTC),
-            generalist=FakeGeneralist(),
             repository=repo,
             audit=StructuredAuditLog(),
             context_window=20,
-            model_id="fake-generalist-v1",
-            max_output_tokens=64,
+            local_conversation=LocalConversationUseCase(
+                generalist=FakeGeneralist(),
+                model_id="fake-generalist-v1",
+                max_output_tokens=64,
+            ),
         )
 
         outcome = orchestrator.handle(self._request(session_id))
@@ -223,9 +230,13 @@ class ReliabilityOutcomeTests(unittest.TestCase):
         self.addCleanup(repo.close)
         provider = _CountingGeneralist()
         orchestrator = ConversationOrchestrator(
-            clock=FixedClock(UTC), generalist=provider, repository=repo,
+            clock=FixedClock(UTC), repository=repo,
             audit=_FailingInitialAudit(), context_window=20,
-            model_id="fake-generalist-v1", max_output_tokens=64,
+            local_conversation=LocalConversationUseCase(
+                generalist=provider,
+                model_id="fake-generalist-v1",
+                max_output_tokens=64,
+            ),
         )
 
         outcome = orchestrator.handle(self._request(session_id))
@@ -241,12 +252,14 @@ class ReliabilityOutcomeTests(unittest.TestCase):
         self.addCleanup(repo.close)
         orchestrator = ConversationOrchestrator(
             clock=FixedClock(UTC),
-            generalist=FakeGeneralist(),
             repository=repo,
             audit=_FailingCompletionAudit(),
             context_window=20,
-            model_id="fake-generalist-v1",
-            max_output_tokens=64,
+            local_conversation=LocalConversationUseCase(
+                generalist=FakeGeneralist(),
+                model_id="fake-generalist-v1",
+                max_output_tokens=64,
+            ),
         )
 
         outcome = orchestrator.handle(self._request(session_id))

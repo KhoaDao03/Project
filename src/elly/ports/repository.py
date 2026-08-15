@@ -25,7 +25,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from ..domain.models import AuditEvent, Message, OperationLease, ProvenanceReference, SessionRecord
+from ..domain.enums import CloudMode
+from ..domain.models import (
+    AuditEvent,
+    Message,
+    OperationLease,
+    ProvenanceReference,
+    SessionRecord,
+    TaskResult,
+)
 from ..memory import ProfileItem
 
 
@@ -43,6 +51,17 @@ class SessionRepositoryPort(Protocol):
 
     def get_session(self, session_id: str) -> SessionRecord | None:
         """Return the session record or None if unknown."""
+        ...
+
+    def update_cloud_mode(
+        self,
+        session_id: str,
+        expected_version: int,
+        new_mode: CloudMode,
+        at: datetime,
+        audit_event: AuditEvent | None = None,
+    ) -> SessionRecord:
+        """Atomically compare-and-set a session cloud mode and optional audit event."""
         ...
 
     def append_message(self, session_id: str, message: Message) -> None:
@@ -80,6 +99,15 @@ class SessionRepositoryPort(Protocol):
         ...
 
     def task_status(self, task_id: str) -> str | None:
+        ...
+
+    def task_session_id(self, task_id: str) -> str | None:
+        ...
+
+    def save_task_result(self, result: TaskResult, at: datetime) -> None:
+        ...
+
+    def get_task_result(self, task_id: str) -> TaskResult | None:
         ...
 
     def mark_interrupted_tasks(self, at: datetime) -> int:

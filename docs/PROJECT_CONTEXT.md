@@ -22,11 +22,11 @@ Use approved/recorded requirements and owner decisions, frozen contracts, design
 
 Elly is a single-user, terminal-first, local-first assistant. Ordinary conversation uses a local Ollama generalist. When the owner explicitly permits cloud mode, current-information research and selected coding/research-specialist tasks may use OpenAI-hosted adapters subject to application-owned routing, privacy classification, consent, limits, cost reservations, and redacted audit records.
 
-**Implemented:** the V1 baseline plus V1.5 typed routing/capabilities, explicit privacy authorization, claim-level evidence policy, document retrieval, outcome/provenance records, idempotency/operation tracking, cancellation propagation, and additive schema migration work.
-**Tested:** the V1.5 verification report records 260 tests passed, 0 failed, 0 skipped; Ruff, strict mypy across 69 source files, compilation, and `git diff --check` passed.
-**Verified:** independently actionable V1.5 correctness/security blockers, representative migration coverage, external cancellation coverage, and static CI gates are complete. Limited live Ollama/OpenAI verification is explicitly deferred rather than claimed as passing.
-**Owner reviewed:** the owner approved the implemented V1.5 scope and closed the iteration on 2026-08-07; see [V1_5_CLOSURE.md](v1.5/V1_5_CLOSURE.md).
-**Iteration status:** **V1.5 closed with an accepted live-provider verification exception.** Historical V1 release gaps remain separate. See [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md) and [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md).
+**Implemented:** the V1 baseline, V1.5 reliability work, and all nine V2 architecture, capability, intent, authorization, session, API, and CLI requirements.
+**Tested:** the V2 verification report records 314 tests passed in three consecutive runs; Ruff, strict MyPy across 91 source files, compilation, migration, consent-resume stress, and `git diff --check` passed.
+**Verified:** all deterministic V2 blockers and acceptance criteria are closed. Limited live Ollama/OpenAI quality verification is explicitly deferred rather than claimed as passing.
+**Owner reviewed:** the owner marked V2 completed and closed on 2026-08-15; see [V2_CLOSURE.md](v2/V2_CLOSURE.md).
+**Iteration status:** **V2 closed with an accepted live-provider verification exception.** Historical V1 release gaps remain separate.
 
 ## 3. Project Goals and Motivation
 
@@ -73,6 +73,14 @@ V1.5 is an incremental architecture and reliability release built on V1. It pres
 - new deterministic tests for routing, capabilities, authorization, retrieval, evidence, idempotency, local conversation, composition validation, and migrations.
 
 **V1.5 status:** closed by owner decision on 2026-08-07 for the implemented scope. The deterministic suite, representative V2-to-V3 migration, external cancellation regressions, Ruff, and strict mypy pass. Live-provider verification is an accepted deferred exception. Orchestrator reduction, attempt-level retry durability, and broader semantic evidence analysis are carried to a later iteration as improvements. See [V1_5_CLOSURE.md](v1.5/V1_5_CLOSURE.md) and [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
+
+**V2 status:** completed and closed by owner decision on 2026-08-15. All nine
+requirements pass deterministic verification: 314 tests passed in three
+consecutive full-suite runs, with Ruff, strict MyPy across 91 source files,
+compilation, representative migration, consent-resume stress, and whitespace
+checks green. Limited live-provider quality verification is an accepted
+deferred exception. See [V2_CLOSURE.md](v2/V2_CLOSURE.md) and
+[V2_IMPLEMENTATION_VERIFICATION.md](v2/V2_IMPLEMENTATION_VERIFICATION.md).
 
 ## 5. Users, Actors, and Use Cases
 
@@ -386,9 +394,9 @@ docs/v1.5/                     Version 1.5 requirements, design, implementation 
 
 ## 28. Common Questions and Evidence-Based Answers
 
-**What currently works?** V1 functionality remains the baseline. V1.5 adds typed routing/capabilities, authorization, retrieval/evidence policy, outcome/provenance, cancellation, idempotency, and migration work. See [README.md](../README.md) and [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
+**What currently works?** V1 functionality remains the baseline. V1.5 adds reliability foundations, and V2 adds the stable public façade, durable session authority, isolated capability workflow, structured intent, separated authorization policies, exact action confirmation, and modular CLI. See [README.md](../README.md) and [V2_IMPLEMENTATION_VERIFICATION.md](v2/V2_IMPLEMENTATION_VERIFICATION.md).
 
-**Is V1/V1.5 complete or release-ready?** V1 remains not release-ready under its historical verification record. V1.5 is closed for its implemented iteration scope with live-provider verification explicitly deferred. See [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md), [V1_5_CLOSURE.md](v1.5/V1_5_CLOSURE.md), and [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
+**Is V2 complete?** Yes. The owner closed V2 on 2026-08-15 after all deterministic gates passed. Limited live-provider quality verification is an accepted deferred exception, not a claimed pass. Historical V1 release gaps remain separate. See [V2_CLOSURE.md](v2/V2_CLOSURE.md) and [V2_IMPLEMENTATION_VERIFICATION.md](v2/V2_IMPLEMENTATION_VERIFICATION.md).
 
 **Does it use real Ollama?** Yes by default (`ollama`, `qwen3:8b`), with bounded live-smoke evidence; fakes are test support. See [ollama_generalist.py](../src/elly/adapters/ollama_generalist.py).
 
@@ -400,7 +408,7 @@ docs/v1.5/                     Version 1.5 requirements, design, implementation 
 
 **Is data persisted?** Normal SQLite state is retained by policy; `/new --no-store` prevents message-body reconstruction. See [sqlite_repository.py](../src/elly/adapters/sqlite_repository.py).
 
-**What remains unresolved?** V1 retains pricing assurance, backup crypto/recovery acceptance, aggregate quality/final threshold review, and deferred UAT scope. Closed V1.5 carries live-provider verification as an explicit exception and carries attempt-level idempotency durability, orchestrator reduction, and broader semantic evidence analysis as later improvements. See §23, [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md), and the V1.5 closure/verification records.
+**What remains unresolved?** Historical V1 retains pricing assurance, backup crypto/recovery acceptance, aggregate quality/final threshold review, and deferred UAT scope. Closed V2 carries limited live-provider quality verification as an explicit exception. Production web/authentication and effectful external actions remain out of scope. See §23 and the V2 closure/verification records.
 
 ## 29. Context Freshness and Update Procedure
 

@@ -14,11 +14,16 @@ from elly.application.capabilities import (
     CapabilityDescriptor,
     CapabilityExecution,
     CapabilityMatch,
+    CapabilityPreparation,
     CapabilityRegistry,
     CapabilityRequest,
     CapabilityStatus,
 )
+from elly.application.capability_workflow import CapabilityExecutionWorkflow
+from elly.application.completion import CompletionService
 from elly.application.conversation import ConversationOrchestrator
+from elly.application.local_conversation import LocalConversationUseCase
+from elly.application.routing import RoutingPolicy
 from elly.domain.enums import (
     CloudMode,
     EpistemicStatus,
@@ -29,6 +34,7 @@ from elly.domain.enums import (
 )
 from elly.domain.errors import ConfigInvalidError
 from elly.domain.models import (
+    CapabilityIntent,
     ContextManifest,
     RouteProposal,
     RouteRequest,
@@ -46,6 +52,7 @@ class _Capability:
         description="A deterministic test capability",
         routes=(Route.CODING_SPECIALIST,),
         request_schema="test-task-v1",
+        operations=("test.execute",),
     )
 
     def __init__(self, available: bool = True) -> None:
@@ -59,6 +66,11 @@ class _Capability:
 
     def can_handle(self, _request: CapabilityRequest) -> CapabilityMatch:
         return CapabilityMatch(True, "TEST_MATCH")
+
+    def prepare(
+        self, _intent: CapabilityIntent, _request: CapabilityRequest
+    ) -> CapabilityPreparation:
+        return CapabilityPreparation(True, "TEST_INPUT_ACCEPTED")
 
     def execute(self, request: CapabilityRequest) -> CapabilityExecution:
         result = TaskResult(
@@ -123,15 +135,30 @@ class CapabilityRegistryTests(unittest.TestCase):
             )
         )
         self.addCleanup(repo.close)
+        registry = CapabilityRegistry((_Capability(),))
+        audit = StructuredAuditLog()
+        completion = CompletionService(
+            clock=FixedClock(UTC),
+            repository=repo,
+            audit=audit,
+        )
         orchestrator = ConversationOrchestrator(
             clock=FixedClock(UTC),
-            generalist=FakeGeneralist(),
             repository=repo,
-            audit=StructuredAuditLog(),
+            audit=audit,
             context_window=20,
-            model_id="unused-local-model",
-            max_output_tokens=32,
-            capability_registry=CapabilityRegistry((_Capability(),)),
+            local_conversation=LocalConversationUseCase(
+                generalist=FakeGeneralist(),
+                model_id="unused-local-model",
+                max_output_tokens=32,
+            ),
+            completion=completion,
+            capability_workflow=CapabilityExecutionWorkflow(
+                clock=FixedClock(UTC),
+                capability_registry=registry,
+                completion=completion,
+            ),
+            routing_policy=RoutingPolicy(capabilities=registry),
         )
         outcome = orchestrator.handle(
             TaskRequest(

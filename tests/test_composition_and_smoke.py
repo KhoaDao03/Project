@@ -83,7 +83,7 @@ class CompositionTests(unittest.TestCase):
     def test_local_output_ceiling_does_not_inherit_specialist_limit(self) -> None:
         self.assertEqual(
             self.app.config.generalist_max_output_tokens,
-            self.app.orchestrator._max_output_tokens,
+            self.app.local_conversation.max_output_tokens,
         )
 
     def test_central_config_is_wired_into_remote_models_and_pricing(self) -> None:

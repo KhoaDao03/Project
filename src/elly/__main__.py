@@ -11,6 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .api.application import EllyApplication
 from .composition import build
 from .domain.errors import ConfigInvalidError, StorageFailureError
 from .dotenv import load_dotenv
@@ -33,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         config_path = "config.local.toml"
 
     try:
-        app = build(config_path)
+        app = EllyApplication(build(config_path))
     except (ConfigInvalidError, StorageFailureError) as exc:
         print(f"Startup failed: {exc.summary}", file=sys.stderr)
         return 2

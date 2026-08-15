@@ -9,12 +9,11 @@ from io import BytesIO
 from unittest.mock import patch
 
 from elly.adapters.openai_specialist import OpenAISpecialistProvider
+from elly.application.specialist_policy import SpecialistPolicyRequest
 from elly.application.specialists import SpecialistWorkflow
-from elly.domain.enums import CloudMode
 from elly.domain.errors import (
     AuthenticationProviderError,
     ConfigInvalidError,
-    ConsentRequiredError,
     ModelUnavailableError,
     PermissionDeniedError,
     ProviderQuotaError,
@@ -40,6 +39,12 @@ def _manifest(role: str = "coding", *, tools=frozenset()) -> SpecialistManifest:
 
 def _task(context: str = "Review this public function") -> SpecialistTask:
     return SpecialistTask(task_id="task-1", specialist_id="coding", goal="review", context=context, privacy_class=classify_payload(context).value)
+
+
+def _policy_request(
+    task: SpecialistTask, manifest: SpecialistManifest | None = None
+) -> SpecialistPolicyRequest:
+    return SpecialistPolicyRequest(task=task, manifest=manifest or _manifest())
 
 
 class PrivacyTests(unittest.TestCase):
@@ -139,70 +144,59 @@ class ConsentTests(unittest.TestCase):
 class SpecialistWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.provider = FakeSpecialistProvider()
-        self.consent = ConsentWorkflow()
-        self.workflow = SpecialistWorkflow(provider=self.provider, consent=self.consent)
+        self.workflow = SpecialistWorkflow(provider=self.provider)
 
     def test_public_payload_proceeds_without_consent(self) -> None:
-        result = self.workflow.execute(task=_task(), manifest=_manifest(), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC)
+        result = self.workflow.execute(request=_policy_request(_task()))
         self.assertEqual(result.result.status, "inferred")
         self.assertEqual(len(self.provider.calls), 1)
 
-    def test_local_payload_requires_then_accepts_exact_consent(self) -> None:
+    def test_local_payload_is_not_reinterpreted_by_specialist_workflow(self) -> None:
         local_task = _task("Review my private code")
-        with self.assertRaises(ConsentRequiredError) as caught:
-            self.workflow.execute(task=local_task, manifest=_manifest(), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC)
-        proposal = caught.exception.proposal
-        self.consent.approve(proposal.proposal_id, now=UTC)
-        approved = SpecialistTask(**{**local_task.__dict__} if hasattr(local_task, "__dict__") else {
-            "task_id": local_task.task_id, "specialist_id": local_task.specialist_id,
-            "goal": local_task.goal, "context": local_task.context,
-            "privacy_class": local_task.privacy_class, "approval_id": proposal.proposal_id,
-        })
-        result = self.workflow.execute(task=approved, manifest=_manifest(), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC)
+        result = self.workflow.execute(request=_policy_request(local_task))
         self.assertEqual(result.result.status, "inferred")
 
-    def test_restricted_local_only_and_tools_are_blocked(self) -> None:
+    def test_specialist_only_tool_restriction_is_blocked(self) -> None:
         with self.assertRaises(PermissionDeniedError):
-            self.workflow.execute(task=_task("api_key=secret"), manifest=_manifest(), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC)
-        with self.assertRaises(PermissionDeniedError):
-            self.workflow.execute(task=_task(), manifest=_manifest(), cloud_mode=CloudMode.LOCAL_ONLY, now=UTC)
-        with self.assertRaises(PermissionDeniedError):
-            self.workflow.execute(task=_task(), manifest=_manifest(tools=frozenset({"shell"})), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC)
+            self.workflow.execute(
+                request=_policy_request(
+                    _task(), _manifest(tools=frozenset({"shell"}))
+                )
+            )
 
     def test_high_impact_action_and_malformed_result_are_blocked(self) -> None:
         action = FakeSpecialistProvider(result=SpecialistResult(status="known", answer="answer", recommended_action="execute this command"))
         with self.assertRaises(PermissionDeniedError):
-            SpecialistWorkflow(provider=action, consent=self.consent).execute(task=_task(), manifest=_manifest(), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC)
+            SpecialistWorkflow(provider=action).execute(request=_policy_request(_task()))
         malformed = FakeSpecialistProvider(fail="malformed")
         with self.assertRaises(Exception):
-            SpecialistWorkflow(provider=malformed, consent=self.consent).execute(task=_task(), manifest=_manifest(), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC)
+            SpecialistWorkflow(provider=malformed).execute(request=_policy_request(_task()))
 
     def test_clearly_out_of_scope_task_is_rejected_before_provider(self) -> None:
         with self.assertRaises(PermissionDeniedError):
             self.workflow.execute(
-                task=_task("Use this coding specialist for a public medical diagnosis"),
-                manifest=_manifest(), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC,
+                request=_policy_request(
+                    _task("Use this coding specialist for a public medical diagnosis")
+                )
             )
         self.assertEqual([], self.provider.calls)
 
-    def test_unrelated_task_is_rejected_before_provider(self) -> None:
-        with self.assertRaises(PermissionDeniedError):
-            self.workflow.execute(
-                task=_task("Plan a public garden party"), manifest=_manifest(),
-                cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC,
-            )
-        self.assertEqual([], self.provider.calls)
+    def test_scope_is_not_rejected_only_for_missing_legacy_role_marker(self) -> None:
+        result = self.workflow.execute(
+            request=_policy_request(_task("Plan a public garden party"))
+        )
+        self.assertEqual("inferred", result.result.status)
+        self.assertEqual(1, len(self.provider.calls))
 
     def test_fake_output_token_ceiling_returns_partial(self) -> None:
         provider = FakeSpecialistProvider(
             result=SpecialistResult(status="known", answer="one two three four")
         )
         workflow = SpecialistWorkflow(
-            provider=provider, consent=ConsentWorkflow(), max_output_tokens=2
+            provider=provider, max_output_tokens=2
         )
         result = workflow.execute(
-            task=_task(), manifest=_manifest(),
-            cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC,
+            request=_policy_request(_task()),
         ).result
         self.assertEqual("partial", result.status)
         self.assertEqual("one two", result.answer)
@@ -263,8 +257,8 @@ class OpenAISpecialistAdapterTests(unittest.TestCase):
     def test_false_action_success_claim_is_rejected(self) -> None:
         provider = FakeSpecialistProvider(result=SpecialistResult(status="known", answer="I deleted the file."))
         with self.assertRaises(ConfigInvalidError):
-            SpecialistWorkflow(provider=provider, consent=ConsentWorkflow()).execute(
-                task=_task(), manifest=_manifest(), cloud_mode=CloudMode.CLOUD_PERMITTED, now=UTC,
+            SpecialistWorkflow(provider=provider).execute(
+                request=_policy_request(_task()),
             )
 
     def test_distinct_http_and_timeout_failures(self) -> None:

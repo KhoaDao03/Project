@@ -9,13 +9,14 @@ from elly.application.capabilities import (
     CapabilityDescriptor,
     CapabilityExecution,
     CapabilityMatch,
+    CapabilityPreparation,
     CapabilityRegistry,
     CapabilityRequest,
     CapabilityStatus,
 )
 from elly.application.routing import RoutingPolicy
 from elly.domain.enums import CloudMode, Route, RouteReasonCode
-from elly.domain.models import RouteProposal, RouteRequest
+from elly.domain.models import CapabilityIntent, RouteProposal, RouteRequest
 
 
 class _AvailableCapability:
@@ -25,6 +26,7 @@ class _AvailableCapability:
             description="test",
             routes=(route,),
             request_schema=f"{capability_id}-v1",
+            operations=("test.execute",),
         )
         self._available = available
 
@@ -36,6 +38,11 @@ class _AvailableCapability:
 
     def can_handle(self, _request: CapabilityRequest) -> CapabilityMatch:
         return CapabilityMatch(True, "TEST_ROUTE")
+
+    def prepare(
+        self, _intent: CapabilityIntent, _request: CapabilityRequest
+    ) -> CapabilityPreparation:
+        return CapabilityPreparation(True, "TEST_INPUT_ACCEPTED")
 
     def execute(self, _request: CapabilityRequest) -> CapabilityExecution:
         raise AssertionError("routing test capability must not execute")

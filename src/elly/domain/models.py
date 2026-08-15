@@ -18,15 +18,24 @@ Security/privacy:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Mapping, TypeAlias
 
 from .enums import (
+    ActionCategory,
+    ActionDataSensitivity,
+    ActionImpactFlag,
+    ActionProposalSource,
+    ActionReversibility,
+    ActionSideEffect,
     CloudMode,
     EpistemicStatus,
     ErrorClass,
     HealthState,
+    IntentAmbiguity,
+    IntentEntitySource,
     OutcomeCode,
     PersistenceMode,
     Route,
@@ -35,6 +44,8 @@ from .enums import (
     ValidationStatus,
 )
 from .errors import InputInvalidError
+
+IntentScalar: TypeAlias = str | int | float | bool | None
 
 if TYPE_CHECKING:
     from ..privacy import ConsentProposal
@@ -50,6 +61,191 @@ def _require_aware_utc(value: datetime, name: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise InputInvalidError(f"{name} must be a timezone-aware UTC datetime")
     return value.astimezone(timezone.utc)
+
+
+@dataclass(frozen=True, slots=True)
+class IntentEntity:
+    """A bounded entity extracted from an untrusted capability proposal."""
+
+    kind: str
+    value: str
+    source: IntentEntitySource
+
+    def __post_init__(self) -> None:
+        _require_nonempty(self.kind, "intent entity kind")
+        _require_nonempty(self.value, "intent entity value")
+        if not isinstance(self.source, IntentEntitySource):
+            raise InputInvalidError("intent entity source must be an IntentEntitySource")
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityIntent:
+    """Structured, untrusted capability proposal used by deterministic routing."""
+
+    proposed_capability_id: str | None
+    operation: str
+    entities: tuple[IntentEntity, ...] = ()
+    arguments: Mapping[str, IntentScalar] = field(default_factory=dict)
+    confidence: float = 0.0
+    ambiguity: IntentAmbiguity = IntentAmbiguity.NONE_PROPOSED
+    rationale_code: str = ""
+
+    def __post_init__(self) -> None:
+        if self.proposed_capability_id is not None:
+            _require_nonempty(self.proposed_capability_id, "intent capability id")
+        if not isinstance(self.operation, str):
+            raise InputInvalidError("intent operation must be text")
+        if not isinstance(self.entities, tuple) or any(
+            not isinstance(entity, IntentEntity) for entity in self.entities
+        ):
+            raise InputInvalidError("intent entities must contain IntentEntity values")
+        if not isinstance(self.arguments, Mapping):
+            raise InputInvalidError("intent arguments must be a mapping")
+        normalized: dict[str, IntentScalar] = {}
+        for key, value in self.arguments.items():
+            _require_nonempty(key, "intent argument name")
+            if not isinstance(value, (str, int, float, bool)) and value is not None:
+                raise InputInvalidError("intent arguments must contain scalar values")
+            normalized[key] = value
+        object.__setattr__(self, "arguments", MappingProxyType(normalized))
+        if isinstance(self.confidence, bool) or not 0 <= self.confidence <= 1:
+            raise InputInvalidError("intent confidence must be between 0 and 1")
+        if not isinstance(self.ambiguity, IntentAmbiguity):
+            raise InputInvalidError("intent ambiguity must be an IntentAmbiguity")
+        _require_nonempty(self.rationale_code, "intent rationale_code")
+        if self.ambiguity is IntentAmbiguity.NONE_PROPOSED:
+            if self.proposed_capability_id is not None:
+                raise InputInvalidError(
+                    "none-proposed intent cannot name a capability"
+                )
+        elif (
+            self.ambiguity is IntentAmbiguity.CLEAR
+            and self.proposed_capability_id is None
+        ):
+            raise InputInvalidError("selected intent must name a capability")
+
+
+@dataclass(frozen=True, slots=True)
+class ActionTarget:
+    """Bounded, safe reference to an action target; never a raw payload."""
+
+    kind: str
+    reference: str
+
+    def __post_init__(self) -> None:
+        _require_nonempty(self.kind, "action target kind")
+        _require_nonempty(self.reference, "action target reference")
+        if any(char in self.kind or char in self.reference for char in ("\n", "\r")):
+            raise InputInvalidError("action target must be single-line metadata")
+        if len(self.kind) > 64 or len(self.reference) > 256:
+            raise InputInvalidError("action target metadata exceeds its bound")
+
+    @property
+    def normalized(self) -> tuple[str, str]:
+        return (self.kind.strip().casefold(), self.reference.strip().casefold())
+
+
+@dataclass(frozen=True, slots=True)
+class ActionProposal:
+    """Typed, untrusted description of a possible consequential action."""
+
+    category: ActionCategory
+    target: ActionTarget | None = None
+    side_effect: ActionSideEffect = ActionSideEffect.NONE
+    reversibility: ActionReversibility = ActionReversibility.REVERSIBLE
+    data_sensitivity: ActionDataSensitivity = ActionDataSensitivity.PUBLIC
+    impact_flags: tuple[ActionImpactFlag, ...] = ()
+    confirmation_required: bool = False
+    source: ActionProposalSource = ActionProposalSource.CAPABILITY_DECLARED
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.category, ActionCategory):
+            raise InputInvalidError("action category must be an ActionCategory")
+        if self.target is not None and not isinstance(self.target, ActionTarget):
+            raise InputInvalidError("action target has an invalid type")
+        if not isinstance(self.side_effect, ActionSideEffect):
+            raise InputInvalidError("action side_effect must be an ActionSideEffect")
+        if not isinstance(self.reversibility, ActionReversibility):
+            raise InputInvalidError("action reversibility must be an ActionReversibility")
+        if not isinstance(self.data_sensitivity, ActionDataSensitivity):
+            raise InputInvalidError(
+                "action data_sensitivity must be an ActionDataSensitivity"
+            )
+        if not isinstance(self.impact_flags, tuple) or any(
+            not isinstance(flag, ActionImpactFlag) for flag in self.impact_flags
+        ):
+            raise InputInvalidError("action impact_flags must contain ActionImpactFlag values")
+        if len(set(self.impact_flags)) != len(self.impact_flags):
+            raise InputInvalidError("action impact_flags must be unique")
+        if not isinstance(self.confirmation_required, bool):
+            raise InputInvalidError("action confirmation_required must be a bool")
+        if not isinstance(self.source, ActionProposalSource):
+            raise InputInvalidError("action source must be an ActionProposalSource")
+        if self.category is ActionCategory.NONE:
+            if self.target is not None or self.side_effect is not ActionSideEffect.NONE:
+                raise InputInvalidError("none action cannot have a target or side effect")
+            if self.impact_flags or self.confirmation_required:
+                raise InputInvalidError("none action cannot require confirmation or impact flags")
+        if (
+            self.category is ActionCategory.CONTENT_DRAFT
+            and self.side_effect is not ActionSideEffect.NONE
+        ):
+            raise InputInvalidError("content drafts must not declare a state-changing effect")
+
+    @classmethod
+    def none(
+        cls,
+        *,
+        source: ActionProposalSource = ActionProposalSource.CAPABILITY_DECLARED,
+    ) -> "ActionProposal":
+        return cls(category=ActionCategory.NONE, source=source)
+
+    @property
+    def is_consequential(self) -> bool:
+        return self.category not in {
+            ActionCategory.NONE,
+            ActionCategory.CONTENT_DRAFT,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ActionConfirmationProposal:
+    """Exact, one-time approval request for one normalized action."""
+
+    confirmation_id: str
+    task_id: str
+    capability_id: str
+    operation: str
+    proposal: ActionProposal
+    action_digest: str
+    created_at: datetime
+    expires_at: datetime
+    nonce: str
+
+    def __post_init__(self) -> None:
+        for value, name in (
+            (self.confirmation_id, "confirmation_id"),
+            (self.task_id, "task_id"),
+            (self.capability_id, "capability_id"),
+            (self.operation, "operation"),
+            (self.action_digest, "action_digest"),
+            (self.nonce, "nonce"),
+        ):
+            _require_nonempty(value, f"action confirmation {name}")
+        if not isinstance(self.proposal, ActionProposal):
+            raise InputInvalidError("action confirmation proposal is invalid")
+        object.__setattr__(
+            self,
+            "created_at",
+            _require_aware_utc(self.created_at, "action confirmation created_at"),
+        )
+        object.__setattr__(
+            self,
+            "expires_at",
+            _require_aware_utc(self.expires_at, "action confirmation expires_at"),
+        )
+        if self.expires_at <= self.created_at:
+            raise InputInvalidError("action confirmation expiry must be after creation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +271,8 @@ class TaskRequest:
     submitted_at: datetime
     approval_id: str | None = None
     route_proposal: "RouteProposal | None" = None
+    capability_intent: "CapabilityIntent | None" = None
+    action_confirmation_id: str | None = None
 
     def __post_init__(self) -> None:
         _require_nonempty(self.request_id, "request_id")
@@ -86,6 +284,12 @@ class TaskRequest:
             raise InputInvalidError("persistence_mode must be a PersistenceMode")
         if self.route_proposal is not None and not isinstance(self.route_proposal, RouteProposal):
             raise InputInvalidError("route_proposal must be a RouteProposal or null")
+        if self.action_confirmation_id is not None:
+            _require_nonempty(self.action_confirmation_id, "action_confirmation_id")
+        if self.capability_intent is not None and not isinstance(
+            self.capability_intent, CapabilityIntent
+        ):
+            raise InputInvalidError("capability_intent must be a CapabilityIntent or null")
         object.__setattr__(self, "submitted_at", _require_aware_utc(self.submitted_at, "submitted_at"))
 
 
@@ -115,17 +319,20 @@ class TaskResult:
     outcome_code: OutcomeCode = OutcomeCode.SUCCESS
     provenance: tuple["ProvenanceReference", ...] = ()
     claim_supports: tuple["ClaimSupport", ...] = ()
+    answer_retained: bool = True
 
     def __post_init__(self) -> None:
         _require_nonempty(self.task_id, "task_id")
         if not isinstance(self.outcome_code, OutcomeCode):
             raise InputInvalidError("outcome_code must be an OutcomeCode")
+        if not isinstance(self.answer_retained, bool):
+            raise InputInvalidError("answer_retained must be a bool")
         if any(not isinstance(item, ProvenanceReference) for item in self.provenance):
             raise InputInvalidError("provenance must contain ProvenanceReference values")
         if any(not isinstance(item, ClaimSupport) for item in self.claim_supports):
             raise InputInvalidError("claim_supports must contain ClaimSupport values")
         # answer may be empty ONLY for a typed failure/blocked result.
-        if not self.answer.strip() and self.task_status not in (
+        if not self.answer.strip() and self.answer_retained and self.task_status not in (
             TaskStatus.FAILED,
             TaskStatus.BLOCKED,
             TaskStatus.CANCELLED,
@@ -249,6 +456,10 @@ class RouteDecision:
     capability_id: str | None = None
     diagnostic: str = ""
     available: bool = True
+    operation: str = ""
+    intent: CapabilityIntent | None = None
+    clarification_required: bool = False
+    clarification_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.route, Route):
@@ -257,6 +468,21 @@ class RouteDecision:
             raise InputInvalidError("route decision reason_code must be a RouteReasonCode")
         if self.capability_id is not None:
             _require_nonempty(self.capability_id, "route decision capability_id")
+        if not isinstance(self.operation, str):
+            raise InputInvalidError("route decision operation must be text")
+        if self.intent is not None and not isinstance(self.intent, CapabilityIntent):
+            raise InputInvalidError("route decision intent has an invalid type")
+        if not isinstance(self.clarification_required, bool):
+            raise InputInvalidError("route decision clarification_required must be a bool")
+        if not isinstance(self.clarification_fields, tuple) or any(
+            not isinstance(field, str) or not field.strip()
+            for field in self.clarification_fields
+        ):
+            raise InputInvalidError("route decision clarification fields are invalid")
+        if self.clarification_required and not self.clarification_fields:
+            raise InputInvalidError(
+                "clarification-required route must name missing fields"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +521,24 @@ class SessionRecord:
     persistence_mode: PersistenceMode
     cloud_mode: CloudMode
     created_at: datetime
+    updated_at: datetime | None = None
+    version: int = 1
+
+    def __post_init__(self) -> None:
+        _require_nonempty(self.session_id, "session_id")
+        if not isinstance(self.persistence_mode, PersistenceMode):
+            raise InputInvalidError("persistence_mode must be a PersistenceMode")
+        if not isinstance(self.cloud_mode, CloudMode):
+            raise InputInvalidError("cloud_mode must be a CloudMode")
+        created_at = _require_aware_utc(self.created_at, "created_at")
+        updated_at = _require_aware_utc(
+            self.updated_at if self.updated_at is not None else created_at,
+            "updated_at",
+        )
+        if self.version < 1:
+            raise InputInvalidError("session version must be at least 1")
+        object.__setattr__(self, "created_at", created_at)
+        object.__setattr__(self, "updated_at", updated_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,3 +641,4 @@ class ConversationOutcome:
     manifest: ContextManifest
     assistant_message: Message | None = None
     consent_proposal: "ConsentProposal | None" = None
+    action_confirmation: ActionConfirmationProposal | None = None

@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 from ..domain.errors import ConfigInvalidError
+from ..domain.models import ActionProposal
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,7 @@ class SpecialistResult:
     sources: tuple[str, ...] = ()
     recommended_action: str | None = None
     truncated: bool = False
+    action_proposal: ActionProposal | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, str) or not isinstance(self.answer, str):
@@ -58,6 +60,10 @@ class SpecialistResult:
                 raise ConfigInvalidError(f"specialist {field_name} must contain only strings")
         if self.recommended_action is not None and not isinstance(self.recommended_action, str):
             raise ConfigInvalidError("specialist recommended_action must be text or null")
+        if self.action_proposal is not None and not isinstance(
+            self.action_proposal, ActionProposal
+        ):
+            raise ConfigInvalidError("specialist action_proposal must be typed or null")
 
 
 def validate_result(result: SpecialistResult, *, allowed_evidence: frozenset[str] = frozenset()) -> SpecialistResult:

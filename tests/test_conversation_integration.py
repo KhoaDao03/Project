@@ -14,6 +14,7 @@ from elly.adapters.fake_generalist import FailureMode, FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.application.conversation import ConversationOrchestrator
+from elly.application.local_conversation import LocalConversationUseCase
 from elly.composition import Application
 from elly.config import load_config
 from elly.domain.enums import (
@@ -38,12 +39,14 @@ def _orchestrator(failure: FailureMode):
     audit = StructuredAuditLog()
     orch = ConversationOrchestrator(
         clock=FixedClock(UTC, step_seconds=1),
-        generalist=FakeGeneralist(failure=failure),
         repository=repo,
         audit=audit,
         context_window=20,
-        model_id="fake-generalist-v1",
-        max_output_tokens=64,
+        local_conversation=LocalConversationUseCase(
+            generalist=FakeGeneralist(failure=failure),
+            model_id="fake-generalist-v1",
+            max_output_tokens=64,
+        ),
     )
     return orch, repo, audit
 
@@ -108,12 +111,14 @@ class SessionIsolationTests(unittest.TestCase):
             )
         orch = ConversationOrchestrator(
             clock=FixedClock(UTC, step_seconds=1),
-            generalist=FakeGeneralist(),
             repository=repo,
             audit=StructuredAuditLog(),
             context_window=20,
-            model_id="fake-generalist-v1",
-            max_output_tokens=64,
+            local_conversation=LocalConversationUseCase(
+                generalist=FakeGeneralist(),
+                model_id="fake-generalist-v1",
+                max_output_tokens=64,
+            ),
         )
         orch.handle(
             TaskRequest("rA", "A", "fact from A", CloudMode.LOCAL_ONLY, PersistenceMode.STORE_WITH_RETENTION, UTC)

@@ -121,6 +121,7 @@ class ConsentWorkflow:
         self._ttl = ttl_seconds
         self._proposals: dict[str, ConsentProposal] = {}
         self._approvals: dict[str, Approval] = {}
+        self._decided: set[str] = set()
 
     def propose(self, *, task_id: str, provider: str, model: str, purpose: str,
                 payload: str, categories: tuple[str, ...], max_cost: float,
@@ -145,6 +146,7 @@ class ConsentWorkflow:
             raise PermissionDeniedError("consent proposal is missing or expired")
         approval = Approval(proposal_id, proposal.payload_digest, "approved", stamp, interface)
         self._approvals[proposal_id] = approval
+        self._decided.add(proposal_id)
         return approval
 
     def deny(self, proposal_id: str, *, interface: str = "cli", now: datetime | None = None) -> Approval:
@@ -154,6 +156,7 @@ class ConsentWorkflow:
             raise PermissionDeniedError("consent proposal is missing")
         approval = Approval(proposal_id, proposal.payload_digest, "denied", stamp, interface)
         self._approvals[proposal_id] = approval
+        self._decided.add(proposal_id)
         return approval
 
     def check(self, *, proposal_id: str | None, payload: str, provider: str | None = None,
@@ -184,6 +187,15 @@ class ConsentWorkflow:
             # while removing approval authority prevents replay.
             self._approvals.pop(proposal_id, None)
         return valid
+
+    def pending(self, *, now: datetime | None = None) -> tuple[ConsentProposal, ...]:
+        """Return unexpired proposals that have not received a decision."""
+        stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        return tuple(
+            proposal
+            for proposal in self._proposals.values()
+            if proposal.proposal_id not in self._decided and stamp < proposal.expires_at
+        )
 
 
 def _preview(payload: str) -> str:

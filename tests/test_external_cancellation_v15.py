@@ -9,13 +9,14 @@ from datetime import datetime, timezone
 from elly.adapters.http_document_retriever import HttpDocumentRetriever
 from elly.application.execution import CancellationToken
 from elly.application.research import ResearchPipeline
+from elly.application.specialist_policy import SpecialistPolicyRequest
 from elly.application.specialists import SpecialistWorkflow
-from elly.domain.enums import CloudMode, HealthState
+from elly.domain.enums import HealthState
 from elly.domain.errors import CancelledError, TransientProviderError
 from elly.domain.models import EvidenceObject, HealthReport
 from elly.guardrails.controller import GuardrailController
 from elly.guardrails.limits import LimitPolicy
-from elly.privacy import ConsentWorkflow, classify_payload
+from elly.privacy import classify_payload
 from elly.specialists.contracts import SpecialistTask
 from elly.specialists.manifest import SpecialistManifest
 
@@ -187,15 +188,13 @@ class ExternalCancellationTests(unittest.TestCase):
             estimated_cost="medium", timeout_seconds=30,
         )
         workflow = SpecialistWorkflow(
-            provider=Provider(), consent=ConsentWorkflow()
+            provider=Provider()
         )
         token = CancellationToken()
 
         failures = _run_and_cancel(
             lambda: workflow.execute(
-                task=task, manifest=manifest,
-                cloud_mode=CloudMode.CLOUD_PERMITTED,
-                authorization_granted=True,
+                request=SpecialistPolicyRequest(task=task, manifest=manifest),
                 cancellation=token,
             ),
             token,

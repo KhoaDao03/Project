@@ -33,6 +33,14 @@ milestones, or verification status changes.
 
 ## Project status
 
+**V2 completed and closed by owner decision.** As of **2026-08-15**, all nine
+approved V2 requirements are implemented and accepted. The full 314-test suite
+passed three consecutive runs; Ruff, strict MyPy across 91 source files,
+compilation, migration, and whitespace checks pass. Limited live-provider
+quality verification is an accepted deferred exception and is not claimed as
+passed. See the [V2 closure record](docs/v2/V2_CLOSURE.md) and
+[verification report](docs/v2/V2_IMPLEMENTATION_VERIFICATION.md).
+
 **V1.5 iteration closed by owner decision.** As of **2026-08-07**:
 
 - M0–M2 remain closed.
