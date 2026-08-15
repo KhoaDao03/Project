@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from ..domain import validation
 from ..domain.errors import CancelledError, EllyError, MalformedResultError
-from ..domain.models import GeneralistResponse, GeneralistRequest
+from ..domain.models import GeneralistRequest, GeneralistResponse
 from ..guardrails.controller import GuardrailController
 from ..ports.generalist import GeneralistPort
 from .execution import CancellationToken

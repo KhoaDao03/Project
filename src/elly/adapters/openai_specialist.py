@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import urllib.error
 import urllib.request
-import threading
+from typing import Any
 
 from ..domain.enums import HealthState
 from ..domain.errors import (
@@ -137,13 +138,15 @@ class OpenAISpecialistProvider:
         return result
 
 
-def _output_text(payload: dict) -> str:
-    if isinstance(payload.get("output_text"), str):
-        return payload["output_text"]
+def _output_text(payload: dict[str, Any]) -> str:
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str):
+        return output_text
     for item in payload.get("output", []):
         for content in item.get("content", []):
-            if isinstance(content.get("text"), str):
-                return content["text"]
+            text = content.get("text")
+            if isinstance(text, str):
+                return text
     raise MalformedResultError("OpenAI specialist returned no structured output")
 
 

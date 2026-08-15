@@ -10,7 +10,7 @@ from ..domain.errors import CancelledError, EllyError, MalformedResultError
 from ..domain.models import ClaimSupport, EvidenceObject
 from ..guardrails.controller import GuardrailController
 from ..ports.clock import ClockPort
-from ..ports.web_research import ResearchBudget, WebResearchProvider
+from ..ports.web_research import ResearchBudget, ResearchResponse, WebResearchProvider
 from ..research.citation_validator import ValidatedCitationSet, validate_citations
 from ..research.evidence_policy import EvidencePolicy
 from ..research.freshness import needs_current_information
@@ -40,7 +40,23 @@ _MAX_UNVERIFIED_SUMMARY_CHARS = 2000
 
 
 class ResearchPipeline:
-    """Fetch untrusted hosted-search metadata, then validate before rendering."""
+    """Fetch untrusted hosted-search metadata, then validate before rendering.
+    Provider
+        provider: WebResearchProvider
+    Limits
+        max_results
+        timeout_seconds
+        evidence_token_budget
+        max_output_tokens
+    Safety/control
+        guardrails
+        evidence_policy
+    Accounting
+        call_cost_usd
+    Validation
+        resolve_hosts
+        clock
+    """
 
     def __init__(self, *, provider: WebResearchProvider, clock: ClockPort, max_results: int,
                  timeout_seconds: float, guardrails: GuardrailController | None = None,
@@ -62,6 +78,7 @@ class ResearchPipeline:
         self, query: str, *, request_guardrails: GuardrailController | None = None,
         cancellation: CancellationToken | None = None,
     ) -> ResearchExecution:
+        # Main method
         """Research a query under the caller's shared per-task guardrail context."""
         budget = ResearchBudget(max_results=self.max_results, timeout_seconds=self.timeout_seconds)
         if cancellation is not None:
@@ -80,7 +97,7 @@ class ResearchPipeline:
             else:
                 attempt = 0
 
-                def call_provider():
+                def call_provider() -> ResearchResponse:
                     nonlocal attempt
                     if cancellation is not None:
                         cancellation.raise_if_cancelled()
@@ -254,7 +271,9 @@ _LEADING_VALUE = re.compile(
 )
 
 
-def _has_structured_conflict(query: str, supported) -> bool:
+def _has_structured_conflict(
+    query: str, supported: tuple[tuple[EvidenceObject, str], ...]
+) -> bool:
     """Detect differing primary numeric values across current-market evidence."""
     if not _CURRENT_MARKET.search(query) or len(supported) < 2:
         return False

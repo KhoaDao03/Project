@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from typing import TypeVar
 
 from ..domain.errors import CancelledError, ProviderTimeoutError, TransientProviderError

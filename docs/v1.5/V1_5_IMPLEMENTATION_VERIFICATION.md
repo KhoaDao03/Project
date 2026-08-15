@@ -4,11 +4,10 @@
 **Reviewed baseline:** current working tree  
 **Authority used for this review:** [REQUIREMNETS.md](REQUIREMNETS.md) and
 [TECHNICAL_DESIGN.md](TECHNICAL_DESIGN.md)  
-**Decision:** **The independently actionable P0 correctness/security blockers are
-resolved in the current working tree. V1.5 is not yet release-approved.** The
-remaining work is principally architecture reduction, attempt-level durability,
-representative migration/live verification, static CI gates, and owner release
-approval.
+**Decision:** **The independently actionable correctness/security blockers are
+resolved, and the owner closed V1.5 on 2026-08-07.** Live-provider verification
+was explicitly accepted as deferred evidence; it was not recorded as passing.
+See [V1_5_CLOSURE.md](V1_5_CLOSURE.md).
 
 > Note: the requirements filename is misspelled in the repository. This report
 > keeps the existing link intact and recommends renaming it to `REQUIREMENTS.md`.
@@ -27,7 +26,7 @@ The working tree contains real V1.5 implementation work, not only scaffolding:
 - focused routing, capability, authorization, evidence, retrieval, idempotency,
   composition, and migration tests.
 
-The post-remediation regression baseline is healthy: **254 tests passed, 0 failed,
+The post-remediation regression baseline is healthy: **260 tests passed, 0 failed,
 0 skipped**, Python compilation passed, and `git diff --check` passed. Targeted
 failure-path regressions now cover the originally observed blockers:
 
@@ -44,9 +43,8 @@ failure behavior, health-aware availability, evidence-conservative specialists,
 correct three-axis taxonomy, request-scoped cancellation, explicit freshness and
 numeric conflict handling, and capability-bound/audited authorization.
 
-The technical design's statement that V1.5 is “approved and implemented” remains
-premature because limited live verification and owner release approval have not
-been completed.
+The owner subsequently approved and closed the implemented V1.5 scope with the
+live-provider exception documented in the closure record.
 
 ## 2. Verification performed
 
@@ -66,7 +64,7 @@ been completed.
 
 ```text
 PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -t .
-Ran 254 tests in 2.2s — OK
+Ran 260 tests in 2.960s — OK
 
 PYTHONPATH=src python3 -m compileall -q src tests
 Pass
@@ -75,10 +73,9 @@ git diff --check
 Pass
 ```
 
-`ruff` and `mypy` are declared as optional development dependencies but were not
-installed in the verification environment, so no static-analysis pass is claimed.
-An AST inspection found missing annotations in application code, meaning the
-strict `mypy` target should not be assumed green until it is actually executed.
+`ruff check src tests` passed. Strict `mypy` passed all 69 source files. Both are
+mandatory in the checked-in GitHub Actions workflow alongside the unit suite,
+compilation, and whitespace checks.
 
 No paid provider call or full live V1.5 suite was run. The completion criterion
 requiring limited live Ollama, cloud, search, retrieval, and privacy verification
@@ -191,16 +188,12 @@ must remain separate from claims.
 
 **Affected requirements:** V15-REL-003 and required cancellation edge cases.
 
-`/cancel` calls only `self.app.generalist.cancel()`. `WebResearchProvider`,
-`DocumentRetrievalPort`, and `SpecialistProviderPort` have no shared cancellation
-token in their execution contracts, and research/retrieval cancellation during a
-live operation has no integration test.
-
-**Proposed resolution:** add a request-scoped `ExecutionContext` or cancellation
-token to every use case and provider boundary. Check it before each provider call,
-retry, redirect, retrieval, persistence phase, and result composition. Add tests
-for cancellation before dispatch, during hosted search, between retry attempts,
-during document retrieval, and during specialist execution.
+A thread-safe request-scoped cancellation token now reaches local generation,
+hosted research, retry checks, document retrieval, and specialists. Provider
+close/cancel callbacks unblock active I/O, and provider errors caused by closure
+are normalized to `CancelledError`. Dedicated regressions cover cancellation
+during hosted research, between retries, during retrieval, and during specialist
+execution.
 
 ### V15-F07 — Substantially resolved: freshness and numeric conflicts are evidence-level
 
@@ -292,41 +285,28 @@ reuse provider idempotency keys where supported, and retain a safe
 run. Read-only search retries may use a lower-severity user presentation, but the
 audit record should remain accurate.
 
-### V15-F11 — Medium: migration verification is not representative of the stated V1 boundary
+### V15-F11 — Resolved: representative V2-to-V3 migration verification
 
 **Affected requirement:** V15-REL-007.
 
-The migration test constructs a hand-written schema-version-1 database, while the
-technical design explicitly calls for a representative V1 schema/version-2
-database. It does not include V1 profile, audit, and task-source data. Its “new
-V1.5 task” test uses a fresh in-memory database rather than the migrated legacy
-database, and it does not process a complete new request. Startup also does not
-reject an unknown future schema version.
+A checked-in sanitized schema-version-2 SQL fixture now includes representative
+session, message, task, profile, tombstone, audit, and source records. Tests
+migrate that fixture, verify all record classes, execute a complete new task on
+the same database, verify rollback/version stability on a failed V3 statement,
+and reject unknown future schema versions at startup.
 
-**Proposed resolution:** commit a sanitized database fixture created by the actual
-V1 release migration, including representative V2 tables and rows. Migrate it,
-assert every record remains readable, run a complete local task, and test rollback
-on each V3 statement failure. Reject schema versions newer than the application
-understands.
-
-### V15-F12 — Medium: static typing and document status are claimed more strongly than verified
+### V15-F12 — Resolved: static gates and owner document approval
 
 **Affected requirements:** V15-CAP-004/008/009 and completion governance.
 
-Strict `mypy` is configured, but it is optional, absent from this environment, and
-has no checked-in CI workflow. Application methods still have missing parameter
-or return annotations, and `CapabilityExecution.consent_proposal` is typed as
-`object | None`. Runtime-checkable protocols verify attribute presence, not full
-signature compatibility.
+Strict `mypy` now passes all source files, Ruff passes the stable error/import
+ruleset, capability consent is domain-typed, and the checked-in CI workflow makes
+static analysis, tests, compilation, and whitespace validation mandatory.
 
-The technical design says “Approved and implemented,” while the requirements say
-all decisions remain proposed. The filename `REQUIREMNETS.md` is also misspelled.
-
-**Proposed resolution:** make `ruff`, strict `mypy` (or equivalent), the strict
-unit suite, migration tests, and `git diff --check` mandatory CI gates. Replace
-remaining `object`/untyped boundaries with domain types. Reconcile approval status,
-rename the requirements file, update links, and add a requirement-to-test
-traceability document before making a completion claim.
+The owner approved the implemented requirements and closed V1.5 on 2026-08-07.
+The historical filename `REQUIREMNETS.md` remains misspelled but is retained to
+avoid breaking existing references; a later documentation-only rename may update
+all links atomically.
 
 ## 4. Requirement verification matrix
 
@@ -335,7 +315,7 @@ working tree. It does not imply live-provider or release acceptance. `Partial`
 means the central mechanism exists but one or more acceptance clauses remain
 unmet. `Fail` means observed production behavior contradicts the requirement.
 
-**Summary after remediation:** 26 pass, 11 partial, 0 fail.
+**Summary after remediation:** 29 pass, 8 partial, 0 fail.
 
 | Requirement | Status | Verification summary |
 |---|---|---|
@@ -350,7 +330,7 @@ unmet. `Fail` means observed production behavior contradicts the requirement.
 | V15-CAP-005 | Pass | Optional handlers implement and register through `CapabilityRegistry` |
 | V15-CAP-006 | Pass | Test capability dispatches without orchestrator/registry edits |
 | V15-CAP-007 | Pass | Registry is limited to optional executable handlers |
-| V15-CAP-008 | Partial | Main contract and availability are typed; consent proposal remains `object` |
+| V15-CAP-008 | Pass | Capability contracts, availability, and consent proposal are domain-typed |
 | V15-CAP-009 | Pass | Capability-specific provider ports use typed DTOs rather than generic dictionaries |
 | V15-ROUTE-001 | Pass | Route proposal is untrusted and deterministic policy returns the decision |
 | V15-ROUTE-002 | Pass | Typed public reason codes are implemented and audited |
@@ -370,10 +350,10 @@ unmet. `Fail` means observed production behavior contradicts the requirement.
 | V15-REL-001 | Pass | Specialist unknown/blocked/partial mappings preserve distinct task and outcome codes |
 | V15-REL-002 | Partial | Top-level operation lease exists; individual retry attempts/idempotency are incomplete |
 | V15-REL-003 | Pass | One request-scoped token interrupts local, research, retrieval, and specialist provider boundaries |
-| V15-REL-004 | Partial | Config and operational capability health checks exist; future schema versions are not yet enforced |
+| V15-REL-004 | Pass | Config/provider health checks and future-schema rejection fail early |
 | V15-REL-005 | Pass | Pre- and post-dispatch audit/persistence failures return typed failed or partial outcomes |
 | V15-REL-006 | Pass | Redacted audit contracts and tests exist; no raw-body audit fields observed |
-| V15-REL-007 | Partial | Additive V3 migration exists; representative V2-to-V3 end-to-end fixture is absent |
+| V15-REL-007 | Pass | Representative V2 data migrates transactionally and runs a complete V1.5 task |
 | V15-NAME-001 | Pass | No active non-historical `Jarvis` references were found |
 | V15-NAME-002 | Pass | Migrations are additive and historical data is not rewritten for naming |
 
@@ -388,20 +368,17 @@ unmet. `Fail` means observed production behavior contradicts the requirement.
 5. Propagated cancellation across external boundaries.
 6. Added source-time freshness, numeric conflict detection, and capability-bound consent/audit.
 
-### P1 — Required reliability and architecture completion
+### Carried to the next iteration as improvements
 
 7. Extract typed finalization/unit-of-work behavior and make required V1.5
    collaborators explicit (`V15-F09`).
 8. Persist provider-attempt/idempotency metadata (`V15-F10`).
 
-### P2 — Compatibility, quality gates, and documentation
+### Closure decisions
 
-9. Replace the synthetic V1 migration test with a real V2 fixture and full task
-    run (`V15-F11`).
-10. Make static analysis a required executable gate and resolve all annotations.
-11. Reconcile proposal/approval status, correct the requirements filename, and add
-    an authoritative traceability matrix (`V15-F12`).
-12. Run the limited public-data live V1.5 suite after deterministic gates pass.
+9. Owner approval was recorded on 2026-08-07 (`V15-F12`).
+10. Limited live-provider verification was accepted as deferred evidence; it was
+    not recorded as passing.
 
 ## 6. Regression coverage and remaining tests
 
@@ -423,14 +400,8 @@ Implemented blocker regressions:
 - Consent for capability A cannot authorize capability B when every other field is
   identical.
 
-Remaining release-hardening tests:
-
-- Exercise cancellation independently during hosted search, between retries,
-  during retrieval, and during specialist execution.
-- Actual V1 schema-version-2 fixture migrates, preserves all record classes, and
-  processes a new end-to-end task; unknown future schema versions fail startup.
-- Strict type checking runs against `domain`, `ports`, `application`, and adapter
-  interfaces in CI.
+Migration, external cancellation, strict typing, lint, compilation, and
+whitespace verification are now covered by the local suite and CI workflow.
 
 ## 7. Final assessment
 
@@ -439,9 +410,8 @@ of routing, authorization, optional capability dispatch, evidence policy, outcom
 codes, operation leases, and provenance is materially better than V1. The current
 suite demonstrates that the happy paths and many deterministic policies work.
 
-It should still be labeled **implementation in progress** rather than
-approved/complete until the representative migration/static checks pass and the
-limited live suite is recorded. The identified independently actionable blockers
-are closed. Owner review is still required to promote the proposed V1.5
-requirements to authoritative release criteria and approve final release/UAT
-evidence.
+The independently actionable verification blockers are closed. The owner accepted
+the implemented scope and closed V1.5 on 2026-08-07. Live-provider verification
+remains explicitly deferred and must be run before any later production decision
+that relies on current provider behavior. Architecture reduction and attempt-level
+retry durability are carried forward as non-blocking improvements.

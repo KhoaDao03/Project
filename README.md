@@ -19,6 +19,11 @@ authoritative requirements, decisions, source code, tests, or verification repor
 When deeper understanding or exact behavior is needed, those materials remain
 available in this repository and should be consulted directly.
 
+For a detailed end-to-end explanation of the complete V1 and V1.5 project, see
+the [Project Guide](docs/PROJECT_GUIDE.md). It covers the architecture,
+ports/adapters, workflows, Ollama, hosted research, document retrieval,
+persistence, testing, limitations, and interview preparation.
+
 Version-specific documentation should be grouped under the corresponding
 documentation folder, such as `docs/v1/`, so that requirements, architecture,
 decisions, implementation records, tests, and verification evidence for that
@@ -28,21 +33,23 @@ milestones, or verification status changes.
 
 ## Project status
 
-**Independently verified, but not release-ready.** As of **2026-08-06**:
+**V1.5 iteration closed by owner decision.** As of **2026-08-07**:
 
 - M0–M2 remain closed.
 - M3–M6 are implemented for the current prototype but remain reopened against
   their broader acceptance criteria.
 - M7 remains open pending the complete live-quality corpus and owner UC-01…UC-12
   acceptance testing.
-- The strict deterministic suite passes: **209 passed, 0 failed, 0 skipped**.
+- The V1.5 deterministic suite passes: **260 passed, 0 failed, 0 skipped**.
+- Ruff, strict mypy across 69 source files, compilation, and whitespace checks pass.
+- V1.5 live-provider verification is explicitly deferred and is not claimed as passed.
 - The development default is `qwen3:8b`; `qwen3:14b` is available through the
   opt-in [14B example profile](config.qwen3-14b.example.toml).
 
-This status deliberately distinguishes passing deterministic tests from a release
-decision. See the [independent verification report](docs/V1_VERIFICATION_REPORT.md),
-[release checklist](docs/M7_RELEASE_CHECKLIST.md), and
-[conversation-driven improvement log](docs/CONVERSATION_IMPROVEMENT_LOG.md).
+The historical V1 release gaps remain separate from the closed V1.5 iteration.
+See the [V1.5 closure record](docs/v1.5/V1_5_CLOSURE.md),
+[V1.5 verification report](docs/v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md), and
+[project context](docs/PROJECT_CONTEXT.md).
 
 ## What works today
 

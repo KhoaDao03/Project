@@ -13,11 +13,10 @@ import tempfile
 import threading
 import unittest
 
-from elly.composition import Application, build
 from elly.adapters.fake_generalist import FailureMode
-from elly.domain.enums import HealthState, PersistenceMode
+from elly.composition import Application, build
+from elly.domain.enums import CloudMode, HealthState, PersistenceMode
 from elly.domain.models import GeneralistRequest, Message, TaskRequest
-from elly.domain.enums import CloudMode
 
 
 class CompositionTests(unittest.TestCase):

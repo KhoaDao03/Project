@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import unittest
+from datetime import datetime, timezone
 
 from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_generalist import FakeGeneralist

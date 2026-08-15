@@ -6,11 +6,11 @@ existing named regression suite. Provider-quality, live-research, hardware, and
 owner-UAT evidence remain explicitly pending until their required runs occur.
 """
 
+import json
+import platform
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-import json
 from pathlib import Path
-import platform
 from typing import Iterable
 
 from .catalog import EvaluationCase, catalog

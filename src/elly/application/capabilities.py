@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from ..domain.enums import Route
 from ..domain.errors import ConfigInvalidError
 from ..domain.models import ContextManifest, RouteRequest, TaskRequest, TaskResult
+from ..privacy import ConsentProposal
 
 if TYPE_CHECKING:
     from ..guardrails.controller import GuardrailController
@@ -110,7 +111,7 @@ class CapabilityExecution:
 
     result: TaskResult
     manifest: ContextManifest
-    consent_proposal: object | None = None
+    consent_proposal: ConsentProposal | None = None
 
 
 @runtime_checkable

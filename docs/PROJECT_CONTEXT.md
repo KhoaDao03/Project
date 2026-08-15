@@ -1,11 +1,11 @@
 # Project Context
 
-**Project:** Elly Research Assistant (local-first personal AI assistant prototype)  
-**Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.  
-**Generated:** 2026-08-07  
-**Branch:** `main`  
-**Commit represented:** `28cf8d59554a51c75235f7e72e6ef94ba147844e`  
-**Working tree:** dirty. Pre-existing tracked edits were present in README/config, release and milestone documentation, several research/config source files, and related tests. This task preserves them.  
+**Project:** Elly Research Assistant (local-first personal AI assistant prototype)
+**Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
+**Generated:** 2026-08-07
+**Branch:** `main`
+**Commit represented:** `2e97406fbaad8d8fd005cc27800dee5133b64403`
+**Working tree:** clean before this context refresh; `docs/PROJECT_CONTEXT.md` is modified by this update.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -22,17 +22,17 @@ Use approved/recorded requirements and owner decisions, frozen contracts, design
 
 Elly is a single-user, terminal-first, local-first assistant. Ordinary conversation uses a local Ollama generalist. When the owner explicitly permits cloud mode, current-information research and selected coding/research-specialist tasks may use OpenAI-hosted adapters subject to application-owned routing, privacy classification, consent, limits, cost reservations, and redacted audit records.
 
-**Implemented:** local Ollama conversation, context-aware routing, hosted web-search research, manifest-driven specialists, guardrails, SQLite state, profile/session controls, audit/source metadata, backup/restore prototype, and a deterministic release harness.  
-**Tested:** deterministic unit, contract, integration, security, and release-harness coverage exists; current release materials report 209/209 for the implemented scope.  
-**Verified:** local Ollama and bounded OpenAI smoke paths have recorded evidence; the complete approved V1 is not verified.  
-**Owner reviewed:** M0–M2 evidence and the 2026-08-07 UAT verdict are recorded; full current-version acceptance is not complete.  
-**Release-ready:** **No.** M3–M6 are reopened and M7 remains open because aggregate quality evidence, final threshold review, pricing assurance, backup/recovery assurance, and accepted scope gaps remain. The reasons and later-iteration boundary are recorded in [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md).
+**Implemented:** the V1 baseline plus V1.5 typed routing/capabilities, explicit privacy authorization, claim-level evidence policy, document retrieval, outcome/provenance records, idempotency/operation tracking, cancellation propagation, and additive schema migration work.
+**Tested:** the V1.5 verification report records 260 tests passed, 0 failed, 0 skipped; Ruff, strict mypy across 69 source files, compilation, and `git diff --check` passed.
+**Verified:** independently actionable V1.5 correctness/security blockers, representative migration coverage, external cancellation coverage, and static CI gates are complete. Limited live Ollama/OpenAI verification is explicitly deferred rather than claimed as passing.
+**Owner reviewed:** the owner approved the implemented V1.5 scope and closed the iteration on 2026-08-07; see [V1_5_CLOSURE.md](v1.5/V1_5_CLOSURE.md).
+**Iteration status:** **V1.5 closed with an accepted live-provider verification exception.** Historical V1 release gaps remain separate. See [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md) and [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md).
 
 ## 3. Project Goals and Motivation
 
 **Approved goal:** provide a useful private personal assistant without making cloud access, model output, tools, or external actions authoritative. The owner is the primary user on one trusted personal computer. The core value is visible routing, evidence state, uncertainty, privacy control, bounded resource use, and replaceable providers.
 
-**Documented motivation:** bridge hosted-assistant convenience and the owner’s need for local control, extensibility, current-information research, citations, and explicit abstention. See [REQUIREMENT.md](docs/REQUIREMENT.md) and [DESIGN.md](docs/DESIGN.md). This is not a new product commitment.
+**Documented motivation:** bridge hosted-assistant convenience and the owner’s need for local control, extensibility, current-information research, citations, and explicit abstention. See [REQUIREMENT.md](v1/REQUIREMENT.md) and [DESIGN.md](v1/DESIGN.md). This is not a new product commitment.
 
 ## 4. Version 1 Scope
 
@@ -51,13 +51,28 @@ Elly is a single-user, terminal-first, local-first assistant. Ordinary conversat
 
 ### Excluded, Deferred, or Intentionally Unavailable
 
-- **Owner-approved later version:** UC-04 privacy/consent, UC-06 startup continuity, UC-09 profile/session controls, and UC-11 trace/audit review are not current-release verified; see [M7_UAT_RECORD.md](docs/M7_UAT_RECORD.md) and DEC-M7-03 in [DECISIONS.md](docs/DECISIONS.md).
+- **Owner-approved later version:** UC-04 privacy/consent, UC-06 startup continuity, UC-09 profile/session controls, and UC-11 trace/audit review are not current-release verified; see [M7_UAT_RECORD.md](v1/M7_UAT_RECORD.md) and DEC-M7-03 in [DECISIONS.md](v1/DECISIONS.md).
 - **Deferred:** local page reading, full page-body RAG, semantic/vector memory, web UI, portable trace export, voice, vision, crawling, computer control, fine-tuning, parallel/recursive specialist graphs, finance-specialist execution, and autonomous tools.
 - **Unavailable by design:** high-impact/write actions, specialist shell/file/tool execution, model-authorized external actions, silent cloud fallback, and treating URL metadata alone as `known` claim support.
 - **Unresolved/release-blocking:** authoritative provider pricing, vetted production backup AEAD/key management, recovery acceptance, complete aggregate quality corpus, and final threshold review.
 - `stock_analysis` has a validated manifest, but the deterministic router exposes coding and research-specialist routes only; fresh stock questions use web research.
 
-The reopened milestone gaps are intentionally deferred to later project iterations; see [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md). That record does not close or change milestone status by itself.
+The reopened milestone gaps are intentionally deferred to later project iterations; see [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md). That record does not close or change milestone status by itself.
+
+### Version 1.5 scope and status
+
+V1.5 is an incremental architecture and reliability release built on V1. It preserves the modular monolith, CLI, local Ollama path, SQLite, and existing privacy/security boundaries while adding:
+
+- thinner workflow coordination with explicit routing, local-conversation, context, authorization, execution, and capability collaborators;
+- typed optional capability descriptors, availability states, handlers, and registry dispatch;
+- deterministic route decisions with public reason codes and provider-health-aware availability;
+- separate privacy classification and cloud authorization;
+- claim-level evidence records, retrieval validation, freshness/conflict policy, and downgrade of unsupported specialist claims;
+- explicit outcome codes and provenance, typed failure paths, pre/post-dispatch audit handling, and request-scoped cancellation;
+- operation/idempotency records, additive SQLite schema migration 3, and migration compatibility tests;
+- new deterministic tests for routing, capabilities, authorization, retrieval, evidence, idempotency, local conversation, composition validation, and migrations.
+
+**V1.5 status:** closed by owner decision on 2026-08-07 for the implemented scope. The deterministic suite, representative V2-to-V3 migration, external cancellation regressions, Ruff, and strict mypy pass. Live-provider verification is an accepted deferred exception. Orchestrator reduction, attempt-level retry durability, and broader semantic evidence analysis are carried to a later iteration as improvements. See [V1_5_CLOSURE.md](v1.5/V1_5_CLOSURE.md) and [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
 
 ## 5. Users, Actors, and Use Cases
 
@@ -69,7 +84,7 @@ The reopened milestone gaps are intentionally deferred to later project iteratio
 | Search/publishers | Candidate sources and metadata | External, untrusted, changing |
 | SQLite | Sessions, tasks, profile, audit/source metadata | Local state; corruption handled fail-closed |
 
-Primary use cases are UC-01 local conversation, UC-02 current research, UC-03 coding specialist, UC-04 cloud disclosure, UC-05 uncertainty/conflict, UC-06 safe start/resume, UC-07 cancellation, UC-08 bounded execution, UC-09 profile/session controls, UC-10 health/status, UC-11 trace/audit review, and UC-12 specialist extensibility. Complete flows and preconditions are in [DESIGN.md](docs/DESIGN.md) §4.
+Primary use cases are UC-01 local conversation, UC-02 current research, UC-03 coding specialist, UC-04 cloud disclosure, UC-05 uncertainty/conflict, UC-06 safe start/resume, UC-07 cancellation, UC-08 bounded execution, UC-09 profile/session controls, UC-10 health/status, UC-11 trace/audit review, and UC-12 specialist extensibility. Complete flows and preconditions are in [DESIGN.md](v1/DESIGN.md) §4.
 
 ## 6. Core User and System Workflows
 
@@ -107,14 +122,14 @@ flowchart LR
 
 | Component | Responsibility | Inputs | Outputs | Dependencies | Status | Source |
 |---|---|---|---|---|---|---|
-| presentation | CLI, validation, rendering | text/commands | result text | application/config | Implemented | [cli.py](src/elly/presentation/cli.py) |
-| application | routing and workflows | validated requests | outcomes/consent | ports, guardrails, domain | Implemented; evidence partial | [conversation.py](src/elly/application/conversation.py) |
-| domain | models, enums, transitions, errors | value objects | typed contracts | stdlib | Implemented/Tested | [models.py](src/elly/domain/models.py) |
-| ports | replaceable boundaries | DTOs | protocol results | domain | Implemented | [CONTRACTS.md](docs/CONTRACTS.md) |
-| adapters | Ollama/OpenAI/SQLite/audit/clock | port DTOs | normalized results | network/filesystem | Implemented; smoke/partial verification | [adapters](src/elly/adapters/) |
-| guardrails | limits, retry, circuit, timeout, cost | operations | bounded calls | stdlib | Implemented/Tested | [guardrails](src/elly/guardrails/) |
-| research | freshness, selection, citation validation | provider citations | evidence/status | policy | Implemented/Tested for hosted path | [research](src/elly/research/) |
-| specialists | manifests, contracts, registry | TOML/tasks | capabilities/results | provider port | Implemented/Tested | [specialists](src/elly/specialists/) |
+| presentation | CLI, validation, rendering | text/commands | result text | application/config | Implemented | [cli.py](../src/elly/presentation/cli.py) |
+| application | routing and workflows | validated requests | outcomes/consent | ports, guardrails, domain | Implemented; evidence partial | [conversation.py](../src/elly/application/conversation.py) |
+| domain | models, enums, transitions, errors | value objects | typed contracts | stdlib | Implemented/Tested | [models.py](../src/elly/domain/models.py) |
+| ports | replaceable boundaries | DTOs | protocol results | domain | Implemented | [CONTRACTS.md](v1/CONTRACTS.md) |
+| adapters | Ollama/OpenAI/SQLite/audit/clock | port DTOs | normalized results | network/filesystem | Implemented; smoke/partial verification | [adapters](../src/elly/adapters/) |
+| guardrails | limits, retry, circuit, timeout, cost | operations | bounded calls | stdlib | Implemented/Tested | [guardrails](../src/elly/guardrails/) |
+| research | freshness, selection, citation validation | provider citations | evidence/status | policy | Implemented/Tested for hosted path | [research](../src/elly/research/) |
+| specialists | manifests, contracts, registry | TOML/tasks | capabilities/results | provider port | Implemented/Tested | [specialists](../src/elly/specialists/) |
 
 Trust boundaries are CLI input, model/provider output, hosted cloud, citation URL, and SQLite/backup boundaries. The model never controls authorization, tools, persistence, or external actions.
 
@@ -133,15 +148,15 @@ Trust boundaries are CLI input, model/provider output, hosted cloud, citation UR
 
 | Contract/model | Responsibility | Implementations/consumers | Guarantees/failure | IDs | Source |
 |---|---|---|---|---|---|
-| `GeneralistPort` | bounded text generation/health | Ollama, fake | typed failures; output untrusted | AI-001/API-001 | [generalist.py](src/elly/ports/generalist.py) |
-| `WebResearchProvider` | bounded search/citations | OpenAI, fixture | no citations is failure | API-003/004 | [web_research.py](src/elly/ports/web_research.py) |
-| `SpecialistProviderPort` | structured execution | OpenAI, fake | no tools; strict result | API-002/AI-007/008 | [specialist.py](src/elly/ports/specialist.py) |
-| `TaskRequest` | request boundary | orchestrator | nonempty IDs/text, UTC, modes | FR-001/AI-002 | [models.py](src/elly/domain/models.py) |
-| `TaskResult` | execution/epistemic/validation axes | composers/rendering | no fabricated success | AI-010/011/012 | [models.py](src/elly/domain/models.py) |
-| `EvidenceObject`, `ClaimSupport` | provenance/support | research/rendering | metadata is not claim proof | DATA-003 | [models.py](src/elly/domain/models.py) |
-| `SessionRepositoryPort` | state, messages, profile, source/audit | SQLite | transaction and no-store boundary | DATA/OPS | [repository.py](src/elly/ports/repository.py) |
-| `ConsentProposal`/`Approval` | exact cloud permission | `ConsentWorkflow` | payload/call metadata/expiry binding; one-use | SEC-001/002 | [privacy.py](src/elly/privacy.py) |
-| `ErrorClass`/`EllyError` | stable failure taxonomy | adapters/application | provider exceptions normalized | NFR-002/006 | [errors.py](src/elly/domain/errors.py) |
+| `GeneralistPort` | bounded text generation/health | Ollama, fake | typed failures; output untrusted | AI-001/API-001 | [generalist.py](../src/elly/ports/generalist.py) |
+| `WebResearchProvider` | bounded search/citations | OpenAI, fixture | no citations is failure | API-003/004 | [web_research.py](../src/elly/ports/web_research.py) |
+| `SpecialistProviderPort` | structured execution | OpenAI, fake | no tools; strict result | API-002/AI-007/008 | [specialist.py](../src/elly/ports/specialist.py) |
+| `TaskRequest` | request boundary | orchestrator | nonempty IDs/text, UTC, modes | FR-001/AI-002 | [models.py](../src/elly/domain/models.py) |
+| `TaskResult` | execution/epistemic/validation axes | composers/rendering | no fabricated success | AI-010/011/012 | [models.py](../src/elly/domain/models.py) |
+| `EvidenceObject`, `ClaimSupport` | provenance/support | research/rendering | metadata is not claim proof | DATA-003 | [models.py](../src/elly/domain/models.py) |
+| `SessionRepositoryPort` | state, messages, profile, source/audit | SQLite | transaction and no-store boundary | DATA/OPS | [repository.py](../src/elly/ports/repository.py) |
+| `ConsentProposal`/`Approval` | exact cloud permission | `ConsentWorkflow` | payload/call metadata/expiry binding; one-use | SEC-001/002 | [privacy.py](../src/elly/privacy.py) |
+| `ErrorClass`/`EllyError` | stable failure taxonomy | adapters/application | provider exceptions normalized | NFR-002/006 | [errors.py](../src/elly/domain/errors.py) |
 
 Fakes share ports with real adapters, but fake tests prove contract/workflow behavior only; they do not prove provider availability, model quality, network behavior, or billing.
 
@@ -182,7 +197,7 @@ Use the opt-in 14B profile only when explicitly selected. Never put credentials 
 
 ## 12. Configuration Reference
 
-Authoritative defaults are `config.example.toml`, `.env.example`, and [config.py](src/elly/config.py). TOML follows built-ins; `ELLY_*` values override. Secrets are intentionally not repeated.
+Authoritative defaults are `config.example.toml`, `.env.example`, and [config.py](../src/elly/config.py). TOML follows built-ins; `ELLY_*` values override. Secrets are intentionally not repeated.
 
 | Setting | Purpose/default | Security/consumer |
 |---|---|---|
@@ -232,30 +247,30 @@ Application code controls routing, cloud permission, consent, provider/model, li
 
 | Milestone | Approved outcome | Main deliverables | Implementation | Verification | Closure/evidence |
 |---|---|---|---|---|---|
-| M0 | decision/contract gate | SRS, design, contracts, decisions | Complete | record-verified | Closed; [DECISIONS.md](docs/DECISIONS.md) |
+| M0 | decision/contract gate | SRS, design, contracts, decisions | Complete | record-verified | Closed; [DECISIONS.md](v1/DECISIONS.md) |
 | M1 | walking skeleton | CLI, domain, ports, fake, SQLite/audit | Complete | deterministic evidence | Closed |
-| M2 | real local Ollama | adapter, health, model profiles, cancellation | Complete | qwen3:8b smoke | Closed; [benchmark](docs/implementStatus/M2_QWEN3_8B_BENCHMARK.md) |
+| M2 | real local Ollama | adapter, health, model profiles, cancellation | Complete | qwen3:8b smoke | Closed; [benchmark](v1/implementStatus/M2_QWEN3_8B_BENCHMARK.md) |
 | M3 | guardrail spine | limits/retry/circuit/timeout/cost/interruption | Implemented | tested implemented routes | Reopened; V1-015 |
 | M4 | research/evidence | hosted search/freshness/citation policy | Implemented | smoke + deterministic subset | Reopened; quality pending |
 | M5 | specialists/privacy | manifests/OpenAI/consent/schema/scope | Implemented | fake coverage + smoke | Reopened |
 | M6 | data/operations | profile/retention/traces/backup prototype | Implemented | focused tests | Reopened; crypto/recovery |
-| M7 | release/evaluation/UAT | EVAL catalog/gate/thresholds/UAT | Partial | deterministic gate; live pending | Open; [checklist](docs/M7_RELEASE_CHECKLIST.md) |
+| M7 | release/evaluation/UAT | EVAL catalog/gate/thresholds/UAT | Partial | deterministic gate; live pending | Open; [checklist](v1/M7_RELEASE_CHECKLIST.md) |
 
-Implementation existence and narrow tests do not prove closure. Read [docs/implementStatus](docs/implementStatus/) with the controlling [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md). The later-iteration deferral record is [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md).
+Implementation existence and narrow tests do not prove closure. Read [docs/v1/implementStatus](v1/implementStatus/) with the controlling [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md). The later-iteration deferral record is [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md).
 
 ## 17. Version 1 Verification and Release Status
 
-The controlling decision is **not release-ready**. Recorded evidence includes real Ollama local-path smoke, bounded OpenAI hosted-search and specialist smokes, deterministic security/schema/limit tests, compile checks, and release-harness execution. Current release materials report 209/209 deterministic tests for implemented scope, 30 catalog records, hardware evidence for approved qwen3:8b development, and UAT clarity 4/5, control/privacy 3/5, usefulness 4/5, no safety-critical issue.
+The V1 controlling decision is **not release-ready**. Recorded evidence includes real Ollama local-path smoke, bounded OpenAI hosted-search and specialist smokes, deterministic security/schema/limit tests, compile checks, and release-harness execution. V1 materials report 209/209 deterministic tests for implemented scope, 30 catalog records, hardware evidence for approved qwen3:8b development, and UAT clarity 4/5, control/privacy 3/5, usefulness 4/5, no safety-critical issue.
 
 Gaps are: no complete live-quality/scoring corpus at approved thresholds; claim-level hosted research support is limited by provider annotations; pricing is a configured reservation rather than authoritative billing; backup crypto is a prototype; recovery acceptance is absent; and UC-04/06/09/11 are deferred and not current-release verified.
 
-These gaps are recorded as deferred later-iteration work in [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md). They remain open for milestone/release accounting until separately addressed and verified.
+These gaps are recorded as deferred later-iteration work in [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md). They remain open for milestone/release accounting until separately addressed and verified.
 
 This task’s sandbox test attempt ran 203 tests and failed during `test_ollama_generalist` setup because localhost socket creation was denied. It is not evidence that the suite fails in the repository. The recorded 209/209 result remains repository evidence, while differing counts are an evidence/documentation conflict to reconcile in a future authorized verification run.
 
 ## 18. Requirements and Traceability Summary
 
-Use [TRACEABILITY.md](docs/TRACEABILITY.md) for requirement → use case → acceptance test → design/source/test mappings, and [TEST_SPECS.md](docs/TEST_SPECS.md) for AT-01…AT-15 and EVAL-001…030. Traceability warns that “Implemented + Tested” rows are historical implementation claims, not proof of every acceptance clause; [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md) controls closure. Gaps are aggregate quality, full UAT scope, pricing assurance, backup/recovery assurance, and current verification of deferred UCs.
+Use [TRACEABILITY.md](v1/TRACEABILITY.md) for V1 requirement → use case → acceptance test → design/source/test mappings, and [TEST_SPECS.md](v1/TEST_SPECS.md) for AT-01…AT-15 and EVAL-001…030. Traceability warns that “Implemented + Tested” rows are historical implementation claims, not proof of every acceptance clause; [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md) controls V1 closure. V1.5 requirement-to-evidence mapping is in [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
 
 ## 19. Setup and Installation
 
@@ -278,7 +293,7 @@ ELLY_DB_PATH=":memory:" PYTHONPATH=src python3 -m elly
 PYTHONPATH=src python3 -m elly --config config.qwen3-14b.example.toml
 ```
 
-Normal development is real local Ollama unless a test/composition explicitly selects `fake`. Use commands listed in [README.md](README.md): `/status`, `/mode local`, `/mode cloud`, `/new [--no-store]`, `/cancel`, `/approve`, `/deny`, `/profile`, `/history`, `/trace`, `/sources`, `/backup`, `/restore`, `/help`, `/exit`. Synthetic input: `Explain dependency injection`. Common errors are missing config/model, unavailable Ollama, missing OpenAI key, denied cloud/consent, limits, unsafe evidence, and storage failure.
+Normal development is real local Ollama unless a test/composition explicitly selects `fake`. Use commands listed in [README.md](../README.md): `/status`, `/mode local`, `/mode cloud`, `/new [--no-store]`, `/cancel`, `/approve`, `/deny`, `/profile`, `/history`, `/trace`, `/sources`, `/backup`, `/restore`, `/help`, `/exit`. Synthetic input: `Explain dependency injection`. Common errors are missing config/model, unavailable Ollama, missing OpenAI key, denied cloud/consent, limits, unsafe evidence, and storage failure.
 
 ## 21. How to Test and Verify
 
@@ -286,32 +301,32 @@ Normal development is real local Ollama unless a test/composition explicitly sel
 PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -t .
 PYTHONPATH=src python3 -m compileall -q src tests
 git diff --check
-ruff check src tests       # only if installed
-mypy src                   # only if installed
+ruff check src tests
+mypy src
 PYTHONPATH=src python3 scripts/run_release_gate.py --output /tmp/elly-m7-evidence.json --hardware-status pass
 ```
 
-Unittest covers deterministic unit/contract/integration/security behavior; it does not prove live provider quality. Compileall checks syntax; diff-check checks whitespace. Ruff/mypy are optional and were not available in the recorded verification. The release gate freezes EVAL metadata, runs deterministic regression, and reports pending live-quality/UAT gates; it does not make V1 releasable. Real provider smokes require services/credentials and are distinct from fake tests.
+Unittest covers deterministic unit/contract/integration/security behavior; it does not prove live provider quality. Compileall checks syntax; diff-check checks whitespace. Ruff and strict mypy are mandatory CI gates and pass the closed V1.5 baseline. The historical V1 release gate freezes EVAL metadata, runs deterministic regression, and reports pending live-quality/UAT gates; it does not make V1 releasable. Real provider smokes require services/credentials and are distinct from fake tests.
 
 ## 22. Known Limitations and Accepted Technical Debt
 
 | Limitation | Effect/status | Blocking? | Source |
 |---|---|---|---|
-| Hosted annotations may be metadata-only | summary is visibly inferred/unverified; claim-level `known` unavailable | release evidence gap | [DECISIONS.md](docs/DECISIONS.md), [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md) |
-| No complete 30-case live corpus | thresholds cannot be scored | Yes, M7/V1 | [M7_RELEASE_CHECKLIST.md](docs/M7_RELEASE_CHECKLIST.md) |
+| Hosted annotations may be metadata-only | summary is visibly inferred/unverified; claim-level `known` unavailable | release evidence gap | [DECISIONS.md](v1/DECISIONS.md), [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md) |
+| No complete 30-case live corpus | thresholds cannot be scored | Yes, M7/V1 | [M7_RELEASE_CHECKLIST.md](v1/M7_RELEASE_CHECKLIST.md) |
 | Cloud pricing is fixed reservation | mechanics exist but authoritative assurance absent | Yes for closure | V1-015 |
 | Backup uses prototype authenticated envelope | not vetted production AEAD; recovery acceptance absent | Yes for production | DEC-M7-02/V1-019 |
 | Four UCs deferred by owner | implementation evidence is historical only for this release | current scope limitation | DEC-M7-03 |
-| Page-body RAG, semantic memory, UI, trace export, autonomous tools | unavailable/deferred, not current-scope defects | No unless scope changes | [README.md](README.md) |
+| Page-body RAG, semantic memory, UI, trace export, autonomous tools | unavailable/deferred, not current-scope defects | No unless scope changes | [README.md](../README.md) |
 
 ## 23. Unresolved Decisions, Blockers, and Owner Actions
 
 | Item | Type | Why it matters | Safe behavior | Required action | Sources |
 |---|---|---|---|---|---|
-| Authoritative cloud price/reservation policy | Unresolved/blocking | budget ceiling is not substantive with placeholder pricing | use configured conservative reservation; fail on budget | approve rates/source and rerun evidence | V1-015, [M7_THRESHOLD_REVIEW.md](docs/M7_THRESHOLD_REVIEW.md) |
+| Authoritative cloud price/reservation policy | Unresolved/blocking | budget ceiling is not substantive with placeholder pricing | use configured conservative reservation; fail on budget | approve rates/source and rerun evidence | V1-015, [M7_THRESHOLD_REVIEW.md](v1/M7_THRESHOLD_REVIEW.md) |
 | Vetted backup crypto/recovery acceptance | Unresolved/blocking for production | custom envelope is prototype-only | do not claim production security | approve dependency/key management and recovery tests | DEC-M7-02, V1-019 |
-| Aggregate EVAL/live quality and final thresholds | Blocked by missing evidence | release thresholds cannot be inferred from smokes | report pending; do not close M7 | run/score EVAL-001…030 | [TEST_SPECS.md](docs/TEST_SPECS.md) |
-| OQ-10 production threat/legal/incident scope | Deferred | outside prototype | do not assume production readiness | owner decides before production | [DECISIONS.md](docs/DECISIONS.md) |
+| Aggregate EVAL/live quality and final thresholds | Blocked by missing evidence | release thresholds cannot be inferred from smokes | report pending; do not close M7 | run/score EVAL-001…030 | [TEST_SPECS.md](v1/TEST_SPECS.md) |
+| OQ-10 production threat/legal/incident scope | Deferred | outside prototype | do not assume production readiness | owner decides before production | [DECISIONS.md](v1/DECISIONS.md) |
 
 ## 24. Important Assumptions
 
@@ -322,18 +337,19 @@ Unittest covers deterministic unit/contract/integration/security behavior; it do
 ## 25. Important Files and Recommended Reading Order
 
 1. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — this snapshot.
-2. [README.md](README.md) — current behavior and commands.
-3. [REQUIREMENT.md](docs/REQUIREMENT.md) — requirements and IDs.
-4. [DECISIONS.md](docs/DECISIONS.md) — owner decisions, exceptions, and open OQ-10.
-5. [DESIGN.md](docs/DESIGN.md) and [CONTRACTS.md](docs/CONTRACTS.md) — architecture, UCs, interfaces.
-6. [TEST_SPECS.md](docs/TEST_SPECS.md), [MILESTONE_PLAN.md](docs/MILESTONE_PLAN.md), [TRACEABILITY.md](docs/TRACEABILITY.md) — acceptance, milestones, mappings.
-7. [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md), [M7_RELEASE_CHECKLIST.md](docs/M7_RELEASE_CHECKLIST.md), [M7_THRESHOLD_REVIEW.md](docs/M7_THRESHOLD_REVIEW.md), [M7_UAT_RECORD.md](docs/M7_UAT_RECORD.md) — evidence and release state.
-8. [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md) — reasons for reopened milestones and later-iteration boundaries.
-9. [IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md) — runtime walkthrough.
-10. [__main__.py](src/elly/__main__.py), [composition.py](src/elly/composition.py), [conversation.py](src/elly/application/conversation.py) — entry and orchestration.
-11. [models.py](src/elly/domain/models.py), [ports](src/elly/ports/), [adapters](src/elly/adapters/) — contracts and providers.
-12. [privacy.py](src/elly/privacy.py), [guardrails](src/elly/guardrails/), [sqlite_repository.py](src/elly/adapters/sqlite_repository.py) — security, limits, state.
-13. [tests](tests/) and [run_release_gate.py](scripts/run_release_gate.py) — executable evidence.
+2. [README.md](../README.md) — current behavior and commands.
+3. [REQUIREMENT.md](v1/REQUIREMENT.md) — V1 requirements and IDs.
+4. [DECISIONS.md](v1/DECISIONS.md) — V1 owner decisions, exceptions, and open OQ-10.
+5. [DESIGN.md](v1/DESIGN.md) and [CONTRACTS.md](v1/CONTRACTS.md) — V1 architecture, UCs, interfaces.
+6. [V1.5 REQUIREMNETS.md](v1.5/REQUIREMNETS.md), [TECHNICAL_DESIGN.md](v1.5/TECHNICAL_DESIGN.md), and [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md) — V1.5 scope, design, and evidence.
+7. [TEST_SPECS.md](v1/TEST_SPECS.md), [MILESTONE_PLAN.md](v1/MILESTONE_PLAN.md), [TRACEABILITY.md](v1/TRACEABILITY.md) — V1 acceptance, milestones, mappings.
+8. [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md), [M7_RELEASE_CHECKLIST.md](v1/M7_RELEASE_CHECKLIST.md), [M7_THRESHOLD_REVIEW.md](v1/M7_THRESHOLD_REVIEW.md), [M7_UAT_RECORD.md](v1/M7_UAT_RECORD.md) — V1 evidence and release state.
+9. [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md) — reasons for reopened V1 milestones and later-iteration boundaries.
+10. [IMPLEMENTATION_GUIDE.md](v1/IMPLEMENTATION_GUIDE.md) — V1 runtime walkthrough.
+10. [__main__.py](../src/elly/__main__.py), [composition.py](../src/elly/composition.py), [conversation.py](../src/elly/application/conversation.py) — entry and orchestration.
+11. [models.py](../src/elly/domain/models.py), [ports](../src/elly/ports/), [adapters](../src/elly/adapters/) — contracts and providers.
+12. [privacy.py](../src/elly/privacy.py), [guardrails](../src/elly/guardrails/), [sqlite_repository.py](../src/elly/adapters/sqlite_repository.py) — security, limits, state.
+14. [tests](../tests/) and [run_release_gate.py](../scripts/run_release_gate.py) — executable evidence.
 
 ## 26. Source-Tree Map
 
@@ -350,14 +366,16 @@ src/elly/specialists/          manifests/registry/contracts/fake
 config/                        specialist TOML manifests
 scripts/                       smoke and release helpers
 tests/                         stdlib unittest evidence
-docs/                          requirements, architecture, decisions, evidence
+docs/                          current context, deferred gaps, versioned documentation
+docs/v1/                       Version 1 requirements, design, milestones, evidence
+docs/v1.5/                     Version 1.5 requirements, design, implementation verification
 ```
 
 ## 27. Rules for Future AI Agents
 
 - Follow the authority hierarchy and preserve stable requirement/use-case/test/decision IDs.
 - Inspect affected files/tests before changing behavior; preserve unrelated dirty work.
-- Do not expand V1, start later milestones, or turn ideas into commitments without authorization.
+- Do not silently expand V1 or V1.5, start later milestones, or turn ideas into commitments without authorization.
 - Keep provider/model/pricing centralized; never silently upgrade models.
 - Keep fakes and real integrations separate; never call fake-backed tests real verification.
 - Do not claim milestone, requirement, release, owner review, or security status without evidence.
@@ -368,21 +386,21 @@ docs/                          requirements, architecture, decisions, evidence
 
 ## 28. Common Questions and Evidence-Based Answers
 
-**What currently works?** Local Ollama, hosted research/specialist paths, policy/guardrails, SQLite state, and deterministic tests within the documented prototype boundaries. See [README.md](README.md) and [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md).
+**What currently works?** V1 functionality remains the baseline. V1.5 adds typed routing/capabilities, authorization, retrieval/evidence policy, outcome/provenance, cancellation, idempotency, and migration work. See [README.md](../README.md) and [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
 
-**Is V1 complete/release-ready?** No. M3–M6 are reopened and M7 is open. See [M7_RELEASE_CHECKLIST.md](docs/M7_RELEASE_CHECKLIST.md).
+**Is V1/V1.5 complete or release-ready?** V1 remains not release-ready under its historical verification record. V1.5 is closed for its implemented iteration scope with live-provider verification explicitly deferred. See [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md), [V1_5_CLOSURE.md](v1.5/V1_5_CLOSURE.md), and [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
 
-**Does it use real Ollama?** Yes by default (`ollama`, `qwen3:8b`), with bounded live-smoke evidence; fakes are test support. See [ollama_generalist.py](src/elly/adapters/ollama_generalist.py).
+**Does it use real Ollama?** Yes by default (`ollama`, `qwen3:8b`), with bounded live-smoke evidence; fakes are test support. See [ollama_generalist.py](../src/elly/adapters/ollama_generalist.py).
 
-**How do I switch to Ollama?** Set the generalist provider to `ollama` and model to `qwen3:8b`, ensure endpoint/model availability, and restart. See [config.py](src/elly/config.py).
+**How do I switch to Ollama?** Set the generalist provider to `ollama` and model to `qwen3:8b`, ensure endpoint/model availability, and restart. See [config.py](../src/elly/config.py).
 
 **Which model is configured?** Local default `qwen3:8b`; opt-in `qwen3:14b`; hosted defaults `gpt-5.6-luna`. Availability must be checked, not inferred from IDs.
 
 **Where does execution begin?** `src/elly/__main__.py:main`, then `composition.build`, `Cli.run`, and `ConversationOrchestrator.handle`.
 
-**Is data persisted?** Normal SQLite state is retained by policy; `/new --no-store` prevents message-body reconstruction. See [sqlite_repository.py](src/elly/adapters/sqlite_repository.py).
+**Is data persisted?** Normal SQLite state is retained by policy; `/new --no-store` prevents message-body reconstruction. See [sqlite_repository.py](../src/elly/adapters/sqlite_repository.py).
 
-**What remains unresolved?** Pricing assurance, vetted backup crypto/recovery acceptance, aggregate quality/final threshold review, and deferred UAT scope. See §23 and [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md).
+**What remains unresolved?** V1 retains pricing assurance, backup crypto/recovery acceptance, aggregate quality/final threshold review, and deferred UAT scope. Closed V1.5 carries live-provider verification as an explicit exception and carries attempt-level idempotency durability, orchestrator reduction, and broader semantic evidence analysis as later improvements. See §23, [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md), and the V1.5 closure/verification records.
 
 ## 29. Context Freshness and Update Procedure
 
@@ -393,13 +411,14 @@ Change the date, commit, branch/worktree statement, affected sections, verificat
 ## 30. Evidence Index
 
 - **Instructions:** no repository `AGENTS.md` or `CONTRIBUTING.md`.
-- **Requirements:** [REQUIREMENT.md](docs/REQUIREMENT.md).
-- **Use cases/acceptance:** [DESIGN.md](docs/DESIGN.md), [TEST_SPECS.md](docs/TEST_SPECS.md).
-- **Architecture/contracts:** [DESIGN.md](docs/DESIGN.md), [CONTRACTS.md](docs/CONTRACTS.md), [IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md).
-- **Security/privacy:** [THREAT_MODEL.md](docs/THREAT_MODEL.md), [DECISIONS.md](docs/DECISIONS.md), [privacy.py](src/elly/privacy.py), [audit_log.py](src/elly/adapters/audit_log.py).
-- **Milestones/traceability:** [MILESTONE_PLAN.md](docs/MILESTONE_PLAN.md), [TRACEABILITY.md](docs/TRACEABILITY.md), [implementStatus](docs/implementStatus/).
-- **Deferred milestone gaps:** [DEFERRED_MILESTONE_GAPS.md](docs/DEFERRED_MILESTONE_GAPS.md).
-- **Implementation:** [src/elly](src/elly/), [pyproject.toml](pyproject.toml).
-- **Testing:** [tests](tests/), [TEST_SPECS.md](docs/TEST_SPECS.md), [run_release_gate.py](scripts/run_release_gate.py).
-- **Verification:** [V1_VERIFICATION_REPORT.md](docs/V1_VERIFICATION_REPORT.md), [M7_LIVE_EVIDENCE.md](docs/implementStatus/M7_LIVE_EVIDENCE.md), [M7_THRESHOLD_REVIEW.md](docs/M7_THRESHOLD_REVIEW.md).
-- **Decisions/release:** [DECISIONS.md](docs/DECISIONS.md), [CHANGELOG.md](docs/CHANGELOG.md), [M7_RELEASE_CHECKLIST.md](docs/M7_RELEASE_CHECKLIST.md), [M7_UAT_RECORD.md](docs/M7_UAT_RECORD.md).
+- **V1 requirements:** [REQUIREMENT.md](v1/REQUIREMENT.md), [DESIGN.md](v1/DESIGN.md), [CONTRACTS.md](v1/CONTRACTS.md).
+- **V1 acceptance/release:** [TEST_SPECS.md](v1/TEST_SPECS.md), [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md), [M7_RELEASE_CHECKLIST.md](v1/M7_RELEASE_CHECKLIST.md).
+- **V1.5 requirements/design:** [REQUIREMNETS.md](v1.5/REQUIREMNETS.md), [TECHNICAL_DESIGN.md](v1.5/TECHNICAL_DESIGN.md).
+- **V1.5 closure/verification:** [V1_5_CLOSURE.md](v1.5/V1_5_CLOSURE.md), [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
+- **Security/privacy:** [THREAT_MODEL.md](v1/THREAT_MODEL.md), [DECISIONS.md](v1/DECISIONS.md), [privacy.py](../src/elly/privacy.py), [audit_log.py](../src/elly/adapters/audit_log.py).
+- **Milestones/traceability:** [MILESTONE_PLAN.md](v1/MILESTONE_PLAN.md), [TRACEABILITY.md](v1/TRACEABILITY.md), [implementStatus](v1/implementStatus/).
+- **Deferred milestone gaps:** [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md).
+- **Implementation:** [src/elly](../src/elly/), [pyproject.toml](../pyproject.toml).
+- **Testing:** [tests](../tests/), [TEST_SPECS.md](v1/TEST_SPECS.md), [run_release_gate.py](../scripts/run_release_gate.py).
+- **Verification:** [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md), [M7_LIVE_EVIDENCE.md](v1/implementStatus/M7_LIVE_EVIDENCE.md), [M7_THRESHOLD_REVIEW.md](v1/M7_THRESHOLD_REVIEW.md), [V1_5_IMPLEMENTATION_VERIFICATION.md](v1.5/V1_5_IMPLEMENTATION_VERIFICATION.md).
+- **Decisions/release:** [DECISIONS.md](v1/DECISIONS.md), [CHANGELOG.md](v1/CHANGELOG.md), [M7_RELEASE_CHECKLIST.md](v1/M7_RELEASE_CHECKLIST.md), [M7_UAT_RECORD.md](v1/M7_UAT_RECORD.md).

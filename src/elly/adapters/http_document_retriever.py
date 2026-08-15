@@ -8,7 +8,8 @@ import ipaddress
 import socket
 import ssl
 from datetime import datetime, timezone
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from typing import Any, Callable
+from urllib.parse import SplitResult, urljoin, urlsplit, urlunsplit
 
 from ..application.execution import CancellationToken
 from ..domain.errors import (
@@ -29,10 +30,11 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     """HTTPS connection whose validated numeric peer cannot be DNS-rebound."""
 
     def __init__(
-        self, host: str, address: tuple[int, int, int, str, tuple], *, timeout: float
+        self, host: str, address: tuple[Any, ...], *, timeout: float
     ) -> None:
         port = int(address[4][1])
-        super().__init__(host, port=port, timeout=timeout, context=ssl.create_default_context())
+        self._ssl_context = ssl.create_default_context()
+        super().__init__(host, port=port, timeout=timeout, context=self._ssl_context)
         self._address = address
 
     def connect(self) -> None:
@@ -41,7 +43,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         try:
             raw.settimeout(self.timeout)
             raw.connect(sockaddr)
-            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+            self.sock = self._ssl_context.wrap_socket(raw, server_hostname=self.host)
         except BaseException:
             raw.close()
             raise
@@ -52,7 +54,8 @@ class HttpDocumentRetriever:
 
     def __init__(
         self, *, max_bytes: int = 512_000, max_redirects: int = 3,
-        resolver=socket.getaddrinfo, connection_factory=_PinnedHTTPSConnection,
+        resolver: Callable[..., list[Any]] = socket.getaddrinfo,
+        connection_factory: Callable[..., Any] = _PinnedHTTPSConnection,
     ) -> None:
         if max_bytes <= 0:
             raise ValueError("max_bytes must be positive")
@@ -149,7 +152,9 @@ class HttpDocumentRetriever:
             )
         raise PermanentProviderError("source exceeded the redirect limit")
 
-    def _validated_target(self, url: str):
+    def _validated_target(
+        self, url: str
+    ) -> tuple[SplitResult, str, tuple[tuple[Any, ...], ...]]:
         parsed = urlsplit(url)
         if parsed.scheme.lower() != "https" or not parsed.hostname:
             raise UnsafeUrlError("source retrieval requires a public HTTPS URL")

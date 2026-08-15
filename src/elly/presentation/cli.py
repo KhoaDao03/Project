@@ -23,10 +23,9 @@ import uuid
 from dataclasses import dataclass, replace
 
 from ..composition import Application
-from ..domain.enums import CloudMode, PersistenceMode
-from ..domain.errors import EllyError, InputInvalidError, PermissionDeniedError
+from ..domain.enums import CloudMode, PersistenceMode, TaskStatus
+from ..domain.errors import EllyError, InputInvalidError
 from ..domain.models import AuditEvent, SessionRecord, TaskRequest
-from ..domain.enums import TaskStatus
 from ..privacy import ConsentProposal
 from . import render
 from .validators import normalize_and_validate

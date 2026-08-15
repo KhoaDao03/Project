@@ -1,0 +1,31 @@
+name: verification
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and verification tools
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+      - name: Ruff
+        run: ruff check src tests
+      - name: Strict mypy
+        run: mypy src
+      - name: Unit and integration tests
+        run: PYTHONPATH=src python -W error::ResourceWarning -m unittest discover -s tests -t .
+      - name: Compile and whitespace checks
+        run: |
+          PYTHONPATH=src python -m compileall -q src tests
+          git diff --check

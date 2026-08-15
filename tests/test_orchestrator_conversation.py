@@ -14,8 +14,8 @@ exact audit event names, so the sequencing remains free to evolve.
 
 from __future__ import annotations
 
-import unittest
 import threading
+import unittest
 from datetime import datetime, timezone
 
 from elly.adapters.audit_log import StructuredAuditLog

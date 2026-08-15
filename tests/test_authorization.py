@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import unittest
+from datetime import datetime, timezone
 
 from elly.application.authorization import CloudAuthorizationPolicy
 from elly.domain.enums import CloudMode

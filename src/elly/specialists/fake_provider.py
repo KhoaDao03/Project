@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from ..domain.enums import HealthState
 from ..domain.models import HealthReport
 from .contracts import SpecialistResult, SpecialistTask

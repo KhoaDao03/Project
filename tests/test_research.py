@@ -14,8 +14,7 @@ from unittest.mock import patch
 from elly.adapters.openai_web_research import OpenAIHostedWebSearch
 from elly.application.research import ResearchPipeline
 from elly.composition import build
-from elly.domain.enums import EpistemicStatus, Route, TaskStatus
-from elly.domain.models import EvidenceObject
+from elly.domain.enums import EpistemicStatus
 from elly.domain.errors import (
     AuthenticationProviderError,
     ModelUnavailableError,
@@ -25,6 +24,7 @@ from elly.domain.errors import (
     StorageFailureError,
     TransientProviderError,
 )
+from elly.domain.models import EvidenceObject
 from elly.guardrails.controller import GuardrailController
 from elly.guardrails.limits import LimitPolicy
 from elly.ports.web_research import ProviderCitation, ResearchBudget, ResearchResponse

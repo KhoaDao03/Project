@@ -4,13 +4,19 @@ import threading
 import time
 import unittest
 
-from elly.domain.errors import CircuitOpenError, LimitExceededError, PermanentProviderError, ProviderTimeoutError, TransientProviderError
+from elly.application.research import ResearchPipeline
+from elly.domain.errors import (
+    CircuitOpenError,
+    LimitExceededError,
+    PermanentProviderError,
+    ProviderTimeoutError,
+    TransientProviderError,
+)
 from elly.guardrails.controller import GuardrailController
 from elly.guardrails.cost import FakeCostLedger
-from elly.guardrails.limits import LimitPolicy, ReservationLedger
-from elly.guardrails.retry import CircuitBreaker, RetryPolicy
 from elly.guardrails.executor import BoundedTaskExecutor
-from elly.application.research import ResearchPipeline
+from elly.guardrails.limits import LimitPolicy, ReservationLedger
+from elly.guardrails.retry import CircuitBreaker
 from elly.research.fake_provider import FixtureWebResearchProvider
 
 

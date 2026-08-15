@@ -1,9 +1,9 @@
 """M7 release-evidence contract tests."""
 
 import json
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
 
 from elly.evaluation import catalog, run_release_evidence
 

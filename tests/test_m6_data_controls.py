@@ -1,21 +1,19 @@
 """M6 acceptance tests: confirmed memory, durable trace, retention, backup."""
 
+import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import sqlite3
-import unittest
 from unittest.mock import patch
 
+import elly.adapters.sqlite_repository as sqlite_repository
 from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.sqlite_repository import SqliteSessionRepository
-import elly.adapters.sqlite_repository as sqlite_repository
 from elly.domain.enums import CloudMode, PersistenceMode, Route, TaskStatus
+from elly.domain.errors import StorageFailureError
 from elly.domain.models import AuditEvent, Message, SessionRecord
 from elly.memory import ProfileService
 from elly.operations import BackupService
-from elly.domain.errors import StorageFailureError
-
 
 NOW = datetime(2026, 8, 4, tzinfo=timezone.utc)
 

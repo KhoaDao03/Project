@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
-import re
 
+from ..application.execution import CancellationToken
 from ..domain.errors import CancelledError, EllyError
 from ..domain.models import EvidenceObject
 from ..ports.document_retrieval import DocumentRetrievalPort
-from ..application.execution import CancellationToken
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,13 +63,19 @@ class EvidencePolicy:
             )
 
         try:
-            retrieval_options = {"timeout_seconds": self._retrieval_timeout_seconds}
             if cancellation is not None:
-                retrieval_options["cancellation"] = cancellation
-            document = self._retriever.retrieve(evidence, **retrieval_options)
+                document = self._retriever.retrieve(
+                    evidence,
+                    timeout_seconds=self._retrieval_timeout_seconds,
+                    cancellation=cancellation,
+                )
+            else:
+                document = self._retriever.retrieve(
+                    evidence, timeout_seconds=self._retrieval_timeout_seconds
+                )
         except CancelledError:
             raise
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError):
             return EvidenceEligibility(
                 None, f"{evidence.evidence_id}: retrieval_failed"
             )
@@ -95,5 +101,7 @@ class EvidencePolicy:
 
     @staticmethod
     def _contains_passage(content: str, passage: str) -> bool:
-        normalize = lambda value: " ".join(re.sub(r"\s+", " ", value).split()).casefold()
+        def normalize(value: str) -> str:
+            return " ".join(re.sub(r"\s+", " ", value).split()).casefold()
+
         return normalize(passage) in normalize(content)

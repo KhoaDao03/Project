@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import unittest
+from datetime import datetime, timezone
 
 from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_generalist import FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
-from elly.application.conversation import ConversationOrchestrator
 from elly.application.capabilities import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityExecution,
     CapabilityMatch,
-    CapabilityRequest,
     CapabilityRegistry,
+    CapabilityRequest,
     CapabilityStatus,
 )
+from elly.application.conversation import ConversationOrchestrator
 from elly.domain.enums import (
     CloudMode,
     EpistemicStatus,
@@ -30,8 +30,8 @@ from elly.domain.enums import (
 from elly.domain.errors import ConfigInvalidError
 from elly.domain.models import (
     ContextManifest,
-    RouteRequest,
     RouteProposal,
+    RouteRequest,
     SessionRecord,
     TaskRequest,
     TaskResult,

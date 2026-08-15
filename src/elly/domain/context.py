@@ -24,7 +24,6 @@ from dataclasses import dataclass
 
 from ..domain.models import ContextManifest, Message
 
-
 _DEPENDENT_TURN = re.compile(
     r"(?ix)"
     r"\b(?:it|its|itself|that|those|them|they|their|this|these|"

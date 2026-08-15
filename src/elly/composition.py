@@ -14,43 +14,43 @@ import logging
 import os
 import threading
 import uuid
+from concurrent.futures import Future
 
 from .adapters.audit_log import StructuredAuditLog
 from .adapters.fake_generalist import FakeGeneralist
-from .adapters.ollama_generalist import OllamaGeneralist
-from .adapters.openai_web_research import OpenAIHostedWebSearch
 from .adapters.http_document_retriever import HttpDocumentRetriever
+from .adapters.ollama_generalist import OllamaGeneralist
+from .adapters.openai_specialist import OpenAISpecialistProvider
+from .adapters.openai_web_research import OpenAIHostedWebSearch
 from .adapters.sqlite_repository import SqliteSessionRepository
 from .adapters.system_clock import SystemClock
-from .application.conversation import ConversationOrchestrator
-from .application.capabilities import CapabilityRegistry
+from .application.authorization import CloudAuthorizationPolicy
+from .application.capabilities import CapabilityHandler, CapabilityRegistry
 from .application.capability_handlers import (
     ResearchCapabilityHandler,
     SpecialistCapabilityHandler,
 )
 from .application.context_builder import ContextBuilder
+from .application.conversation import ConversationOrchestrator
+from .application.research import ResearchPipeline
 from .application.routing import RoutingPolicy
+from .application.specialists import SpecialistWorkflow
 from .config import Config, load_config
 from .domain.enums import CloudMode, HealthState, PersistenceMode, Route
 from .domain.errors import ConfigInvalidError
-from .domain.models import HealthReport, SessionRecord
+from .domain.models import ConversationOutcome, HealthReport, SessionRecord, TaskRequest
+from .guardrails import BoundedTaskExecutor, GuardrailController, LimitPolicy
+from .memory import ProfileService
+from .operations import BackupService
 from .ports.audit import AuditPort
 from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
 from .ports.repository import SessionRepositoryPort
-from .specialists.registry import SpecialistRegistry
-from .application.research import ResearchPipeline
+from .privacy import ConsentWorkflow, PrivacyPolicy
 from .research.evidence_policy import EvidencePolicy
-from .application.specialists import SpecialistWorkflow
-from .privacy import ConsentWorkflow
-from .privacy import PrivacyPolicy
-from .application.authorization import CloudAuthorizationPolicy
-from .adapters.openai_specialist import OpenAISpecialistProvider
 from .research.fake_provider import FixtureWebResearchProvider
 from .specialists.fake_provider import FakeSpecialistProvider
-from .memory import ProfileService
-from .operations import BackupService
-from .guardrails import BoundedTaskExecutor, GuardrailController, LimitPolicy
+from .specialists.registry import SpecialistRegistry
 
 
 def validate_required_dependencies(
@@ -156,7 +156,7 @@ class Application:
         self.specialist_workflow = specialist_workflow
         self.consent = consent
         if capability_registry is None:
-            optional_handlers = []
+            optional_handlers: list[CapabilityHandler] = []
             if research is not None:
                 optional_handlers.append(
                     ResearchCapabilityHandler(
@@ -184,7 +184,7 @@ class Application:
             reserved_output_tokens=config.generalist_max_output_tokens,
         )
         self.profile = ProfileService(repository, clock)
-        self.backup = None
+        self.backup: BackupService | None = None
         self._maintenance_stop = threading.Event()
         self._maintenance_thread: threading.Thread | None = None
         self.orchestrator = ConversationOrchestrator(
@@ -217,7 +217,7 @@ class Application:
         self,
         *,
         persistence_mode: PersistenceMode = PersistenceMode.STORE_WITH_RETENTION,
-        cloud_mode: CloudMode = CloudMode.LOCAL_ONLY,
+        cloud_mode: CloudMode = CloudMode.LOCAL_ONLY, # CloudMode.CLOUD_PERMITTED
     ) -> SessionRecord:
         """Create and persist a fresh session; returns the record."""
         record = SessionRecord(
@@ -310,7 +310,7 @@ class Application:
         ))
         return reports
 
-    def submit(self, request):
+    def submit(self, request: TaskRequest) -> Future[ConversationOutcome]:
         """Submit a conversation through bounded local admission."""
         if self.executor is None:
             raise RuntimeError("task executor is not configured")

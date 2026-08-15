@@ -5,9 +5,9 @@ Uses ":memory:" for a fast, isolated REAL SQLite database (DATA-001).
 
 from __future__ import annotations
 
-import unittest
-import tempfile
 import os
+import tempfile
+import unittest
 from datetime import datetime, timezone
 
 from elly.adapters.sqlite_repository import SqliteSessionRepository

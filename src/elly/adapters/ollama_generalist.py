@@ -12,7 +12,13 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from ..domain.enums import HealthState
-from ..domain.errors import CancelledError, MalformedResultError, PermanentProviderError, ProviderTimeoutError, TransientProviderError
+from ..domain.errors import (
+    CancelledError,
+    MalformedResultError,
+    PermanentProviderError,
+    ProviderTimeoutError,
+    TransientProviderError,
+)
 from ..domain.models import GeneralistRequest, GeneralistResponse, GeneralistUsage, HealthReport
 
 
@@ -60,7 +66,7 @@ class OllamaGeneralist:
                 # ``HTTPResponse.close()`` alone may wait for a buffered read in
                 # another thread. Shutting down the owned localhost socket first
                 # makes cooperative cancellation bounded.
-                sock = response.fp.raw._sock  # type: ignore[attr-defined]
+                sock = response.fp.raw._sock
                 sock.shutdown(socket.SHUT_RDWR)
             except (AttributeError, OSError):
                 pass

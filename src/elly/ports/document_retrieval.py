@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..domain.models import EvidenceObject
+
 if TYPE_CHECKING:
     from ..application.execution import CancellationToken
 

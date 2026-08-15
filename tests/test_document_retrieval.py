@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import unittest
+from datetime import datetime, timezone
+
 from elly.adapters.http_document_retriever import HttpDocumentRetriever
 from elly.domain.errors import PermanentProviderError, ProviderTimeoutError, UnsafeUrlError
 from elly.domain.models import EvidenceObject
-
 
 UTC = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
 
@@ -77,7 +77,9 @@ def _retriever(response: _Response | None = None, *, failure=None, max_bytes=512
 
 class HttpDocumentRetrieverTests(unittest.TestCase):
     def test_private_resolution_is_rejected_before_fetch(self) -> None:
-        resolver = lambda *_args, **_kwargs: [(2, 1, 6, "", ("127.0.0.1", 443))]
+        def resolver(*_args, **_kwargs):
+            return [(2, 1, 6, "", ("127.0.0.1", 443))]
+
         with self.assertRaises(UnsafeUrlError):
             HttpDocumentRetriever(resolver=resolver).retrieve(_evidence(), timeout_seconds=1)
 

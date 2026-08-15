@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-import time
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from typing import Any
 
 from ..domain.enums import HealthState
 from ..domain.errors import (
@@ -143,18 +144,20 @@ class OpenAIHostedWebSearch:
         )
 
 
-def _response_text(payload: dict) -> str:
-    if isinstance(payload.get("output_text"), str):
-        return payload["output_text"].strip()
+def _response_text(payload: dict[str, Any]) -> str:
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str):
+        return output_text.strip()
     parts: list[str] = []
     for item in payload.get("output", []):
         for content in item.get("content", []):
-            if content.get("type") in {"output_text", "text"} and isinstance(content.get("text"), str):
-                parts.append(content["text"])
+            text = content.get("text")
+            if content.get("type") in {"output_text", "text"} and isinstance(text, str):
+                parts.append(text)
     return "".join(parts).strip()
 
 
-def _response_citations(payload: dict) -> list[ProviderCitation]:
+def _response_citations(payload: dict[str, Any]) -> list[ProviderCitation]:
     """Extract cited spans plus consulted source metadata.
 
     Inline annotations may support verified claims. Search-call sources only

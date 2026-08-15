@@ -6,10 +6,10 @@ from dataclasses import dataclass
 
 from ..domain.enums import EpistemicStatus, HealthState, Route
 from ..domain.errors import PermissionDeniedError
+from ..domain.models import ProvenanceReference
 from ..privacy import classify_payload
 from ..specialists.contracts import SpecialistTask
 from ..specialists.manifest import SpecialistManifest
-from ..domain.models import ProvenanceReference
 from .capabilities import (
     CapabilityAvailability,
     CapabilityDescriptor,

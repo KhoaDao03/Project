@@ -155,6 +155,10 @@ class SqliteSessionRepository:
             self._conn.executescript(_MIGRATION_V1)
             row = self._conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()
             current_version = int(row[0]) if row is not None else 1
+            if current_version > _SCHEMA_VERSION:
+                raise StorageFailureError(
+                    "database schema is newer than this Elly version supports"
+                )
             migrations = ((2, _MIGRATION_V2_STATEMENTS), (3, _MIGRATION_V3_STATEMENTS))
             for version, statements in migrations:
                 if current_version >= version:

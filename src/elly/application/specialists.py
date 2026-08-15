@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from ..domain.enums import CloudMode
 from ..domain.errors import (
-    CancelledError, ConfigInvalidError, ConsentRequiredError, EllyError,
-    MalformedResultError, PermissionDeniedError,
+    CancelledError,
+    ConsentRequiredError,
+    EllyError,
+    MalformedResultError,
+    PermissionDeniedError,
 )
+from ..guardrails.controller import GuardrailController
+from ..ports.specialist import SpecialistProviderPort
 from ..privacy import ConsentProposal, ConsentWorkflow, PrivacyClass, classify_payload
 from ..specialists.contracts import SpecialistResult, SpecialistTask, validate_result
 from ..specialists.manifest import SpecialistManifest
-from ..ports.specialist import SpecialistProviderPort
-from ..guardrails.controller import GuardrailController
 from .execution import CancellationToken
 
 
@@ -25,7 +29,19 @@ class SpecialistExecution:
 
 
 class SpecialistWorkflow:
-    """Owns privacy, consent, depth, tool, scope, and output policy."""
+    """Owns privacy, consent, depth, tool, scope, and output policy.
+    Execution dependency
+        provider: SpecialistProviderPort
+    Consent
+        consent: ConsentWorkflow
+    Resource constraints
+        max_output_tokens
+        guardrails
+        call_cost_usd
+    Provider metadata
+        provider_name
+        consent_max_cost_usd
+    """
 
     def __init__(self, *, provider: SpecialistProviderPort, consent: ConsentWorkflow,
                  max_output_tokens: int = 2000, guardrails: GuardrailController | None = None,
@@ -40,7 +56,7 @@ class SpecialistWorkflow:
         self.consent_max_cost_usd = consent_max_cost_usd
 
     def execute(self, *, task: SpecialistTask, manifest: SpecialistManifest,
-                cloud_mode: CloudMode, now=None,
+                cloud_mode: CloudMode, now: datetime | None = None,
                 request_guardrails: GuardrailController | None = None,
                 authorization_granted: bool = False,
                 cancellation: CancellationToken | None = None) -> SpecialistExecution:
@@ -82,10 +98,13 @@ class SpecialistWorkflow:
                     payload=task.context, max_cost=self.consent_max_cost_usd, now=now,
                 )
                 raise ConsentRequiredError("exact owner consent is required before sending local content", proposal=proposal)
-        operation = lambda: self.provider.execute(
-            task, model=manifest.provider_model, prompt_version=manifest.prompt_version,
-            output_limit=min(manifest.output_limit, self.max_output_tokens),
-        )
+        def operation() -> SpecialistResult:
+            return self.provider.execute(
+                task,
+                model=manifest.provider_model,
+                prompt_version=manifest.prompt_version,
+                output_limit=min(manifest.output_limit, self.max_output_tokens),
+            )
         try:
             if cancellation is not None:
                 cancellation.register(self.provider.cancel)

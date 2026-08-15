@@ -15,8 +15,8 @@ Non-responsibilities: does not perform the work of a state; only guards moves.
 
 from __future__ import annotations
 
-from .enums import TaskStatus
-from .errors import EllyError, ErrorClass
+from .enums import ErrorClass, TaskStatus
+from .errors import EllyError
 
 # Allowed forward transitions. Mirrors the DESIGN §5.4 diagram. AWAITING_CONSENT,
 # CANCELLED, and PARTIAL edges exist in the contract but are unreachable in M1.

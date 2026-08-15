@@ -25,44 +25,77 @@ from __future__ import annotations
 import time
 from threading import Lock
 
+from ..application.specialists import SpecialistWorkflow
 from ..domain.context import resolve_conversation_context
 from ..domain.enums import ErrorClass, OutcomeCode, Route, TaskStatus
 from ..domain.errors import CancelledError, ConfigInvalidError, EllyError, StorageFailureError
 from ..domain.models import (
     AuditEvent,
+    ContextManifest,
     ConversationOutcome,
     Message,
+    OperationLease,
     ProvenanceReference,
+    RouteDecision,
     RouteRequest,
     TaskRequest,
 )
 from ..domain.state_machine import ensure_transition
+from ..guardrails.controller import GuardrailController
+from ..memory import ProfileService
 from ..ports.audit import AuditPort
 from ..ports.clock import ClockPort
 from ..ports.generalist import GeneralistPort
 from ..ports.repository import SessionRepositoryPort
-from ..guardrails.controller import GuardrailController
-from .research import ResearchPipeline
-from .response_composer import (
-    compose_blocked, compose_cancelled, compose_failed, compose_partial,
-    compose_possible_duplicate, compose_success,
-)
-from .response_composer import compose_consent_required
-from ..specialists.registry import SpecialistRegistry
-from ..application.specialists import SpecialistWorkflow
 from ..privacy import ConsentWorkflow, PrivacyPolicy, payload_hash
+from ..specialists.registry import SpecialistRegistry
 from .authorization import CloudAuthorizationPolicy
-from .capabilities import CapabilityRegistry
-from .capabilities import CapabilityRequest
+from .capabilities import CapabilityHandler, CapabilityRegistry, CapabilityRequest
 from .capability_handlers import ResearchCapabilityHandler, SpecialistCapabilityHandler
 from .context_builder import ContextBuilder
-from .local_conversation import LocalConversationUseCase
-from .routing import RoutingPolicy
 from .execution import CancellationToken
+from .local_conversation import LocalConversationUseCase
+from .research import ResearchPipeline
+from .response_composer import (
+    compose_blocked,
+    compose_cancelled,
+    compose_consent_required,
+    compose_failed,
+    compose_partial,
+    compose_possible_duplicate,
+    compose_success,
+)
+from .routing import RoutingPolicy
 
 
 class ConversationOrchestrator:
-    """Sequences a single local conversational turn (UC-01)."""
+    """Sequences a single local conversational turn (UC-01).
+    
+    Responsibility groups:
+    Core infrastructure
+        clock
+        repository
+        audit
+    AI execution
+        generalist
+        research
+        specialist_workflow
+        local_conversation
+    Decision systems
+        routing_policy
+        privacy_policy
+        cloud_authorization_policy
+    Control/Safety
+        guardrails
+        consent
+        CancellationToken
+    Context/memory
+        context_builder
+        profile_service
+    Extensibility:
+        capability_registry
+        specialist_registry
+    """
 
     def __init__(
         self,
@@ -82,7 +115,7 @@ class ConversationOrchestrator:
         specialist_registry: SpecialistRegistry | None = None,
         specialist_workflow: SpecialistWorkflow | None = None,
         consent: ConsentWorkflow | None = None,
-        profile_service=None,
+        profile_service: ProfileService | None = None,
         capability_registry: CapabilityRegistry | None = None,
         routing_policy: RoutingPolicy | None = None,
         context_builder: ContextBuilder | None = None,
@@ -109,7 +142,7 @@ class ConversationOrchestrator:
         self._active_lock = Lock()
         self._active_cancellation: CancellationToken | None = None
         if capability_registry is None:
-            handlers = []
+            handlers: list[CapabilityHandler] = []
             if research is not None:
                 handlers.append(
                     ResearchCapabilityHandler(
@@ -181,7 +214,7 @@ class ConversationOrchestrator:
             RouteRequest(
                 request_id=request.request_id,
                 text=request.text,
-                contextual_text=contextual_text,
+                contextual_text=contextual_text,    # Support follow up questions
                 cloud_mode=request.cloud_mode,
             ),
             proposal=request.route_proposal,
@@ -241,7 +274,9 @@ class ConversationOrchestrator:
         self._repository.finish_task(task_id, status.value, self._clock.now())
 
     @staticmethod
-    def _capability_id_for_route(route: Route, route_decision) -> str:
+    def _capability_id_for_route(
+        route: Route, route_decision: RouteDecision
+    ) -> str:
         return route_decision.capability_id or {
             Route.WEB_RESEARCH: "web_research",
             Route.CODING_SPECIALIST: "coding",
@@ -249,7 +284,10 @@ class ConversationOrchestrator:
             Route.LOCAL_GENERALIST: "local_generalist",
         }.get(route, "")
 
-    def _fail_operation(self, operation_lease, *, possible_duplicate: bool = False) -> None:
+    def _fail_operation(
+        self, operation_lease: OperationLease | None,
+        *, possible_duplicate: bool = False,
+    ) -> None:
         if operation_lease is not None:
             self._repository.fail_operation(
                 operation_lease.operation_id,
@@ -257,14 +295,15 @@ class ConversationOrchestrator:
                 possible_duplicate=possible_duplicate,
             )
 
-    def _complete_operation(self, operation_lease) -> None:
+    def _complete_operation(self, operation_lease: OperationLease | None) -> None:
         if operation_lease is not None:
             self._repository.complete_operation(
                 operation_lease.operation_id, at=self._clock.now()
             )
 
     def _best_effort_fail_operation(
-        self, operation_lease, *, possible_duplicate: bool = False
+        self, operation_lease: OperationLease | None,
+        *, possible_duplicate: bool = False,
     ) -> None:
         try:
             self._fail_operation(
@@ -295,17 +334,20 @@ class ConversationOrchestrator:
         status: TaskStatus,
         route: Route,
         route_request: RouteRequest,
-        route_decision,
+        route_decision: RouteDecision,
         context_text: str,
-        context_manifest,
+        context_manifest: ContextManifest,
         request_guardrails: GuardrailController | None,
         started: float,
-        operation_lease,
+        operation_lease: OperationLease | None,
         cancellation: CancellationToken,
     ) -> ConversationOutcome | None:
         """Authorize and execute one optional capability through its typed port."""
+        # Defer tasks needs local generalists focus on tasks need specialist
         if route is Route.LOCAL_GENERALIST:
             return None
+
+        # Find handler/specialist for the task
         capability_id = self._capability_id_for_route(route, route_decision)
         handler = self._capability_registry.get(capability_id)
         if handler is None:
@@ -327,6 +369,7 @@ class ConversationOrchestrator:
                 manifest=context_manifest,
             )
 
+        # Check specialist health/availablity
         capability_status = handler.status()
         if not route_decision.available or not capability_status.available:
             reason = capability_status.reason_code or route_decision.diagnostic or "capability unavailable"
@@ -347,6 +390,7 @@ class ConversationOrchestrator:
                 manifest=context_manifest,
             )
 
+        # Check if specialist/capaility can accept the request
         capability_request = CapabilityRequest(
             task=request,
             route_request=route_request,
@@ -374,6 +418,17 @@ class ConversationOrchestrator:
                 manifest=context_manifest,
             )
 
+        # Check the registered capability match the route. Consistent check
+        """
+        handler.descriptor describes:
+        capability ID
+        routes
+        destination
+        model
+        purpose
+        cost
+        external boundary?
+        """
         descriptor = handler.descriptor
         if route not in descriptor.routes:
             self._fail_operation(operation_lease)
@@ -389,6 +444,8 @@ class ConversationOrchestrator:
             )
         execution_started = False
         generated_result = None
+
+        # Privacy classifcation + cloud authorization
         try:
             classification = self._privacy_policy.classify(context_text)
             authorization = self._cloud_authorization_policy.authorize(
@@ -440,6 +497,7 @@ class ConversationOrchestrator:
                     manifest=context_manifest,
                 )
 
+            # Authorization audit
             self._emit(
                 request=request,
                 task_id=task_id,
@@ -454,12 +512,16 @@ class ConversationOrchestrator:
                     f"reason={authorization.reason_code}"
                 ),
             )
+
+            # Capability execution
             execution_started = True
             execution = handler.execute(capability_request)
             result = execution.result
             if result.task_id != task_id:
                 raise ConfigInvalidError("capability returned a mismatched task id")
             generated_result = result
+
+            # Saving generated capability output
             if result.answer and result.task_status not in {
                 TaskStatus.AWAITING_CONSENT, TaskStatus.CANCELLED
             }:
@@ -537,6 +599,7 @@ class ConversationOrchestrator:
 
     # ---- orchestration ----------------------------------------------------
 
+    # Cancellation
     def cancel_active(self) -> bool:
         """Request cancellation of the currently executing turn, if any."""
         with self._active_lock:
@@ -546,6 +609,13 @@ class ConversationOrchestrator:
         token.cancel()
         return True
 
+    """
+    handle()
+    = lifecycle wrapper
+
+    _handle()
+    = business workflow
+    """
     def handle(self, request: TaskRequest) -> ConversationOutcome:
         cancellation = CancellationToken()
         with self._active_lock:
@@ -560,6 +630,7 @@ class ConversationOrchestrator:
     def _handle(
         self, request: TaskRequest, *, cancellation: CancellationToken
     ) -> ConversationOutcome:
+        # Main method
         """Process one local conversational turn (UC-01).
 
         Deterministic sequence:
@@ -841,7 +912,7 @@ class ConversationOrchestrator:
                 assistant_message=assistant_message,
             )
 
-    def _record_sources(self, task_id: str, sources) -> None:
+    def _record_sources(self, task_id: str, sources: tuple[str, ...]) -> None:
         for source in sources:
             if source:
                 self._repository.add_task_source(task_id, str(source), self._clock.now())

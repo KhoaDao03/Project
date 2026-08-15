@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import unittest
 
 from elly.application.capabilities import (
@@ -10,8 +9,8 @@ from elly.application.capabilities import (
     CapabilityDescriptor,
     CapabilityExecution,
     CapabilityMatch,
-    CapabilityRequest,
     CapabilityRegistry,
+    CapabilityRequest,
     CapabilityStatus,
 )
 from elly.application.routing import RoutingPolicy

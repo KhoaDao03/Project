@@ -113,8 +113,10 @@ _DEFAULTS: dict[str, object] = {
 
 
 def _as_positive_int(value: object, name: str) -> int:
+    if not isinstance(value, (str, bytes, bytearray, int, float)):
+        raise ConfigInvalidError(f"{name} must be an integer")
     try:
-        ivalue = int(value)  # type: ignore[arg-type]
+        ivalue = int(value)
     except (TypeError, ValueError) as exc:
         raise ConfigInvalidError(f"{name} must be an integer") from exc
     if ivalue <= 0:
@@ -123,8 +125,10 @@ def _as_positive_int(value: object, name: str) -> int:
 
 
 def _as_nonnegative_int(value: object, name: str) -> int:
+    if not isinstance(value, (str, bytes, bytearray, int, float)):
+        raise ConfigInvalidError(f"{name} must be an integer")
     try:
-        ivalue = int(value)  # type: ignore[arg-type]
+        ivalue = int(value)
     except (TypeError, ValueError) as exc:
         raise ConfigInvalidError(f"{name} must be an integer") from exc
     if ivalue < 0:

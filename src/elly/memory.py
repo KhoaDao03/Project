@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
-import logging
 from typing import TYPE_CHECKING
 
 from .domain.errors import EllyError, InputInvalidError
@@ -45,7 +45,10 @@ class ProfileService:
         self.clock = clock
         self.degraded = False
 
-    def add(self, *, item_id: str, key: str, value: str, sensitivity: str = "local", expires_at=None) -> ProfileItem:
+    def add(
+        self, *, item_id: str, key: str, value: str,
+        sensitivity: str = "local", expires_at: datetime | None = None,
+    ) -> ProfileItem:
         now = self.clock.now()
         item = ProfileItem(item_id, key, value, "owner_confirmed", sensitivity, True, now, now, expires_at)
         self.repository.add_profile_item(item)

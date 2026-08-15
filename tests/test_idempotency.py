@@ -14,7 +14,6 @@ from elly.domain.enums import CloudMode, OutcomeCode, PersistenceMode, TaskStatu
 from elly.domain.errors import StorageFailureError
 from elly.domain.models import SessionRecord, TaskRequest
 
-
 UTC = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
 
 

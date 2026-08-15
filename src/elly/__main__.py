@@ -8,8 +8,8 @@ configuration error it fails closed with a clear message and non-zero exit.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from .composition import build
 from .domain.errors import ConfigInvalidError, StorageFailureError

@@ -1,6 +1,6 @@
 # Elly V1.5 Improvement Proposal
 
-**Document status:** Proposed 
+**Document status:** Approved for the closed V1.5 implemented scope (owner decision 2026-08-07)
 **Target release:** V1.5 
 **Project name:** Elly 
 **Change type:** Incremental architectural and reliability improvements 
@@ -547,4 +547,9 @@ Elly V1.5 is complete when:
 
 ## 16. Status of Decisions
 
-All decisions in this document remain **proposed** until reconciled with and approved for the authoritative Elly SRS and design specification. Class and interface names are recommendations; behavioral guarantees and acceptance criteria should become authoritative only after review.
+The owner approved this document for the implemented V1.5 scope and closed the
+iteration on 2026-08-07. Deterministic completion evidence is recorded in
+[V1_5_IMPLEMENTATION_VERIFICATION.md](V1_5_IMPLEMENTATION_VERIFICATION.md), and
+the exact closure decision and accepted live-provider exception are recorded in
+[V1_5_CLOSURE.md](V1_5_CLOSURE.md). Recommended class/interface names remain
+internal guidance rather than mandatory public API commitments.

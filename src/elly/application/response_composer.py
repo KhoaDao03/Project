@@ -25,6 +25,7 @@ from ..domain.enums import (
     ValidationStatus,
 )
 from ..domain.models import ClaimSupport, ProvenanceReference, TaskResult
+from ..privacy import ConsentProposal
 
 
 def compose_success(*, task_id: str, answer: str, route: Route = Route.LOCAL_GENERALIST,
@@ -178,7 +179,9 @@ def compose_specialist(*, task_id: str, answer: str, route: Route, epistemic: Ep
     )
 
 
-def compose_consent_required(*, task_id: str, proposal, route: Route) -> TaskResult:
+def compose_consent_required(
+    *, task_id: str, proposal: ConsentProposal, route: Route
+) -> TaskResult:
     """Render every material field of an exact cloud-disclosure proposal."""
     return TaskResult(
         task_id=task_id, task_status=TaskStatus.AWAITING_CONSENT,

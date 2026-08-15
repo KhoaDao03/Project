@@ -3,23 +3,28 @@
 from __future__ import annotations
 
 import json
-from io import BytesIO
 import unittest
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from unittest.mock import patch
 
 from elly.adapters.openai_specialist import OpenAISpecialistProvider
+from elly.application.specialists import SpecialistWorkflow
 from elly.domain.enums import CloudMode
 from elly.domain.errors import (
-    AuthenticationProviderError, ConsentRequiredError, ConfigInvalidError,
-    ModelUnavailableError, PermissionDeniedError, ProviderQuotaError,
-    ProviderTimeoutError, RateLimitProviderError,
+    AuthenticationProviderError,
+    ConfigInvalidError,
+    ConsentRequiredError,
+    ModelUnavailableError,
+    PermissionDeniedError,
+    ProviderQuotaError,
+    ProviderTimeoutError,
+    RateLimitProviderError,
 )
 from elly.privacy import ConsentWorkflow, PrivacyClass, classify_payload
 from elly.specialists.contracts import SpecialistResult, SpecialistTask
 from elly.specialists.fake_provider import FakeSpecialistProvider
 from elly.specialists.manifest import SpecialistManifest
-from elly.application.specialists import SpecialistWorkflow
 
 UTC = datetime(2026, 8, 4, tzinfo=timezone.utc)
 

@@ -6,12 +6,12 @@ import ipaddress
 import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..domain.errors import UnsafeUrlError
 from ..domain.models import EvidenceObject
 from ..ports.web_research import ProviderCitation
-
 
 _TRACKING_QUERY_KEYS = {
     "device", "fbclid", "gclid", "loc_physical_ms", "matchtype",
@@ -66,7 +66,7 @@ def validate_citations(
     citations: tuple[ProviderCitation, ...],
     *,
     now: datetime | None = None,
-    resolver=socket.getaddrinfo,
+    resolver: Callable[..., list[Any]] = socket.getaddrinfo,
     resolve_hosts: bool = False,
 ) -> ValidatedCitationSet:
     """Keep only HTTPS, deduplicated, publicly-resolvable citation metadata.

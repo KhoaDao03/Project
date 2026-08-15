@@ -1,6 +1,9 @@
 # Elly V1.5 Technical Design
 
-**Status:** Approved and implemented in the working tree (V1.5 incremental release).
+**Status:** Approved, implemented, and closed by owner decision on 2026-08-07.
+
+Closure evidence and the explicitly deferred live-provider exception are recorded
+in [V1_5_CLOSURE.md](V1_5_CLOSURE.md).
 
 ## 1. Proposed approach
 
