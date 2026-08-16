@@ -6,7 +6,12 @@ import re
 from dataclasses import dataclass
 
 from ..domain.enums import EpistemicStatus
-from ..domain.errors import CancelledError, EllyError, MalformedResultError
+from ..domain.errors import (
+    CancelledError,
+    EllyError,
+    InputInvalidError,
+    MalformedResultError,
+)
 from ..domain.models import ClaimSupport, EvidenceObject
 from ..guardrails.controller import GuardrailController
 from ..ports.clock import ClockPort
@@ -77,9 +82,17 @@ class ResearchPipeline:
     def execute(
         self, query: str, *, request_guardrails: GuardrailController | None = None,
         cancellation: CancellationToken | None = None,
+        current_information: bool | None = None,
     ) -> ResearchExecution:
         # Main method
         """Research a query under the caller's shared per-task guardrail context."""
+        if current_information is not None and not isinstance(current_information, bool):
+            raise InputInvalidError("current_information must be a bool or null")
+        freshness_required = (
+            needs_current_information(query)
+            if current_information is None
+            else current_information
+        )
         budget = ResearchBudget(max_results=self.max_results, timeout_seconds=self.timeout_seconds)
         if cancellation is not None:
             cancellation.raise_if_cancelled()
@@ -134,7 +147,7 @@ class ResearchPipeline:
         )
         selection = select_evidence(
             query, validated.evidence, now=self.clock.now(),
-            current_information=needs_current_information(query),
+            current_information=freshness_required,
             token_budget=self.evidence_token_budget,
         )
         evidence = selection.selected[:self.max_results]
@@ -160,7 +173,7 @@ class ResearchPipeline:
                 (eligible := self.evidence_policy.evaluate(
                     item, provider_answer=response.answer_text,
                     now=self.clock.now(), cancellation=cancellation,
-                    current_information=needs_current_information(query),
+                    current_information=freshness_required,
                 )).evidence is not None
                 and eligible.evidence is not None
                 and _supported_passage(eligible.evidence.supporting_passage)

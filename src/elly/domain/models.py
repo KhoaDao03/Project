@@ -48,6 +48,7 @@ from .errors import InputInvalidError
 IntentScalar: TypeAlias = str | int | float | bool | None
 
 if TYPE_CHECKING:
+    from ..application.routing_contracts import CapabilitySelectionProposal, TaskIntent
     from ..privacy import ConsentProposal
 
 
@@ -320,13 +321,63 @@ class TaskResult:
     provenance: tuple["ProvenanceReference", ...] = ()
     claim_supports: tuple["ClaimSupport", ...] = ()
     answer_retained: bool = True
+    # V2.5 routing metadata is additive. New results use a generic
+    # ``route_summary`` and persist selected capability identity separately.
+    route_category: Route | None = None
+    capability_id: str | None = None
+    operation: str = ""
+    selection_reason_code: str = ""
+    routing_contract_version: str = ""
+    candidate_count: int = 0
+    rejected_candidate_reason_codes: tuple[str, ...] = ()
+    clarification_required: bool = False
+    freshness_affected_selection: bool = False
 
     def __post_init__(self) -> None:
         _require_nonempty(self.task_id, "task_id")
+        if not isinstance(self.route_summary, Route):
+            raise InputInvalidError("route_summary must be a Route")
         if not isinstance(self.outcome_code, OutcomeCode):
             raise InputInvalidError("outcome_code must be an OutcomeCode")
         if not isinstance(self.answer_retained, bool):
             raise InputInvalidError("answer_retained must be a bool")
+        if self.route_category is not None and not isinstance(self.route_category, Route):
+            raise InputInvalidError("route_category must be a Route or null")
+        if self.capability_id is not None:
+            _require_nonempty(self.capability_id, "task result capability_id")
+        if not isinstance(self.operation, str):
+            raise InputInvalidError("task result operation must be text")
+        if not isinstance(self.selection_reason_code, str):
+            raise InputInvalidError("task result selection_reason_code must be text")
+        if not isinstance(self.routing_contract_version, str):
+            raise InputInvalidError("task result routing_contract_version must be text")
+        if isinstance(self.candidate_count, bool) or not isinstance(self.candidate_count, int):
+            raise InputInvalidError("task result candidate_count must be an integer")
+        if not 0 <= self.candidate_count <= 10000:
+            raise InputInvalidError("task result candidate_count is out of range")
+        if not isinstance(self.rejected_candidate_reason_codes, tuple) or len(
+            self.rejected_candidate_reason_codes
+        ) > 64:
+            raise InputInvalidError(
+                "task result rejected_candidate_reason_codes must be a bounded tuple"
+            )
+        for code in self.rejected_candidate_reason_codes:
+            if (
+                not isinstance(code, str)
+                or not code
+                or len(code) > 64
+                or not code[0].isalpha()
+                or not all(char.isalnum() or char in "._-" for char in code)
+            ):
+                raise InputInvalidError(
+                    "task result rejected candidate reason codes must be safe codes"
+                )
+        if not isinstance(self.clarification_required, bool):
+            raise InputInvalidError("task result clarification_required must be a bool")
+        if not isinstance(self.freshness_affected_selection, bool):
+            raise InputInvalidError(
+                "task result freshness_affected_selection must be a bool"
+            )
         if any(not isinstance(item, ProvenanceReference) for item in self.provenance):
             raise InputInvalidError("provenance must contain ProvenanceReference values")
         if any(not isinstance(item, ClaimSupport) for item in self.claim_supports):
@@ -445,6 +496,10 @@ class RouteProposal:
             raise InputInvalidError("route proposal route must be a Route")
         if self.capability_id is not None:
             _require_nonempty(self.capability_id, "route proposal capability_id")
+        if self.route is Route.REGISTERED_CAPABILITY and self.capability_id is None:
+            raise InputInvalidError(
+                "registered-capability route proposal must name a capability"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,9 +512,13 @@ class RouteDecision:
     diagnostic: str = ""
     available: bool = True
     operation: str = ""
-    intent: CapabilityIntent | None = None
+    intent: "CapabilityIntent | TaskIntent | None" = None
     clarification_required: bool = False
     clarification_fields: tuple[str, ...] = ()
+    selection: "CapabilitySelectionProposal | None" = None
+    candidate_count: int = 0
+    rejected_candidate_reason_codes: tuple[str, ...] = ()
+    freshness_affected_selection: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.route, Route):
@@ -468,10 +527,19 @@ class RouteDecision:
             raise InputInvalidError("route decision reason_code must be a RouteReasonCode")
         if self.capability_id is not None:
             _require_nonempty(self.capability_id, "route decision capability_id")
+        if self.route is Route.REGISTERED_CAPABILITY and self.capability_id is None:
+            raise InputInvalidError(
+                "registered-capability route must name a capability"
+            )
         if not isinstance(self.operation, str):
             raise InputInvalidError("route decision operation must be text")
         if self.intent is not None and not isinstance(self.intent, CapabilityIntent):
-            raise InputInvalidError("route decision intent has an invalid type")
+            # Import lazily to keep the domain model independent of the
+            # application routing-contract module during module initialization.
+            from ..application.routing_contracts import TaskIntent
+
+            if not isinstance(self.intent, TaskIntent):
+                raise InputInvalidError("route decision intent has an invalid type")
         if not isinstance(self.clarification_required, bool):
             raise InputInvalidError("route decision clarification_required must be a bool")
         if not isinstance(self.clarification_fields, tuple) or any(
@@ -483,7 +551,44 @@ class RouteDecision:
             raise InputInvalidError(
                 "clarification-required route must name missing fields"
             )
+        if self.selection is not None:
+            from ..application.routing_contracts import CapabilitySelectionProposal
 
+            if not isinstance(self.selection, CapabilitySelectionProposal):
+                raise InputInvalidError("route decision selection has an invalid type")
+        if isinstance(self.candidate_count, bool) or not isinstance(self.candidate_count, int):
+            raise InputInvalidError("route decision candidate_count must be an integer")
+        if not 0 <= self.candidate_count <= 10000:
+            raise InputInvalidError("route decision candidate_count is out of range")
+        if not isinstance(self.rejected_candidate_reason_codes, tuple) or len(
+            self.rejected_candidate_reason_codes
+        ) > 64:
+            raise InputInvalidError(
+                "route decision rejected_candidate_reason_codes must be a bounded tuple"
+            )
+        for code in self.rejected_candidate_reason_codes:
+            if (
+                not isinstance(code, str)
+                or not code
+                or len(code) > 64
+                or not code[0].isalpha()
+                or not all(char.isalnum() or char in "._-" for char in code)
+            ):
+                raise InputInvalidError(
+                    "route decision rejected candidate reason codes must be safe codes"
+                )
+        if not isinstance(self.freshness_affected_selection, bool):
+            raise InputInvalidError(
+                "route decision freshness_affected_selection must be a bool"
+            )
+
+    @property
+    def generic_route(self) -> Route:
+        """Return the route category used for execution and persistence."""
+
+        from ..application.route_compatibility import generic_route_for
+
+        return generic_route_for(self.route, self.capability_id)
 
 @dataclass(frozen=True, slots=True)
 class OperationLease:

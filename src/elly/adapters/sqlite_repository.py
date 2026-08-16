@@ -27,6 +27,10 @@ from pathlib import Path
 from threading import RLock
 from types import TracebackType
 
+from ..application.route_compatibility import (
+    ROUTING_CONTRACT_VERSION,
+    generic_route_for,
+)
 from ..domain.enums import (
     CloudMode,
     EpistemicStatus,
@@ -47,7 +51,7 @@ from ..domain.models import (
 )
 from ..memory import ProfileItem
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 6
 
 _MIGRATION_V1 = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -145,6 +149,67 @@ CREATE TABLE IF NOT EXISTS task_results (
 );
 """
 _MIGRATION_V4_STATEMENTS = tuple(statement.strip() for statement in _MIGRATION_V4.split(";") if statement.strip())
+_MIGRATION_V5 = """
+ALTER TABLE tasks ADD COLUMN route_category TEXT NOT NULL DEFAULT 'local_conversation';
+ALTER TABLE tasks ADD COLUMN selected_capability_id TEXT;
+ALTER TABLE tasks ADD COLUMN selected_operation TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN selection_reason_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN routing_contract_version TEXT NOT NULL DEFAULT 'v2-legacy';
+ALTER TABLE task_results ADD COLUMN route_category TEXT NOT NULL DEFAULT 'local_conversation';
+ALTER TABLE task_results ADD COLUMN selected_capability_id TEXT;
+ALTER TABLE task_results ADD COLUMN selected_operation TEXT NOT NULL DEFAULT '';
+ALTER TABLE task_results ADD COLUMN selection_reason_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE task_results ADD COLUMN routing_contract_version TEXT NOT NULL DEFAULT 'v2-legacy';
+UPDATE task_results
+SET route_category = CASE
+    WHEN route = 'local_generalist' THEN 'local_conversation'
+    ELSE 'registered_capability'
+END,
+selected_capability_id = CASE route
+    WHEN 'web_research' THEN 'web_research'
+    WHEN 'coding_specialist' THEN 'coding'
+    WHEN 'research_specialist' THEN 'research'
+    ELSE selected_capability_id
+END,
+selected_operation = CASE route
+    WHEN 'web_research' THEN 'research.search'
+    WHEN 'coding_specialist' THEN 'specialist.analyze'
+    WHEN 'research_specialist' THEN 'specialist.analyze'
+    ELSE selected_operation
+END,
+selection_reason_code = CASE
+    WHEN route = 'local_generalist' THEN 'LOCAL_DEFAULT'
+    ELSE 'LEGACY_ROUTE'
+END
+WHERE routing_contract_version = 'v2-legacy';
+UPDATE tasks
+SET route_category = COALESCE(
+        (
+            SELECT CASE
+                WHEN audit.route = 'local_generalist' THEN 'local_conversation'
+                ELSE 'registered_capability'
+            END
+            FROM audit_events AS audit
+            WHERE audit.task_id = tasks.task_id AND audit.route IS NOT NULL
+            ORDER BY audit.id DESC
+            LIMIT 1
+        ),
+        route_category
+    )
+WHERE routing_contract_version = 'v2-legacy';
+"""
+_MIGRATION_V5_STATEMENTS = tuple(statement.strip() for statement in _MIGRATION_V5.split(";") if statement.strip())
+_MIGRATION_V6 = """
+ALTER TABLE tasks ADD COLUMN candidate_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN rejected_candidate_reason_codes_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE tasks ADD COLUMN clarification_required INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN freshness_affected_selection INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE task_results ADD COLUMN candidate_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE task_results ADD COLUMN rejected_candidate_reason_codes_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_results ADD COLUMN clarification_required INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE task_results ADD COLUMN freshness_affected_selection INTEGER NOT NULL DEFAULT 0;
+"""
+_MIGRATION_V6_STATEMENTS = tuple(statement.strip() for statement in _MIGRATION_V6.split(";") if statement.strip())
 _PROFILE_TABLES = {
     "profile_items": """CREATE TABLE profile_items (
         item_id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
@@ -240,6 +305,8 @@ class SqliteSessionRepository:
                 (2, _MIGRATION_V2_STATEMENTS),
                 (3, _MIGRATION_V3_STATEMENTS),
                 (4, _MIGRATION_V4_STATEMENTS),
+                (5, _MIGRATION_V5_STATEMENTS),
+                (6, _MIGRATION_V6_STATEMENTS),
             )
             for version, statements in migrations:
                 if current_version >= version:
@@ -456,12 +523,42 @@ class SqliteSessionRepository:
             claims = result.claims if retain_answer else ()
             citations = result.citations
             partial_work = result.partial_work if retain_answer else ()
+            route_category = result.route_category or generic_route_for(
+                result.route_summary, result.capability_id
+            )
+            public_route = result.route_summary
+            contract_version = (
+                result.routing_contract_version or ROUTING_CONTRACT_VERSION
+            )
             with self._conn:
+                self._conn.execute(
+                    "UPDATE tasks SET route_category=?, selected_capability_id=?, "
+                    "selected_operation=?, selection_reason_code=?, "
+                    "routing_contract_version=?, candidate_count=?, "
+                    "rejected_candidate_reason_codes_json=?, clarification_required=?, "
+                    "freshness_affected_selection=? WHERE task_id=?",
+                    (
+                        route_category.value,
+                        result.capability_id,
+                        result.operation,
+                        result.selection_reason_code,
+                        contract_version,
+                        result.candidate_count,
+                        json.dumps(list(result.rejected_candidate_reason_codes)),
+                        int(result.clarification_required),
+                        int(result.freshness_affected_selection),
+                        result.task_id,
+                    ),
+                )
                 self._conn.execute(
                     "INSERT OR REPLACE INTO task_results "
                     "(task_id, task_status, outcome_code, epistemic_status, validation_status, "
                     "answer, answer_retained, route, claims_json, citations_json, partial_work_json, "
-                    "failures_json, next_actions_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "failures_json, next_actions_json, updated_at, route_category, "
+                    "selected_capability_id, selected_operation, selection_reason_code, "
+                    "routing_contract_version, candidate_count, "
+                    "rejected_candidate_reason_codes_json, clarification_required, "
+                    "freshness_affected_selection) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         result.task_id,
                         result.task_status.value,
@@ -470,13 +567,22 @@ class SqliteSessionRepository:
                         result.validation_status.value,
                         answer,
                         int(retain_answer),
-                        result.route_summary.value,
+                        public_route.value,
                         json.dumps(list(claims)),
                         json.dumps(list(citations)),
                         json.dumps(list(partial_work)),
                         json.dumps(list(result.failures)),
                         json.dumps(list(result.next_actions)),
                         _iso(at),
+                        route_category.value,
+                        result.capability_id,
+                        result.operation,
+                        result.selection_reason_code,
+                        contract_version,
+                        result.candidate_count,
+                        json.dumps(list(result.rejected_candidate_reason_codes)),
+                        int(result.clarification_required),
+                        int(result.freshness_affected_selection),
                     ),
                 )
         except StorageFailureError:
@@ -489,7 +595,11 @@ class SqliteSessionRepository:
             row = self._conn.execute(
                 "SELECT task_id, task_status, outcome_code, epistemic_status, validation_status, "
                 "answer, answer_retained, route, claims_json, citations_json, partial_work_json, "
-                "failures_json, next_actions_json FROM task_results WHERE task_id=?",
+                "failures_json, next_actions_json, route_category, selected_capability_id, "
+                "selected_operation, selection_reason_code, routing_contract_version, "
+                "candidate_count, rejected_candidate_reason_codes_json, clarification_required, "
+                "freshness_affected_selection "
+                "FROM task_results WHERE task_id=?",
                 (task_id,),
             ).fetchone()
         except sqlite3.Error as exc:
@@ -497,6 +607,8 @@ class SqliteSessionRepository:
         if row is None:
             return None
         try:
+            stored_route = Route(row[7])
+            capability_id = row[14]
             return TaskResult(
                 task_id=row[0],
                 task_status=TaskStatus(row[1]),
@@ -505,12 +617,21 @@ class SqliteSessionRepository:
                 validation_status=ValidationStatus(row[4]),
                 answer=row[5],
                 answer_retained=bool(row[6]),
-                route_summary=Route(row[7]),
+                route_summary=stored_route,
                 claims=tuple(json.loads(row[8])),
                 citations=tuple(json.loads(row[9])),
                 partial_work=tuple(json.loads(row[10])),
                 failures=tuple(json.loads(row[11])),
                 next_actions=tuple(json.loads(row[12])),
+                route_category=Route(row[13]) if row[13] else None,
+                capability_id=capability_id,
+                operation=row[15],
+                selection_reason_code=row[16],
+                routing_contract_version=row[17],
+                candidate_count=int(row[18]),
+                rejected_candidate_reason_codes=tuple(json.loads(row[19])),
+                clarification_required=bool(row[20]),
+                freshness_affected_selection=bool(row[21]),
             )
         except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
             raise StorageFailureError("stored task result is invalid") from exc

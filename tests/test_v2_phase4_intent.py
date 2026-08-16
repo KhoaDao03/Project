@@ -22,7 +22,6 @@ from elly.application.capabilities import (
 from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.conversation import ConversationOrchestrator
-from elly.application.intent import DeterministicIntentInterpreter
 from elly.application.local_conversation import LocalConversationUseCase
 from elly.application.routing import RoutingPolicy
 from elly.domain.enums import (
@@ -51,7 +50,7 @@ class _PreparedCapability:
     descriptor = CapabilityDescriptor(
         capability_id="phase4.test",
         description="Phase 4 deterministic capability",
-        routes=(Route.CODING_SPECIALIST,),
+        routes=(Route.REGISTERED_CAPABILITY,),
         request_schema="phase4-test-v1",
         operations=("test.inspect",),
         requires_external_boundary=False,
@@ -80,16 +79,13 @@ class _PreparedCapability:
                 epistemic_status=EpistemicStatus.INFERRED,
                 validation_status=ValidationStatus.VALIDATED,
                 answer="prepared",
-                route_summary=Route.CODING_SPECIALIST,
+                route_summary=Route.REGISTERED_CAPABILITY,
             ),
             request.context_manifest,
         )
 
 
 class Phase4IntentTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.interpreter = DeterministicIntentInterpreter()
-
     @staticmethod
     def _route_request(text: str) -> RouteRequest:
         return RouteRequest(
@@ -98,29 +94,36 @@ class Phase4IntentTests(unittest.TestCase):
             cloud_mode=CloudMode.LOCAL_ONLY,
         )
 
-    def test_semantic_paraphrases_resolve_to_one_structured_operation(self) -> None:
-        first = self.interpreter.interpret(
-            self._route_request("Inspect this implementation for defects")
+    def test_structured_intent_resolves_through_the_live_catalog(self) -> None:
+        policy = RoutingPolicy(capabilities=CapabilityRegistry((_PreparedCapability(),)))
+        decision = policy.decide(
+            self._route_request("inspect this implementation"),
+            intent=CapabilityIntent(
+                proposed_capability_id="phase4.test",
+                operation="test.inspect",
+                arguments={"subject": "this implementation"},
+                confidence=1.0,
+                ambiguity=IntentAmbiguity.CLEAR,
+                rationale_code="TEST",
+            ),
         )
-        second = self.interpreter.interpret(
-            self._route_request("Please review the software and find an issue")
-        )
-        self.assertEqual("coding", first.proposed_capability_id)
-        self.assertEqual("specialist.analyze", first.operation)
-        self.assertEqual(first.operation, second.operation)
-        self.assertEqual(IntentAmbiguity.CLEAR, first.ambiguity)
+        self.assertEqual(Route.REGISTERED_CAPABILITY, decision.route)
+        self.assertEqual("phase4.test", decision.capability_id)
 
     def test_misleading_specialist_wording_is_clarified_not_executed(self) -> None:
-        intent = self.interpreter.interpret(
-            self._route_request("Can a specialist help with this?")
-        )
-        self.assertEqual(IntentAmbiguity.AMBIGUOUS, intent.ambiguity)
         decision = RoutingPolicy(capabilities=CapabilityRegistry()).decide(
-            self._route_request("Can a specialist help with this?")
+            self._route_request("Can a specialist help with this?"),
+            intent=CapabilityIntent(
+                proposed_capability_id=None,
+                operation="task.unspecified",
+                confidence=0.2,
+                ambiguity=IntentAmbiguity.AMBIGUOUS,
+                rationale_code="TEST_AMBIGUOUS",
+            ),
         )
         self.assertTrue(decision.clarification_required)
         self.assertEqual(
-            RouteReasonCode.INTENT_CLARIFICATION_REQUIRED, decision.reason_code
+            RouteReasonCode.CATALOG_AMBIGUOUS, decision.reason_code
         )
 
     def test_unrelated_keyword_combinations_do_not_select_coding(self) -> None:
@@ -129,8 +132,10 @@ class Phase4IntentTests(unittest.TestCase):
             "The source code is printed on the package; find the store hours.",
         ):
             with self.subTest(text=text):
-                intent = self.interpreter.interpret(self._route_request(text))
-                self.assertNotEqual("coding", intent.proposed_capability_id)
+                decision = RoutingPolicy(
+                    capabilities=CapabilityRegistry((_PreparedCapability(),))
+                ).decide(self._route_request(text))
+                self.assertNotEqual("phase4.test", decision.capability_id)
 
     def test_unknown_capability_and_operation_are_rejected_deterministically(self) -> None:
         registry = CapabilityRegistry((_PreparedCapability(),))
@@ -157,10 +162,14 @@ class Phase4IntentTests(unittest.TestCase):
                 rationale_code="TEST",
             ),
         )
-        self.assertEqual(RouteReasonCode.INTENT_REJECTED, unknown.reason_code)
+        self.assertEqual(
+            RouteReasonCode.SELECTION_PROPOSAL_REJECTED, unknown.reason_code
+        )
         self.assertEqual("CAPABILITY_NOT_REGISTERED", unknown.diagnostic)
-        self.assertEqual(RouteReasonCode.INTENT_REJECTED, unsupported.reason_code)
-        self.assertEqual("OPERATION_NOT_SUPPORTED", unsupported.diagnostic)
+        self.assertEqual(
+            RouteReasonCode.SELECTION_PROPOSAL_REJECTED, unsupported.reason_code
+        )
+        self.assertEqual("OPERATION_UNSUPPORTED", unsupported.diagnostic)
 
     def test_prepare_validates_input_without_provider_execution(self) -> None:
         handler = _PreparedCapability()
@@ -191,7 +200,7 @@ class Phase4IntentTests(unittest.TestCase):
         self.assertFalse(missing.accepted)
         self.assertEqual(("subject",), missing.clarification_fields)
 
-    def test_ambiguous_request_is_persisted_as_clarification_without_provider_call(self) -> None:
+    def test_unmatched_request_uses_local_conversation_without_provider_capability_call(self) -> None:
         repository = SqliteSessionRepository(":memory:")
         repository.apply_migrations()
         repository.create_session(
@@ -240,11 +249,9 @@ class Phase4IntentTests(unittest.TestCase):
                     submitted_at=UTC,
                 )
             )
-            self.assertEqual(
-                "clarification_required", outcome.result.outcome_code.value
-            )
-            self.assertEqual("blocked", repository.task_status("task-phase4-ambiguous"))
-            self.assertTrue(
+            self.assertEqual("success", outcome.result.outcome_code.value)
+            self.assertEqual("completed", repository.task_status("task-phase4-ambiguous"))
+            self.assertFalse(
                 any(
                     event.event_type == "intent.clarification_required"
                     for event in audit.by_task("task-phase4-ambiguous")

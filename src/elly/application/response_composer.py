@@ -34,7 +34,7 @@ from ..privacy import ConsentProposal
 from .action_authorization import safe_action_target_reference
 
 
-def compose_success(*, task_id: str, answer: str, route: Route = Route.LOCAL_GENERALIST,
+def compose_success(*, task_id: str, answer: str, route: Route = Route.LOCAL_CONVERSATION,
                     provenance: tuple[ProvenanceReference, ...] = ()) -> TaskResult:
     """Compose a COMPLETED local conversational result."""
     return TaskResult(
@@ -49,7 +49,7 @@ def compose_success(*, task_id: str, answer: str, route: Route = Route.LOCAL_GEN
     )
 
 
-def compose_blocked(*, task_id: str, reason: str, route: Route = Route.LOCAL_GENERALIST,
+def compose_blocked(*, task_id: str, reason: str, route: Route = Route.LOCAL_CONVERSATION,
                     outcome_code: OutcomeCode = OutcomeCode.BLOCKED) -> TaskResult:
     """Compose a BLOCKED result carrying a safe, non-sensitive reason."""
     return TaskResult(
@@ -66,7 +66,7 @@ def compose_blocked(*, task_id: str, reason: str, route: Route = Route.LOCAL_GEN
 
 
 def compose_failed(
-    *, task_id: str, reason: str, route: Route = Route.LOCAL_GENERALIST
+    *, task_id: str, reason: str, route: Route = Route.LOCAL_CONVERSATION
 ) -> TaskResult:
     """Compose an execution failure distinct from a policy block."""
     return TaskResult(
@@ -86,7 +86,7 @@ def compose_partial(
     *,
     task_id: str,
     reason: str,
-    route: Route = Route.LOCAL_GENERALIST,
+    route: Route = Route.LOCAL_CONVERSATION,
     answer: str = "",
     partial_work: tuple[str, ...] = (),
 ) -> TaskResult:
@@ -105,7 +105,7 @@ def compose_partial(
     )
 
 
-def compose_cancelled(*, task_id: str, partial_work: str = "", route: Route = Route.LOCAL_GENERALIST) -> TaskResult:
+def compose_cancelled(*, task_id: str, partial_work: str = "", route: Route = Route.LOCAL_CONVERSATION) -> TaskResult:
     """Compose an honest owner-cancelled result with no fabricated answer."""
     return TaskResult(
         task_id=task_id,
@@ -143,7 +143,7 @@ def compose_research(*, task_id: str, answer: str, citations: tuple[str, ...], c
     """Compose a research result whose sources were validated by the application."""
     return TaskResult(
         task_id=task_id, task_status=TaskStatus.COMPLETED, epistemic_status=epistemic,
-        validation_status=validation, answer=answer, route_summary=Route.WEB_RESEARCH,
+        validation_status=validation, answer=answer, route_summary=Route.REGISTERED_CAPABILITY,
         claims=claims, citations=citations,
         outcome_code=OutcomeCode.UNKNOWN if epistemic is EpistemicStatus.UNKNOWN else OutcomeCode.SUCCESS,
         claim_supports=claim_supports, provenance=provenance,
@@ -206,7 +206,7 @@ def compose_consent_required(
 
 
 def compose_clarification(
-    *, task_id: str, fields: tuple[str, ...], route: Route = Route.LOCAL_GENERALIST
+    *, task_id: str, fields: tuple[str, ...], route: Route = Route.LOCAL_CONVERSATION
 ) -> TaskResult:
     """Compose a typed clarification without selecting or executing a provider."""
     safe_fields = tuple(dict.fromkeys(field for field in fields if field.strip()))

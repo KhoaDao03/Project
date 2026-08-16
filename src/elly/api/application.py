@@ -9,13 +9,13 @@ crossing the interface boundary.
 from __future__ import annotations
 
 import logging
-import re
 import threading
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
 
 from ..application.action_authorization import safe_action_target_reference
 from ..application.response_composer import compose_cancelled
+from ..application.route_compatibility import inherit_route_metadata
 from ..composition import Application
 from ..domain.enums import (
     CloudMode,
@@ -51,6 +51,7 @@ from ..domain.models import (
 )
 from ..presentation.validators import normalize_and_validate
 from ..privacy import ConsentProposal
+from ..trace_safety import redact_trace_detail
 from .contracts import (
     ActionConfirmationView,
     ActionDecisionRequest,
@@ -300,6 +301,16 @@ class EllyApplication:
                     ),
                     None,
                 )
+            fallback_route = None
+            if result is None:
+                fallback_route = next(
+                    (
+                        event.route
+                        for event in reversed(self._scope.repository.audit_by_task(task_id))
+                        if event.route is not None
+                    ),
+                    None,
+                )
             return ApiResult.success(
                 _task_view(
                     task_id,
@@ -308,6 +319,7 @@ class EllyApplication:
                     result,
                     self._scope.repository.task_sources(task_id),
                     action_confirmation,
+                    fallback_route,
                 )
             )
         except BaseException as exc:
@@ -443,6 +455,7 @@ class EllyApplication:
             if self._scope.repository.task_session_id(request.task_id) is None:
                 return ApiResult.failed(_failure_not_found("task", request.task_id))
             events = self._scope.repository.audit_by_task(request.task_id)
+            result = self._scope.repository.get_task_result(request.task_id)
             return ApiResult.success(
                 TraceView(
                     task_id=request.task_id,
@@ -456,6 +469,25 @@ class EllyApplication:
                             detail=_public_trace_detail(event.detail),
                         )
                         for event in events
+                    ),
+                    route_category=result.route_category if result is not None else None,
+                    capability_id=result.capability_id if result is not None else None,
+                    operation=result.operation if result is not None else "",
+                    selection_reason_code=(
+                        result.selection_reason_code if result is not None else ""
+                    ),
+                    routing_contract_version=(
+                        result.routing_contract_version if result is not None else ""
+                    ),
+                    candidate_count=result.candidate_count if result is not None else 0,
+                    rejected_candidate_reason_codes=(
+                        result.rejected_candidate_reason_codes if result is not None else ()
+                    ),
+                    clarification_required=(
+                        result.clarification_required if result is not None else False
+                    ),
+                    freshness_affected_selection=(
+                        result.freshness_affected_selection if result is not None else False
                     ),
                 )
             )
@@ -511,8 +543,12 @@ class EllyApplication:
                     existing = self._outcomes.get(pending.proposal.task_id)
                 blocked = _blocked_after_consent_denial(
                     pending.proposal,
-                    existing.result.route_summary if existing is not None else Route.WEB_RESEARCH,
+                    existing.result.route_summary
+                    if existing is not None
+                    else Route.REGISTERED_CAPABILITY,
                 )
+                if existing is not None:
+                    blocked = inherit_route_metadata(blocked, existing.result)
                 self._scope.repository.finish_task(
                     pending.proposal.task_id, TaskStatus.BLOCKED.value, self._scope.clock.now()
                 )
@@ -580,9 +616,11 @@ class EllyApplication:
                 route = (
                     prior_outcome.result.route_summary
                     if prior_outcome is not None
-                    else Route.LOCAL_GENERALIST
+                    else Route.LOCAL_CONVERSATION
                 )
                 blocked = _blocked_after_action_denial(pending.proposal, route)
+                if prior_outcome is not None:
+                    blocked = inherit_route_metadata(blocked, prior_outcome.result)
                 self._scope.repository.finish_task(
                     pending.proposal.task_id,
                     TaskStatus.BLOCKED.value,
@@ -881,12 +919,14 @@ def _task_view(
     result: TaskResult | None,
     sources: tuple[str, ...],
     action_confirmation: ActionConfirmationProposal | None = None,
+    fallback_route: Route | None = None,
 ) -> TaskView:
     if result is None:
         return TaskView(
             task_id=task_id,
             session_id=session_id,
             status=status,
+            route=fallback_route,
             sources=sources,
             action_confirmation=(
                 _action_confirmation_view(action_confirmation)
@@ -912,6 +952,15 @@ def _task_view(
             if action_confirmation is not None
             else None
         ),
+        route_category=result.route_category,
+        capability_id=result.capability_id,
+        operation=result.operation,
+        selection_reason_code=result.selection_reason_code,
+        routing_contract_version=result.routing_contract_version,
+        candidate_count=result.candidate_count,
+        rejected_candidate_reason_codes=result.rejected_candidate_reason_codes,
+        clarification_required=result.clarification_required,
+        freshness_affected_selection=result.freshness_affected_selection,
     )
 
 
@@ -1034,16 +1083,8 @@ def _failure_internal(message: str, correlation_id: str) -> ApiFailure:
     return ApiFailure(ApiFailureCode.INTERNAL_FAILURE, message, True, correlation_id)
 
 
-_PUBLIC_SECRET_VALUE = re.compile(
-    r"(?i)\b(api[_ -]?key|secret|password|token)\b\s*[:=]\s*([^\s,;]+)"
-)
-
-
 def _public_trace_detail(detail: str) -> str:
     """Apply boundary redaction even when a nonstandard audit port is used."""
-    redacted = _PUBLIC_SECRET_VALUE.sub(
-        lambda match: f"{match.group(1)}=[REDACTED]", detail
-    )
-    return " ".join(redacted.split())[:200]
+    return redact_trace_detail(detail)
     IntentEntity,
     RouteProposal,

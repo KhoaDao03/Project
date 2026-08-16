@@ -107,7 +107,7 @@ class Phase3AuthorizationTests(unittest.TestCase):
                     model_id="fixture-web-v1",
                 ),
                 SpecialistCapabilityHandler(
-                    "coding", Route.CODING_SPECIALIST, _manifest(), specialist
+                    "coding", _manifest(), specialist
                 ),
             )
         )
@@ -160,8 +160,8 @@ class Phase3AuthorizationTests(unittest.TestCase):
 
     def test_shared_cloud_policy_denies_both_capabilities_in_local_mode(self) -> None:
         cases = (
-            ("research-denied", "What is the latest gold price?", Route.WEB_RESEARCH, "web_research"),
-            ("specialist-denied", "Review this public Python function", Route.CODING_SPECIALIST, "coding"),
+            ("research-denied", "What is the latest gold price?", Route.REGISTERED_CAPABILITY, "web_research"),
+            ("specialist-denied", "Review this public Python function", Route.REGISTERED_CAPABILITY, "coding"),
         )
         for request_id, text, route, capability_id in cases:
             with self.subTest(capability_id=capability_id):
@@ -180,8 +180,8 @@ class Phase3AuthorizationTests(unittest.TestCase):
 
     def test_shared_cloud_policy_allows_both_public_capabilities_in_cloud_mode(self) -> None:
         cases = (
-            ("research-allowed", "What is the latest gold price?", Route.WEB_RESEARCH, "web_research"),
-            ("specialist-allowed", "Review this public Python function", Route.CODING_SPECIALIST, "coding"),
+            ("research-allowed", "What is the latest gold price?", Route.REGISTERED_CAPABILITY, "web_research"),
+            ("specialist-allowed", "Review this public Python function", Route.REGISTERED_CAPABILITY, "coding"),
         )
         for request_id, text, route, capability_id in cases:
             with self.subTest(capability_id=capability_id):

@@ -159,7 +159,7 @@ class Cli:
         print("Elly local-first assistant. Type /help.")
         while True:
             try:
-                line = input("you> ")
+                line = input("\nyou> ")
             except EOFError:
                 print()
                 break

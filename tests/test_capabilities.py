@@ -169,7 +169,7 @@ class CapabilityRegistryTests(unittest.TestCase):
                 persistence_mode=PersistenceMode.STORE_WITH_RETENTION,
                 submitted_at=UTC,
                 route_proposal=RouteProposal(
-                    route=Route.CODING_SPECIALIST,
+                    route=Route.REGISTERED_CAPABILITY,
                     capability_id="test-capability",
                     request_schema="test-task-v1",
                 ),

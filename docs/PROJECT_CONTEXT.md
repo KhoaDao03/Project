@@ -2,10 +2,10 @@
 
 **Project:** Elly Research Assistant (local-first personal AI assistant prototype)
 **Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
-**Generated:** 2026-08-07
+**Generated:** 2026-08-15
 **Branch:** `main`
 **Commit represented:** `2e97406fbaad8d8fd005cc27800dee5133b64403`
-**Working tree:** clean before this context refresh; `docs/PROJECT_CONTEXT.md` is modified by this update.
+**Working tree:** contains the uncommitted V2.5 implementation changes; inspect `git status` before handoff.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -22,11 +22,18 @@ Use approved/recorded requirements and owner decisions, frozen contracts, design
 
 Elly is a single-user, terminal-first, local-first assistant. Ordinary conversation uses a local Ollama generalist. When the owner explicitly permits cloud mode, current-information research and selected coding/research-specialist tasks may use OpenAI-hosted adapters subject to application-owned routing, privacy classification, consent, limits, cost reservations, and redacted audit records.
 
-**Implemented:** the V1 baseline, V1.5 reliability work, and all nine V2 architecture, capability, intent, authorization, session, API, and CLI requirements.
-**Tested:** the V2 verification report records 314 tests passed in three consecutive runs; Ruff, strict MyPy across 91 source files, compilation, migration, consent-resume stress, and `git diff --check` passed.
-**Verified:** all deterministic V2 blockers and acceptance criteria are closed. Limited live Ollama/OpenAI quality verification is explicitly deferred rather than claimed as passing.
-**Owner reviewed:** the owner marked V2 completed and closed on 2026-08-15; see [V2_CLOSURE.md](v2/V2_CLOSURE.md).
-**Iteration status:** **V2 closed with an accepted live-provider verification exception.** Historical V1 release gaps remain separate.
+**Implemented:** the V1 baseline, V1.5 reliability work, all nine V2 requirements,
+and all seven V2.5 registry-driven routing requirements.
+**Tested:** the final V2.5 run records 368 tests passed; Ruff, strict MyPy across
+93 source files, compilation, migration coverage, static boundaries, and
+`git diff --check` passed.
+**Verified:** all deterministic V2.5 blockers and acceptance criteria are
+closed. Limited live-provider quality verification is explicitly deferred
+rather than claimed as passing.
+**Owner reviewed:** the owner marked V2.5 completed and closed on 2026-08-15;
+see [V2_5_CLOSURE.md](v2.5/V2_5_CLOSURE.md).
+**Iteration status:** **V2.5 closed with an accepted live-provider verification
+boundary.** Historical V1 release gaps remain separate.
 
 ## 3. Project Goals and Motivation
 
@@ -55,7 +62,9 @@ Elly is a single-user, terminal-first, local-first assistant. Ordinary conversat
 - **Deferred:** local page reading, full page-body RAG, semantic/vector memory, web UI, portable trace export, voice, vision, crawling, computer control, fine-tuning, parallel/recursive specialist graphs, finance-specialist execution, and autonomous tools.
 - **Unavailable by design:** high-impact/write actions, specialist shell/file/tool execution, model-authorized external actions, silent cloud fallback, and treating URL metadata alone as `known` claim support.
 - **Unresolved/release-blocking:** authoritative provider pricing, vetted production backup AEAD/key management, recovery acceptance, complete aggregate quality corpus, and final threshold review.
-- `stock_analysis` has a validated manifest, but the deterministic router exposes coding and research-specialist routes only; fresh stock questions use web research.
+- At the V1/V1.5 baseline, `stock_analysis` had a validated manifest but was not
+  conversationally selectable; V2.5 replaces that limitation with registry-
+  driven catalog selection.
 
 The reopened milestone gaps are intentionally deferred to later project iterations; see [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md). That record does not close or change milestone status by itself.
 
@@ -82,6 +91,19 @@ checks green. Limited live-provider quality verification is an accepted
 deferred exception. See [V2_CLOSURE.md](v2/V2_CLOSURE.md) and
 [V2_IMPLEMENTATION_VERIFICATION.md](v2/V2_IMPLEMENTATION_VERIFICATION.md).
 
+**V2.5 status:** completed and closed by owner decision on 2026-08-15. Phase 0
+through Phase 6 and the final routing refactor are implemented. Registry-driven routing selects
+from immutable declarative catalog metadata, persists and renders a generic
+route plus selected identity, and exposes bounded safe selection traces through
+the public API and CLI. Historical V2 route values remain readable from stored
+rows, but the V2-specific interpreter, import alias, fallback, manifest route
+fields, and active compatibility presentation have been removed. Generic
+interpreter/router/catalog modules have static forbidden-literal coverage. See
+[docs/v2.5/README.md](v2.5/README.md) and
+[PHASE_6_IMPLEMENTATION.md](v2.5/PHASE_6_IMPLEMENTATION.md). The final
+deterministic run passed 368 tests, compilation, whitespace, Ruff, and strict
+MyPy checks. See [V2_5_CLOSURE.md](v2.5/V2_5_CLOSURE.md).
+
 ## 5. Users, Actors, and Use Cases
 
 | Actor | Responsibility | Boundary |
@@ -98,7 +120,7 @@ Primary use cases are UC-01 local conversation, UC-02 current research, UC-03 co
 
 ### Local conversation
 
-**Trigger/input:** non-empty text. **Validation:** NFC normalization and input ceiling before orchestration. **Path:** create `TaskRequest`; load bounded recent context and confirmed profile context; route to `local_generalist`; call Ollama under guardrails; validate output; persist permitted turns; return `TaskResult` and render route/status. **State:** SQLite with retention, or no message bodies for `/new --no-store`. **Failures:** typed provider/config/storage/timeout/cancellation failures become blocked, partial, or cancelled; no cloud fallback. Relevant AT-01/02/07/13/14.
+**Trigger/input:** non-empty text. **Validation:** NFC normalization and input ceiling before orchestration. **Path:** create `TaskRequest`; load bounded recent context and confirmed profile context; route to `local_conversation`; call the configured local generalist under guardrails; validate output; persist permitted turns; return `TaskResult` and render route/status. **State:** SQLite with retention, or no message bodies for `/new --no-store`. **Failures:** typed provider/config/storage/timeout/cancellation failures become blocked, partial, or cancelled; no cloud fallback. Relevant AT-01/02/07/13/14.
 
 ### Current research
 

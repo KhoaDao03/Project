@@ -1,7 +1,7 @@
 [specialist]
 id = "stock_analysis"
-version = "1.0"
-description = "Evaluates public companies and financial securities."
+version = "1.1"
+description = "Analyzes public companies and financial securities."
 capabilities = ["financial_statement_analysis", "valuation", "market_data_retrieval", "risk_analysis"]
 accepted_inputs = ["text", "ticker"]
 requires_current_data = true
@@ -11,3 +11,46 @@ estimated_cost = "medium"
 timeout_seconds = 90
 enabled = true
 allowed_tools = []
+
+[routing]
+priority = 70
+
+[[routing.operations]]
+id = "security.analyze"
+description = "Analyze a public company or financial security"
+domains = ["finance", "security"]
+accepted_inputs = ["text", "ticker"]
+required_entities = ["ticker_or_company"]
+freshness = "preferred"
+specificity = 80
+examples = ["Analyze this public company"]
+
+[[routing.operations]]
+id = "financial_statement.analyze"
+description = "Analyze public-company financial statements and operating results"
+domains = ["finance", "financial_statement_analysis"]
+accepted_inputs = ["text", "ticker"]
+required_entities = ["ticker_or_company"]
+freshness = "preferred"
+specificity = 85
+examples = ["Analyze this company's balance sheet"]
+
+[[routing.operations]]
+id = "valuation.analyze"
+description = "Analyze public valuation evidence and valuation assumptions"
+domains = ["finance", "valuation"]
+accepted_inputs = ["text", "ticker"]
+required_entities = ["ticker_or_company"]
+freshness = "preferred"
+specificity = 90
+examples = ["Analyze Apple's valuation"]
+
+[[routing.operations]]
+id = "risk.analyze"
+description = "Analyze public-company investment and security risks"
+domains = ["finance", "risk_analysis"]
+accepted_inputs = ["text", "ticker"]
+required_entities = ["ticker_or_company"]
+freshness = "preferred"
+specificity = 85
+examples = ["Compare the risks of this security"]

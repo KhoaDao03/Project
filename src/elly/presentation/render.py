@@ -52,6 +52,19 @@ def render_task_view(task: TaskView) -> str:
         lines.append(f"Evidence: {task.epistemic_status.value}")
     if task.route is not None:
         lines.append(f"Route: {task.route.value}")
+    if task.route_category is not None:
+        rejected = ",".join(task.rejected_candidate_reason_codes) or "none"
+        lines.append(
+            "Routing: "
+            f"category={task.route_category.value} "
+            f"capability={task.capability_id or '-'} "
+            f"operation={task.operation or '-'} "
+            f"reason={task.selection_reason_code or '-'} "
+            f"candidates={task.candidate_count} "
+            f"rejected={rejected} "
+            f"clarification={str(task.clarification_required).lower()} "
+            f"freshness_affected={str(task.freshness_affected_selection).lower()}"
+        )
     if task.sources:
         lines.append("Sources:")
         for index, source in enumerate(task.sources, start=1):

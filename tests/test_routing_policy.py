@@ -15,7 +15,7 @@ from elly.application.capabilities import (
     CapabilityStatus,
 )
 from elly.application.routing import RoutingPolicy
-from elly.domain.enums import CloudMode, Route, RouteReasonCode
+from elly.domain.enums import CloudMode, IntentAmbiguity, Route, RouteReasonCode
 from elly.domain.models import CapabilityIntent, RouteProposal, RouteRequest
 
 
@@ -56,32 +56,52 @@ def _request(text: str, contextual_text: str | None = None) -> RouteRequest:
 
 
 class RoutingPolicyTests(unittest.TestCase):
-    def test_preserves_v1_route_rules(self) -> None:
+    def test_without_catalog_evidence_uses_generic_local_route(self) -> None:
         policy = RoutingPolicy()
-        self.assertEqual(policy.decide(_request("Explain recursion")).route, Route.LOCAL_GENERALIST)
-        self.assertEqual(policy.decide(_request("What is the latest gold price?")).route, Route.WEB_RESEARCH)
-        self.assertEqual(policy.decide(_request("debug this Python function")).route, Route.CODING_SPECIALIST)
-        self.assertEqual(policy.decide(_request("analyze the evidence")).route, Route.RESEARCH_SPECIALIST)
+        for text in (
+            "Explain recursion",
+            "What is the latest gold price?",
+            "debug this Python function",
+            "analyze the evidence",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    policy.decide(_request(text)).route, Route.LOCAL_CONVERSATION
+                )
 
     def test_route_has_safe_reason_code(self) -> None:
         decision = RoutingPolicy().decide(_request("What is the latest news?"))
-        self.assertEqual(decision.reason_code, RouteReasonCode.CURRENT_INFORMATION_REQUIRED)
+        self.assertEqual(decision.reason_code, RouteReasonCode.LOCAL_DEFAULT)
 
     def test_dependent_context_can_inherit_current_information(self) -> None:
         decision = RoutingPolicy().decide(
             _request("how about now?", contextual_text="What is the latest gold price?")
         )
-        self.assertEqual(decision.route, Route.WEB_RESEARCH)
+        self.assertEqual(decision.route, Route.LOCAL_CONVERSATION)
 
     def test_unavailable_capability_is_not_executable(self) -> None:
         registry = CapabilityRegistry(
-            (_AvailableCapability("web_research", Route.WEB_RESEARCH, available=False),)
+            (
+                _AvailableCapability(
+                    "web_research", Route.REGISTERED_CAPABILITY, available=False
+                ),
+            )
         )
         decision = RoutingPolicy(capabilities=registry).decide(
-            _request("What is the latest gold price?")
+            _request("What is the latest gold price?"),
+            intent=CapabilityIntent(
+                proposed_capability_id="web_research",
+                operation="test.execute",
+                arguments={"subject": "gold"},
+                confidence=1.0,
+                ambiguity=IntentAmbiguity.CLEAR,
+                rationale_code="TEST_SELECTION",
+            ),
         )
         self.assertFalse(decision.available)
         self.assertEqual(decision.reason_code, RouteReasonCode.CAPABILITY_UNAVAILABLE)
+        self.assertEqual(Route.REGISTERED_CAPABILITY, decision.route)
+        self.assertFalse(hasattr(decision, "compatibility_view"))
 
     def test_unregistered_proposal_is_rejected_and_falls_back(self) -> None:
         registry = CapabilityRegistry()
@@ -89,8 +109,10 @@ class RoutingPolicyTests(unittest.TestCase):
             _request("hello"),
             proposal=RouteProposal(capability_id="missing", request_schema="missing-v1"),
         )
-        self.assertEqual(decision.route, Route.LOCAL_GENERALIST)
-        self.assertEqual(decision.reason_code, RouteReasonCode.PROPOSAL_REJECTED)
+        self.assertEqual(decision.route, Route.LOCAL_CONVERSATION)
+        self.assertEqual(
+            decision.reason_code, RouteReasonCode.SELECTION_PROPOSAL_REJECTED
+        )
 
 
 if __name__ == "__main__":

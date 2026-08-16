@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from ..application.routing_contracts import (
+    OperationIntentContract,
+)
+from ..domain.enums import ActionCategory
 from ..domain.errors import ConfigInvalidError
 
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
@@ -39,6 +43,8 @@ class SpecialistManifest:
     privacy_class: str = "remote_allowed"
     output_limit: int = 2000
     exclusions: frozenset[str] = field(default_factory=frozenset)
+    routing_priority: int = 50
+    routing_operations: tuple[OperationIntentContract, ...] = ()
 
     def __post_init__(self) -> None:
         if not _ID.fullmatch(self.id):
@@ -57,7 +63,12 @@ class SpecialistManifest:
             raise ConfigInvalidError(f"specialist {self.id} timeout must be 0 < seconds <= 300")
         if any(not tool.strip() for tool in self.allowed_tools):
             raise ConfigInvalidError(f"specialist {self.id} contains an empty tool name")
-        if self.role not in {"research", "coding"}:
+        if (
+            not isinstance(self.role, str)
+            or not self.role.strip()
+            or len(self.role) > 64
+            or any(char in self.role for char in ("\n", "\r"))
+        ):
             raise ConfigInvalidError(f"specialist {self.id} has invalid role")
         if not self.provider_model.strip() or not self.prompt_version.strip():
             raise ConfigInvalidError(f"specialist {self.id} requires model and prompt versions")
@@ -65,3 +76,33 @@ class SpecialistManifest:
             raise ConfigInvalidError(f"specialist {self.id} has invalid privacy class")
         if self.output_limit <= 0 or self.output_limit > 12000:
             raise ConfigInvalidError(f"specialist {self.id} output limit is invalid")
+        if isinstance(self.routing_priority, bool) or not 0 <= self.routing_priority <= 100:
+            raise ConfigInvalidError(f"specialist {self.id} routing priority is invalid")
+        if not isinstance(self.routing_operations, tuple) or any(
+            not isinstance(operation, OperationIntentContract)
+            for operation in self.routing_operations
+        ):
+            raise ConfigInvalidError(
+                f"specialist {self.id} routing operations must be typed"
+            )
+        operation_ids = tuple(
+            operation.operation_id for operation in self.routing_operations
+        )
+        if len(set(operation_ids)) != len(operation_ids):
+            raise ConfigInvalidError(
+                f"specialist {self.id} routing operation IDs must be unique"
+            )
+        if any(
+            operation.effect is not ActionCategory.NONE
+            for operation in self.routing_operations
+        ):
+            raise ConfigInvalidError(
+                f"specialist {self.id} routing operations cannot declare side effects"
+            )
+        if any(
+            not set(operation.accepted_inputs) <= self.accepted_inputs
+            for operation in self.routing_operations
+        ):
+            raise ConfigInvalidError(
+                f"specialist {self.id} routing inputs exceed accepted_inputs"
+            )

@@ -90,7 +90,7 @@ class V2InterfaceParityTests(unittest.TestCase):
             self.assertTrue(status.is_success)
             assert status.value is not None
             self.assertEqual("completed", status.value.status.value)
-            self.assertEqual("local_generalist", status.value.route.value)
+            self.assertEqual("local_conversation", status.value.route.value)
             sources = adapter.sources(task_id)
             self.assertTrue(sources.is_success)
             cancelled = adapter.cancel(task_id)

@@ -151,7 +151,7 @@ class Phase0CliCharacterizationTests(unittest.TestCase):
         self.assertIn("/status", self.cli.dispatch("/help"))
         self.assertIn("no_store", self.cli.dispatch("/new --no-store"))
         self.assertIn("cloud_permitted", self.cli.dispatch("/mode cloud"))
-        self.assertIn("Route: local_generalist", self.cli.dispatch("hello"))
+        self.assertIn("Route: local_conversation", self.cli.dispatch("hello"))
         self.assertIn("Cancellation requested", self.cli.dispatch("/cancel"))
 
 
@@ -159,16 +159,16 @@ class Phase0RouteAndOutcomeCharacterizationTests(unittest.TestCase):
     def test_current_route_signals_and_reason_codes(self) -> None:
         policy = RoutingPolicy()
         cases = (
-            ("Explain dependency injection", Route.LOCAL_GENERALIST, RouteReasonCode.LOCAL_DEFAULT),
-            ("What is the latest Python release?", Route.WEB_RESEARCH, RouteReasonCode.CURRENT_INFORMATION_REQUIRED),
-            ("debug this Python function", Route.CODING_SPECIALIST, RouteReasonCode.CODING_REQUEST),
-            ("analyze the evidence", Route.RESEARCH_SPECIALIST, RouteReasonCode.RESEARCH_SPECIALIST_REQUEST),
+            "Explain dependency injection",
+            "What is the latest Python release?",
+            "debug this Python function",
+            "analyze the evidence",
         )
-        for text, expected_route, expected_reason in cases:
+        for text in cases:
             with self.subTest(text=text):
                 decision = policy.decide(RouteRequest(request_id="route", text=text))
-                self.assertIs(decision.route, expected_route)
-                self.assertIs(decision.reason_code, expected_reason)
+                self.assertIs(decision.route, Route.LOCAL_CONVERSATION)
+                self.assertIs(decision.reason_code, RouteReasonCode.LOCAL_DEFAULT)
 
     def test_local_success_and_provider_failure_keep_separate_axes(self) -> None:
         for failure, expected_status, expected_outcome in (

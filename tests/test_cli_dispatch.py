@@ -74,7 +74,7 @@ class CliDispatchTests(unittest.TestCase):
         out = self.cli.dispatch("hello elly")
         self.assertIn("[fake-generalist]", out)
         self.assertIn("Evidence: inferred", out)
-        self.assertIn("Route: local_generalist", out)
+        self.assertIn("Route: local_conversation", out)
 
     def test_trace_surfaces_redacted_route_and_execution_detail(self) -> None:
         self.cli.dispatch("hello trace")
@@ -82,7 +82,7 @@ class CliDispatchTests(unittest.TestCase):
             "SELECT task_id FROM tasks ORDER BY started_at DESC LIMIT 1"
         ).fetchone()[0]
         out = self.cli.dispatch(f"/trace {task_id}")
-        self.assertIn("route=local_generalist", out)
+        self.assertIn("route=local_conversation", out)
         self.assertIn("provider_calls=1", out)
         self.assertIn("tools=none", out)
 

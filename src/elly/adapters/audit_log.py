@@ -15,22 +15,15 @@ Status: Implemented + Tested (M6).
 from __future__ import annotations
 
 import logging
-import re
 
 from ..domain.enums import HealthState
 from ..domain.models import AuditEvent, HealthReport
 from ..ports.repository import SessionRepositoryPort
-
-_MAX_DETAIL = 200
-_SECRET_VALUE = re.compile(
-    r"(?i)\b(api[_ -]?key|secret|password|token)\b\s*[:=]\s*([^\s,;]+)"
-)
+from ..trace_safety import redact_trace_detail
 
 
 def _redact_detail(detail: str) -> str:
-    redacted = _SECRET_VALUE.sub(lambda match: f"{match.group(1)}=[REDACTED]", detail)
-    single_line = " ".join(redacted.split())
-    return single_line[:_MAX_DETAIL]
+    return redact_trace_detail(detail)
 
 
 class StructuredAuditLog:

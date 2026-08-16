@@ -16,3 +16,20 @@ output_limit = 2000
 enabled = true
 allowed_tools = []
 exclusions = ["tool_execution", "action_claims"]
+
+[routing]
+priority = 50
+
+[[routing.operations]]
+id = "specialist.analyze"
+description = "Synthesize evidence, compare sources, and report uncertainty for a bounded question"
+domains = ["research", "evidence_synthesis", "source_comparison", "uncertainty_reporting"]
+accepted_inputs = ["text", "context"]
+required_entities = ["subject"]
+freshness = "static"
+specificity = 65
+examples = [
+  "Analyze the evidence and compare the competing explanations",
+  "Use the research specialist to analyze evidence",
+]
+counterexamples = ["Execute an action on my account"]

@@ -7,9 +7,8 @@ the registry cannot become a service locator.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
-from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..domain.enums import Route
@@ -23,17 +22,49 @@ from ..domain.models import (
     TaskResult,
 )
 from ..privacy import ClassificationDecision, ConsentProposal
+from .routing_contracts import (
+    CandidateMatch as CandidateMatch,
+)
+from .routing_contracts import (
+    CapabilityAvailability as CapabilityAvailability,
+)
+from .routing_contracts import (
+    CapabilityRoutingDescriptor as CapabilityRoutingDescriptor,
+)
+from .routing_contracts import (
+    CapabilitySelectionProposal as CapabilitySelectionProposal,
+)
+from .routing_contracts import (
+    CapabilitySelectionView as CapabilitySelectionView,
+)
+from .routing_contracts import (
+    FreshnessRequirement as FreshnessRequirement,
+)
+from .routing_contracts import (
+    FreshnessSupport as FreshnessSupport,
+)
+from .routing_contracts import (
+    MatchStrength as MatchStrength,
+)
+from .routing_contracts import (
+    OperationIntentContract as OperationIntentContract,
+)
+from .routing_contracts import (
+    RoutingCatalog as RoutingCatalog,
+)
+from .routing_contracts import (
+    SelectionProposal as SelectionProposal,
+)
+from .routing_contracts import (
+    TaskIntent as TaskIntent,
+)
+from .routing_contracts import (
+    default_routing_descriptor,
+)
 
 if TYPE_CHECKING:
     from ..guardrails.controller import GuardrailController
     from .execution import CancellationToken
-
-
-class CapabilityAvailability(str, Enum):
-    """Explicit availability state visible to routing."""
-
-    AVAILABLE = "available"
-    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +83,7 @@ class CapabilityDescriptor:
     purpose: str = ""
     max_cost_usd: float = 0.0
     declared_action: ActionProposal = field(default_factory=ActionProposal.none)
+    routing: CapabilityRoutingDescriptor | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.capability_id, str) or not self.capability_id.strip():
@@ -69,6 +101,27 @@ class CapabilityDescriptor:
             raise ConfigInvalidError("capability operations must be unique")
         if not isinstance(self.declared_action, ActionProposal):
             raise ConfigInvalidError("capability declared_action has an invalid type")
+        if self.routing is not None:
+            if not isinstance(self.routing, CapabilityRoutingDescriptor):
+                raise ConfigInvalidError("capability routing has an invalid type")
+            if self.routing.capability_id != self.capability_id:
+                raise ConfigInvalidError(
+                    "capability routing ID must match capability_id"
+                )
+            routing_operations = tuple(
+                operation.operation_id for operation in self.routing.operations
+            )
+            if set(routing_operations) != set(self.operations):
+                raise ConfigInvalidError(
+                    "capability routing operations must match executable operations"
+                )
+            if any(
+                operation.effect is not self.declared_action.category
+                for operation in self.routing.operations
+            ):
+                raise ConfigInvalidError(
+                    "capability routing effects must match declared action metadata"
+                )
         if not self.routes:
             raise ConfigInvalidError("capability must declare at least one route")
         if any(not isinstance(route, Route) for route in self.routes):
@@ -220,6 +273,14 @@ class CapabilityRegistry:
                 f"capability {descriptor.capability_id} returned invalid status"
             )
         self._handlers[descriptor.capability_id] = handler
+        try:
+            # Validate the routing contract at registration time as well as at
+            # application startup, so malformed optional metadata cannot sit
+            # dormant until a conversational request happens to inspect it.
+            self.routing_catalog()
+        except Exception:
+            self._handlers.pop(descriptor.capability_id, None)
+            raise
 
     def get(self, capability_id: str) -> CapabilityHandler | None:
         return self._handlers.get(capability_id)
@@ -235,6 +296,39 @@ class CapabilityRegistry:
 
     def descriptors(self) -> tuple[CapabilityDescriptor, ...]:
         return tuple(handler.descriptor for handler in self._handlers.values())
+
+    def routing_catalog(self) -> RoutingCatalog:
+        """Return an immutable, ID-sorted snapshot of routing metadata.
+
+        The catalog contains only validated descriptive contracts. Handler
+        availability is sampled at snapshot construction and no executable
+        collaborator is exposed through the returned values.
+        """
+        entries: list[CapabilityRoutingDescriptor] = []
+        for capability_id in sorted(self._handlers):
+            handler = self._handlers[capability_id]
+            descriptor = handler.descriptor
+            status = handler.status()
+            if not isinstance(status, CapabilityStatus):
+                raise ConfigInvalidError(
+                    f"capability {capability_id} returned invalid status"
+                )
+            routing = descriptor.routing or default_routing_descriptor(
+                capability_id=descriptor.capability_id,
+                description=descriptor.description,
+                operations=descriptor.operations,
+                availability=status.state,
+                availability_reason=status.reason_code,
+                effect=descriptor.declared_action.category,
+            )
+            entries.append(
+                replace(
+                    routing,
+                    availability=status.state,
+                    availability_reason=status.reason_code,
+                )
+            )
+        return tuple(entries)
 
     def available(self) -> tuple[CapabilityHandler, ...]:
         return tuple(handler for handler in self._handlers.values() if handler.status().available)
@@ -255,6 +349,9 @@ class CapabilityRegistry:
                 raise ConfigInvalidError(
                     f"capability {descriptor.capability_id} returned invalid status"
                 )
+        # Validate routing metadata at composition/startup time, not only when
+        # a rarely used conversational path happens to request it.
+        self.routing_catalog()
 
 
 def _is_capability_handler(handler: object) -> bool:

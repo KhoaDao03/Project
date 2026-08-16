@@ -535,7 +535,7 @@ class ResearchCliTests(unittest.TestCase):
     def test_current_question_uses_fixture_research_after_mode_change(self) -> None:
         self.cli.dispatch("/mode cloud")
         result = self.cli.dispatch("What is the latest result?")
-        self.assertIn("Route: web_research", result)
+        self.assertIn("Route: registered_capability", result)
         self.assertIn("Sources:", result)
         self.assertIn("https://example.com/current", result)
         roles = [message.role for message in self.app.repository.recent_messages(self.cli.session.session_id, 10)]
@@ -544,18 +544,28 @@ class ResearchCliTests(unittest.TestCase):
     def test_public_gold_price_uses_web_research_without_consent(self) -> None:
         self.cli.dispatch("/mode cloud")
         result = self.cli.dispatch("What is the price of gold?")
-        self.assertIn("Route: web_research", result)
+        self.assertIn("Route: registered_capability", result)
         self.assertNotIn("blocked", result.lower())
         self.assertEqual(
             self.app.research.provider.calls[-1], "What is the price of gold?"
         )
 
+    def test_unsupported_financial_transaction_is_blocked_before_provider(self) -> None:
+        self.cli.dispatch("/mode cloud")
+        research_calls = len(self.app.research.provider.calls)
+
+        result = self.cli.dispatch("Buy ten Apple shares")
+
+        self.assertIn("blocked", result.lower())
+        self.assertIn("consequential action is not supported", result.lower())
+        self.assertEqual(research_calls, len(self.app.research.provider.calls))
+
     def test_dependent_followup_inherits_web_intent_from_prior_user_turn(self) -> None:
         self.cli.dispatch("/mode cloud")
         first = self.cli.dispatch("What is the latest Python release?")
         second = self.cli.dispatch("What about Rust?")
-        self.assertIn("Route: web_research", first)
-        self.assertIn("Route: web_research", second)
+        self.assertIn("Route: registered_capability", first)
+        self.assertIn("Route: registered_capability", second)
         resolved = self.app.research.provider.calls[-1]
         self.assertIn("What about Rust?", resolved)
         self.assertIn("What is the latest Python release?", resolved)
@@ -566,15 +576,15 @@ class ResearchCliTests(unittest.TestCase):
         calls_before = len(self.app.research.provider.calls)
         first = self.cli.dispatch("Explain how gold conducts electricity.")
         second = self.cli.dispatch("What about silver?")
-        self.assertIn("Route: local_generalist", first)
-        self.assertIn("Route: local_generalist", second)
+        self.assertIn("Route: local_conversation", first)
+        self.assertIn("Route: local_conversation", second)
         self.assertEqual(len(self.app.research.provider.calls), calls_before)
 
     def test_price_substitution_followup_uses_web_research(self) -> None:
         self.cli.dispatch("/mode cloud")
         self.cli.dispatch("What is the price of gold?")
         result = self.cli.dispatch("How about silver?")
-        self.assertIn("Route: web_research", result)
+        self.assertIn("Route: registered_capability", result)
         resolved = self.app.research.provider.calls[-1]
         self.assertIn("How about silver?", resolved)
         self.assertIn("What is the price of gold?", resolved)
@@ -587,8 +597,8 @@ class ResearchCliTests(unittest.TestCase):
         second = self.cli.dispatch(
             "Research specialist: analyze that evidence further."
         )
-        self.assertIn("Route: local_generalist", first)
-        self.assertIn("Route: research_specialist", second)
+        self.assertIn("Route: local_conversation", first)
+        self.assertIn("Route: registered_capability", second)
         sent_context = str(provider.calls[-1]["context"])
         self.assertIn("Explain this public algorithm.", sent_context)
         self.assertIn("Prior assistant response", sent_context)
@@ -611,13 +621,13 @@ class ResearchCliTests(unittest.TestCase):
     def test_research_followups_keep_prior_subject_and_do_not_fall_back_local(self) -> None:
         self.cli.dispatch("/mode cloud")
         first = self.cli.dispatch("Tell me the status of the S&P500")
-        self.assertIn("Route: web_research", first)
+        self.assertIn("Route: registered_capability", first)
         second = self.cli.dispatch("I want you to go look it up and give me its points")
-        self.assertIn("Route: web_research", second)
+        self.assertIn("Route: registered_capability", second)
         self.assertIn("Subject from the prior user turn", self.app.research.provider.calls[-1])
         self.assertIn("S&P500", self.app.research.provider.calls[-1])
         third = self.cli.dispatch("how about now?")
-        self.assertIn("Route: web_research", third)
+        self.assertIn("Route: registered_capability", third)
         self.assertIn("S&P500", self.app.research.provider.calls[-1])
 
     def test_owner_specific_web_query_requires_exact_consent(self) -> None:
@@ -628,7 +638,7 @@ class ResearchCliTests(unittest.TestCase):
         self.assertEqual([], self.app.research.provider.calls)
         proposal_id = self.cli.pending_consent[1].proposal_id
         approved = self.cli.dispatch(f"/approve {proposal_id}")
-        self.assertIn("Route: web_research", approved)
+        self.assertIn("Route: registered_capability", approved)
         self.assertEqual(1, len(self.app.research.provider.calls))
         # The CLI clears pending consent after a successful call; query the
         # durable event by its known request id from the task trace instead.
@@ -641,7 +651,7 @@ class ResearchCliTests(unittest.TestCase):
         self.cli.dispatch("/mode cloud")
         first = self.cli.dispatch("My private project is called Lantern.")
         second = self.cli.dispatch("What is the latest news about it?")
-        self.assertIn("Route: local_generalist", first)
+        self.assertIn("Route: local_conversation", first)
         self.assertIn("Consent required", second)
         self.assertEqual([], self.app.research.provider.calls)
 
@@ -663,13 +673,13 @@ class ResearchCliTests(unittest.TestCase):
         self.app.specialist_workflow.provider = FakeSpecialistProvider()
         self.cli.dispatch("/mode cloud")
         result = self.cli.dispatch("Review this code for a bug: public Python function")
-        self.assertIn("Route: coding_specialist", result)
+        self.assertIn("Route: registered_capability", result)
         roles = [message.role for message in self.app.repository.recent_messages(self.cli.session.session_id, 10)]
         self.assertEqual(roles, ["user", "assistant"])
 
     def test_timeless_question_uses_local_generalist(self) -> None:
         result = self.cli.dispatch("Explain recursion")
-        self.assertIn("Route: local_generalist", result)
+        self.assertIn("Route: local_conversation", result)
 
 
 class _Clock:

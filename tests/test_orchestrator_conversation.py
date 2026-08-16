@@ -85,7 +85,7 @@ class OrchestratorConversationTests(unittest.TestCase):
         self.assertIs(outcome.result.task_status, TaskStatus.COMPLETED)
         self.assertIs(outcome.result.epistemic_status, EpistemicStatus.INFERRED)
         self.assertIs(outcome.result.validation_status, ValidationStatus.VALIDATED)
-        self.assertIs(outcome.result.route_summary, Route.LOCAL_GENERALIST)
+        self.assertIs(outcome.result.route_summary, Route.LOCAL_CONVERSATION)
         self.assertTrue(outcome.result.answer.startswith("[fake-generalist]"))
         # user + assistant persisted
         msgs = repo.recent_messages(sid, 10)

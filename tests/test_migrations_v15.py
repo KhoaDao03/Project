@@ -1,4 +1,4 @@
-"""Representative V1 schema-v2 to V1.5/V2 schema-v4 compatibility coverage."""
+"""Representative V1 schema-v2 to V1.5/V2.5 schema-v6 compatibility coverage."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ class V15MigrationTests(unittest.TestCase):
         version = self.repository._conn.execute(
             "SELECT version FROM schema_meta WHERE id=1"
         ).fetchone()[0]
-        self.assertEqual(4, version)
+        self.assertEqual(6, version)
         self.repository.healthcheck()
 
     def test_complete_new_task_runs_on_the_migrated_database(self) -> None:

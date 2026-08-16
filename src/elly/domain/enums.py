@@ -35,13 +35,17 @@ class PersistenceMode(str, Enum):
 
 
 class Route(str, Enum):
-    """Which execution path handled the request (AI-005).
+    """Route categories plus retained V2 historical compatibility values.
 
-    Local conversation and M4 hosted web research are implemented; coding remains
-    deferred to M5.
+    ``LOCAL_CONVERSATION`` and ``REGISTERED_CAPABILITY`` are the generic V2.5
+    categories. The capability-specific values remain readable for stored V2
+    tasks and existing interface clients, but no new capability identity should
+    be encoded only in one of those historical members.
     """
 
     LOCAL_GENERALIST = "local_generalist"
+    LOCAL_CONVERSATION = "local_conversation"
+    REGISTERED_CAPABILITY = "registered_capability"
     WEB_RESEARCH = "web_research"
     RESEARCH_SPECIALIST = "research_specialist"
     CODING_SPECIALIST = "coding_specialist"
@@ -61,6 +65,14 @@ class RouteReasonCode(str, Enum):
     INVALID_REQUEST = "INVALID_REQUEST"
     INTENT_CLARIFICATION_REQUIRED = "INTENT_CLARIFICATION_REQUIRED"
     INTENT_REJECTED = "INTENT_REJECTED"
+    CATALOG_NO_MATCH = "CATALOG_NO_MATCH"
+    CATALOG_SINGLE_MATCH = "CATALOG_SINGLE_MATCH"
+    CATALOG_AMBIGUOUS = "CATALOG_AMBIGUOUS"
+    REQUIRED_ENTITY_MISSING = "REQUIRED_ENTITY_MISSING"
+    FRESHNESS_UNSUPPORTED = "FRESHNESS_UNSUPPORTED"
+    OPERATION_UNSUPPORTED = "OPERATION_UNSUPPORTED"
+    ACTION_UNSUPPORTED = "ACTION_UNSUPPORTED"
+    SELECTION_PROPOSAL_REJECTED = "SELECTION_PROPOSAL_REJECTED"
 
 
 class IntentAmbiguity(str, Enum):

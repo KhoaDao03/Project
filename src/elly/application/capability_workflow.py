@@ -28,7 +28,12 @@ from .action_authorization import (
     safe_action_target_reference,
 )
 from .authorization import CloudAuthorizationPolicy, CloudAuthorizationRequest
-from .capabilities import CapabilityExecution, CapabilityRegistry, CapabilityRequest
+from .capabilities import (
+    CapabilityDescriptor,
+    CapabilityExecution,
+    CapabilityRegistry,
+    CapabilityRequest,
+)
 from .completion import CompletionService
 from .execution import CancellationToken
 from .response_composer import (
@@ -40,6 +45,8 @@ from .response_composer import (
     compose_failed,
     compose_partial,
 )
+from .route_compatibility import enrich_task_result, is_local_route
+from .routing_contracts import TaskIntent
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +75,15 @@ class CapabilityExecutionOutcome:
     manifest: ContextManifest
     consent_proposal: ConsentProposal | None = None
     action_confirmation: ActionConfirmationProposal | None = None
+    route_decision: RouteDecision | None = None
+
+    def __post_init__(self) -> None:
+        if self.route_decision is not None:
+            object.__setattr__(
+                self,
+                "result",
+                enrich_task_result(self.result, self.route_decision),
+            )
 
     def as_conversation_outcome(self) -> ConversationOutcome:
         return ConversationOutcome(
@@ -102,7 +118,7 @@ class CapabilityExecutionWorkflow:
 
     def execute(self, command: CapabilityExecutionCommand) -> CapabilityExecutionOutcome:
         """Execute one selected optional capability without invoking the orchestrator."""
-        if command.route is Route.LOCAL_GENERALIST:
+        if is_local_route(command.route):
             raise ConfigInvalidError("local conversation must not use capability workflow")
 
         capability_id = command.route_decision.capability_id
@@ -123,6 +139,12 @@ class CapabilityExecutionWorkflow:
             )
             return self._blocked(command, reason, OutcomeCode.UNAVAILABLE)
 
+        descriptor = handler.descriptor
+        capability_intent = self._execution_intent(
+            command,
+            capability_id=capability_id,
+            descriptor=descriptor,
+        )
         capability_request = CapabilityRequest(
             task=command.request,
             route_request=command.route_request,
@@ -132,8 +154,8 @@ class CapabilityExecutionWorkflow:
             execution_at=self._clock.now(),
             request_guardrails=command.request_guardrails,
             cancellation=command.cancellation,
-            operation=command.route_decision.operation,
-            intent=command.route_decision.intent,
+            operation=capability_intent.operation,
+            intent=capability_intent,
         )
         match = handler.can_handle(capability_request)
         if not match.accepted:
@@ -145,8 +167,10 @@ class CapabilityExecutionWorkflow:
                 event_type="capability.input_rejected",
             )
 
-        descriptor = handler.descriptor
-        if command.route not in descriptor.routes:
+        if (
+            command.route is not Route.REGISTERED_CAPABILITY
+            and command.route not in descriptor.routes
+        ):
             self._completion.fail_operation(command.operation_lease)
             self._completion.finish_task(command.task_id, TaskStatus.FAILED)
             return CapabilityExecutionOutcome(
@@ -156,37 +180,13 @@ class CapabilityExecutionWorkflow:
                     route=command.route,
                 ),
                 manifest=command.context_manifest,
+                route_decision=command.route_decision,
             )
 
         execution_started = False
         generated_result: TaskResult | None = None
         try:
-            intent = command.route_decision.intent
-            if intent is None:
-                if not capability_id or not descriptor.operations:
-                    raise ConfigInvalidError("capability intent is missing")
-                intent = CapabilityIntent(
-                    proposed_capability_id=capability_id,
-                    operation=(
-                        command.route_decision.operation or descriptor.operations[0]
-                    ),
-                    arguments={"subject": command.context_text},
-                    confidence=1.0,
-                    ambiguity=IntentAmbiguity.CLEAR,
-                    rationale_code="LEGACY_ROUTE_DECISION",
-                )
-                capability_request = CapabilityRequest(
-                    task=capability_request.task,
-                    route_request=capability_request.route_request,
-                    context_text=capability_request.context_text,
-                    context_manifest=capability_request.context_manifest,
-                    task_id=capability_request.task_id,
-                    execution_at=capability_request.execution_at,
-                    request_guardrails=capability_request.request_guardrails,
-                    cancellation=capability_request.cancellation,
-                    operation=intent.operation,
-                    intent=intent,
-                )
+            intent = capability_intent
             preparation = handler.prepare(intent, capability_request)
             if not preparation.accepted:
                 if preparation.clarification_fields:
@@ -199,12 +199,15 @@ class CapabilityExecutionWorkflow:
                         request=command.request,
                         task_id=command.task_id,
                         route=command.route,
+                        route_decision=command.route_decision,
                         result=clarification,
                         operation_lease=command.operation_lease,
                         fields=preparation.clarification_fields,
                     )
                     return CapabilityExecutionOutcome(
-                        clarification, command.context_manifest
+                        clarification,
+                        command.context_manifest,
+                        route_decision=command.route_decision,
                     )
                 return self._blocked(
                     command,
@@ -268,6 +271,7 @@ class CapabilityExecutionWorkflow:
                     request=command.request,
                     task_id=command.task_id,
                     route=command.route,
+                    route_decision=command.route_decision,
                     result=result,
                     proposal=action_decision.confirmation_proposal,
                     operation_lease=command.operation_lease,
@@ -276,6 +280,7 @@ class CapabilityExecutionWorkflow:
                     result=result,
                     manifest=command.context_manifest,
                     action_confirmation=action_decision.confirmation_proposal,
+                    route_decision=command.route_decision,
                 )
             classification = self._privacy_policy.classify(command.context_text)
             authorization = self._cloud_authorization_policy.authorize(
@@ -304,6 +309,7 @@ class CapabilityExecutionWorkflow:
                         request=command.request,
                         task_id=command.task_id,
                         route=command.route,
+                        route_decision=command.route_decision,
                         event_type="consent.requested",
                         status=awaiting,
                         error_class=ErrorClass.PERMISSION_DENIED,
@@ -311,14 +317,19 @@ class CapabilityExecutionWorkflow:
                     )
                     self._completion.fail_operation(command.operation_lease)
                     self._completion.finish_task(command.task_id, awaiting)
-                    return CapabilityExecutionOutcome(
-                        result=compose_consent_required(
+                    consent_result = self._completion.persist_result(
+                        compose_consent_required(
                             task_id=command.task_id,
                             proposal=proposal,
                             route=command.route,
                         ),
+                        command.route_decision,
+                    )
+                    return CapabilityExecutionOutcome(
+                        result=consent_result,
                         manifest=command.context_manifest,
                         consent_proposal=proposal,
+                        route_decision=command.route_decision,
                     )
                 return self._blocked(
                     command,
@@ -331,6 +342,7 @@ class CapabilityExecutionWorkflow:
                 request=command.request,
                 task_id=command.task_id,
                 route=command.route,
+                route_decision=command.route_decision,
                 event_type="authorization.approved",
                 status=command.status,
                 detail=(
@@ -373,6 +385,7 @@ class CapabilityExecutionWorkflow:
                     request=command.request,
                     task_id=command.task_id,
                     route=command.route,
+                    route_decision=command.route_decision,
                     event_type="action.authorization_approved",
                     status=command.status,
                     detail=(
@@ -407,6 +420,7 @@ class CapabilityExecutionWorkflow:
                 result=result,
                 manifest=command.context_manifest,
                 consent_proposal=execution.consent_proposal,
+                route_decision=command.route_decision,
             )
         except StorageFailureError as exc:
             self._completion.best_effort_fail_operation(
@@ -433,7 +447,9 @@ class CapabilityExecutionWorkflow:
                     reason=exc.summary,
                     route=command.route,
                 )
-            return CapabilityExecutionOutcome(result, command.context_manifest)
+            return CapabilityExecutionOutcome(
+                result, command.context_manifest, route_decision=command.route_decision
+            )
         except CancelledError as exc:
             self._completion.fail_operation(
                 command.operation_lease,
@@ -444,6 +460,7 @@ class CapabilityExecutionWorkflow:
                 request=command.request,
                 task_id=command.task_id,
                 route=command.route,
+                route_decision=command.route_decision,
                 event_type="capability.cancelled",
                 status=cancelled,
                 error_class=exc.error_class,
@@ -457,6 +474,7 @@ class CapabilityExecutionWorkflow:
                     route=command.route,
                 ),
                 command.context_manifest,
+                route_decision=command.route_decision,
             )
         except EllyError as exc:
             self._completion.fail_operation(
@@ -468,6 +486,7 @@ class CapabilityExecutionWorkflow:
                 request=command.request,
                 task_id=command.task_id,
                 route=command.route,
+                route_decision=command.route_decision,
                 event_type="capability.failed",
                 status=failed,
                 error_class=exc.error_class,
@@ -481,7 +500,53 @@ class CapabilityExecutionWorkflow:
                     route=command.route,
                 ),
                 command.context_manifest,
+                route_decision=command.route_decision,
             )
+
+    @staticmethod
+    def _execution_intent(
+        command: CapabilityExecutionCommand,
+        *,
+        capability_id: str | None,
+        descriptor: CapabilityDescriptor,
+    ) -> CapabilityIntent:
+        """Project a validated catalog task into the capability handler contract."""
+        if not capability_id or not descriptor.operations:
+            raise ConfigInvalidError("capability intent is missing")
+        selected = command.route_decision.intent
+        if isinstance(selected, CapabilityIntent):
+            return selected
+        if isinstance(selected, TaskIntent):
+            selection = command.route_decision.selection
+            return CapabilityIntent(
+                proposed_capability_id=capability_id,
+                operation=(
+                    command.route_decision.operation
+                    or (selection.operation_id if selection is not None else "")
+                    or descriptor.operations[0]
+                ),
+                entities=(
+                    selection.entities
+                    if selection is not None and selection.entities
+                    else selected.entities
+                ),
+                arguments=(
+                    selection.arguments
+                    if selection is not None and selection.arguments
+                    else selected.arguments
+                ),
+                confidence=selected.confidence,
+                ambiguity=IntentAmbiguity.CLEAR,
+                rationale_code="CATALOG_SELECTION",
+            )
+        return CapabilityIntent(
+            proposed_capability_id=capability_id,
+            operation=command.route_decision.operation or descriptor.operations[0],
+            arguments={"subject": command.context_text},
+            confidence=1.0,
+            ambiguity=IntentAmbiguity.CLEAR,
+            rationale_code="LEGACY_ROUTE_DECISION",
+        )
 
     def _blocked(
         self,
@@ -498,6 +563,7 @@ class CapabilityExecutionWorkflow:
             request=command.request,
             task_id=command.task_id,
             route=command.route,
+            route_decision=command.route_decision,
             event_type=event_type,
             status=blocked,
             error_class=error_class,
@@ -505,14 +571,19 @@ class CapabilityExecutionWorkflow:
         )
         self._completion.fail_operation(command.operation_lease)
         self._completion.finish_task(command.task_id, blocked)
-        return CapabilityExecutionOutcome(
+        blocked_result = self._completion.persist_result(
             compose_blocked(
                 task_id=command.task_id,
                 reason=reason,
                 route=command.route,
                 outcome_code=outcome_code,
             ),
+            command.route_decision,
+        )
+        return CapabilityExecutionOutcome(
+            blocked_result,
             command.context_manifest,
+            route_decision=command.route_decision,
         )
 
     def _failure_detail(self, command: CapabilityExecutionCommand, summary: str) -> str:

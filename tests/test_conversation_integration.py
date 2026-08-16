@@ -96,7 +96,7 @@ class AuditCorrelationTests(unittest.TestCase):
     def test_route_is_local(self) -> None:
         orch, _repo, _audit = _orchestrator(FailureMode.NONE)
         self.addCleanup(_repo.close)
-        self.assertIs(orch.route(_req()), Route.LOCAL_GENERALIST)
+        self.assertIs(orch.route(_req()), Route.LOCAL_CONVERSATION)
 
 
 class SessionIsolationTests(unittest.TestCase):

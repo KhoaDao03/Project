@@ -162,6 +162,17 @@ class TaskView:
     next_actions: tuple[str, ...] = ()
     sources: tuple[str, ...] = ()
     action_confirmation: "ActionConfirmationView | None" = None
+    # Additive V2.5 routing metadata. ``route`` remains the historical/public
+    # view for V2 clients; the category and selected identity are explicit.
+    route_category: Route | None = None
+    capability_id: str | None = None
+    operation: str = ""
+    selection_reason_code: str = ""
+    routing_contract_version: str = ""
+    candidate_count: int = 0
+    rejected_candidate_reason_codes: tuple[str, ...] = ()
+    clarification_required: bool = False
+    freshness_affected_selection: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +239,15 @@ class TraceEventView:
 class TraceView:
     task_id: str
     events: tuple[TraceEventView, ...]
+    route_category: Route | None = None
+    capability_id: str | None = None
+    operation: str = ""
+    selection_reason_code: str = ""
+    routing_contract_version: str = ""
+    candidate_count: int = 0
+    rejected_candidate_reason_codes: tuple[str, ...] = ()
+    clarification_required: bool = False
+    freshness_affected_selection: bool = False
 
 
 @dataclass(frozen=True, slots=True)

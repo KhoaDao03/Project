@@ -33,6 +33,14 @@ milestones, or verification status changes.
 
 ## Project status
 
+**V2.5 completed and closed by owner decision.** As of **2026-08-15**, all seven
+registry-driven routing requirements and the final legacy-routing removal are
+implemented and accepted. The full 368-test suite, Ruff, strict MyPy across 93
+source files, compilation, migration coverage, static boundaries, and
+whitespace checks pass. Limited live-provider quality verification remains a
+declared boundary and is not claimed as passing. See the
+[V2.5 closure record](docs/v2.5/V2_5_CLOSURE.md).
+
 **V2 completed and closed by owner decision.** As of **2026-08-15**, all nine
 approved V2 requirements are implemented and accepted. The full 314-test suite
 passed three consecutive runs; Ruff, strict MyPy across 91 source files,

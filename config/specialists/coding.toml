@@ -16,3 +16,17 @@ output_limit = 2000
 enabled = true
 allowed_tools = []
 exclusions = ["code_execution", "file_write", "tool_execution"]
+
+[routing]
+priority = 60
+
+[[routing.operations]]
+id = "specialist.analyze"
+description = "Review, debug, refactor, or improve explicitly supplied source code"
+domains = ["code_review", "debugging", "design_feedback"]
+accepted_inputs = ["text", "context"]
+required_entities = ["subject"]
+freshness = "static"
+specificity = 70
+examples = ["Review this Python function for a bug"]
+counterexamples = ["Run this code"]

@@ -28,6 +28,7 @@ from ..ports.clock import ClockPort
 from ..ports.repository import SessionRepositoryPort
 from .action_authorization import safe_action_target_reference
 from .capabilities import CapabilityDescriptor
+from .route_compatibility import enrich_task_result
 
 
 class CompletionService:
@@ -50,18 +51,20 @@ class CompletionService:
         request: TaskRequest,
         task_id: str,
         route: Route,
+        route_decision: RouteDecision | None = None,
         event_type: str,
         status: TaskStatus | None = None,
         error_class: ErrorClass | None = None,
         detail: str = "",
     ) -> None:
+        audit_route = route_decision.generic_route if route_decision is not None else route
         self._audit.append(
             AuditEvent(
                 task_id=task_id,
                 session_id=request.session_id,
                 event_type=event_type,
                 at=self._clock.now(),
-                route=route,
+                route=audit_route,
                 task_status=status,
                 error_class=error_class,
                 detail=detail,
@@ -101,6 +104,20 @@ class CompletionService:
         except StorageFailureError:
             return
 
+    def persist_result(
+        self,
+        result: TaskResult,
+        route_decision: RouteDecision | None = None,
+    ) -> TaskResult:
+        """Persist a result and return it with safe routing metadata attached."""
+        durable_result = (
+            enrich_task_result(result, route_decision)
+            if route_decision is not None
+            else result
+        )
+        self._repository.save_task_result(durable_result, self._clock.now())
+        return durable_result
+
     def complete_capability(
         self,
         *,
@@ -115,7 +132,8 @@ class CompletionService:
         operation_lease: OperationLease | None,
     ) -> None:
         """Persist a validated optional-capability result and close its ledger."""
-        if result.answer and result.task_status not in {
+        durable_result = enrich_task_result(result, route_decision)
+        if durable_result.answer and durable_result.task_status not in {
             TaskStatus.AWAITING_CONSENT,
             TaskStatus.CANCELLED,
         }:
@@ -123,7 +141,7 @@ class CompletionService:
                 request.session_id,
                 Message(
                     role="assistant",
-                    content=result.answer,
+                    content=durable_result.answer,
                     created_at=self._clock.now(),
                 ),
             )
@@ -133,8 +151,9 @@ class CompletionService:
             request=request,
             task_id=task_id,
             route=route,
+            route_decision=route_decision,
             event_type="capability.completed",
-            status=result.task_status,
+            status=durable_result.task_status,
             detail=(
                 f"capability={descriptor.capability_id} "
                 f"route_reason={route_decision.reason_code.value} "
@@ -142,8 +161,8 @@ class CompletionService:
                 f"{self.guardrail_detail(request_guardrails)}"
             ),
         )
-        self._repository.save_task_result(result, self._clock.now())
-        self.finish_task(task_id, result.task_status)
+        self._repository.save_task_result(durable_result, self._clock.now())
+        self.finish_task(task_id, durable_result.task_status)
         self.complete_operation(operation_lease)
 
     def complete_local(
@@ -152,6 +171,7 @@ class CompletionService:
         request: TaskRequest,
         task_id: str,
         route: Route,
+        route_decision: RouteDecision | None = None,
         result: TaskResult,
         started: float,
         request_guardrails: GuardrailController | None,
@@ -161,12 +181,18 @@ class CompletionService:
         model_id: str,
     ) -> None:
         """Persist a validated local result and close its request ledger."""
+        durable_result = (
+            enrich_task_result(result, route_decision)
+            if route_decision is not None
+            else result
+        )
         self.emit(
             request=request,
             task_id=task_id,
             route=route,
+            route_decision=route_decision,
             event_type="task.completed",
-            status=result.task_status,
+            status=durable_result.task_status,
             detail=(
                 f"provider={provider_name} model={model_id} "
                 "prompt=local-generalist-v1 tools=none "
@@ -177,8 +203,8 @@ class CompletionService:
             ),
         )
         self.record_provenance(task_id, result.provenance)
-        self._repository.save_task_result(result, self._clock.now())
-        self.finish_task(task_id, result.task_status)
+        self._repository.save_task_result(durable_result, self._clock.now())
+        self.finish_task(task_id, durable_result.task_status)
         self.complete_operation(operation_lease)
 
     def complete_clarification(
@@ -187,22 +213,29 @@ class CompletionService:
         request: TaskRequest,
         task_id: str,
         route: Route,
+        route_decision: RouteDecision | None = None,
         result: TaskResult,
         operation_lease: OperationLease | None,
         fields: tuple[str, ...],
     ) -> None:
         """Persist a non-executing clarification result and close the ledger."""
+        durable_result = (
+            enrich_task_result(result, route_decision)
+            if route_decision is not None
+            else result
+        )
         self.emit(
             request=request,
             task_id=task_id,
             route=route,
+            route_decision=route_decision,
             event_type="intent.clarification_required",
             status=TaskStatus.BLOCKED,
             error_class=ErrorClass.INPUT_INVALID,
             detail=f"fields={','.join(fields)}",
         )
         self.fail_operation(operation_lease)
-        self._repository.save_task_result(result, self._clock.now())
+        self._repository.save_task_result(durable_result, self._clock.now())
         self.finish_task(task_id, TaskStatus.BLOCKED)
 
     def complete_action_confirmation(
@@ -211,11 +244,17 @@ class CompletionService:
         request: TaskRequest,
         task_id: str,
         route: Route,
+        route_decision: RouteDecision | None = None,
         result: TaskResult,
         proposal: ActionConfirmationProposal,
         operation_lease: OperationLease | None,
     ) -> None:
         """Persist a non-executing action pause and close this attempt."""
+        durable_result = (
+            enrich_task_result(result, route_decision)
+            if route_decision is not None
+            else result
+        )
         target = (
             f"{proposal.proposal.target.kind}={safe_action_target_reference(proposal.proposal.target)}"
             if proposal.proposal.target is not None
@@ -225,6 +264,7 @@ class CompletionService:
             request=request,
             task_id=task_id,
             route=route,
+            route_decision=route_decision,
             event_type="action.confirmation_requested",
             status=TaskStatus.AWAITING_CONFIRMATION,
             error_class=ErrorClass.PERMISSION_DENIED,
@@ -235,7 +275,7 @@ class CompletionService:
             ),
         )
         self.fail_operation(operation_lease)
-        self._repository.save_task_result(result, self._clock.now())
+        self._repository.save_task_result(durable_result, self._clock.now())
         self.finish_task(task_id, TaskStatus.AWAITING_CONFIRMATION)
 
     def complete_operation(self, operation_lease: OperationLease | None) -> None:

@@ -26,15 +26,17 @@ import time
 from threading import Lock
 
 from ..domain.context import resolve_conversation_context
-from ..domain.enums import ErrorClass, Route, TaskStatus
+from ..domain.enums import ErrorClass, Route, RouteReasonCode, TaskStatus
 from ..domain.errors import CancelledError, ConfigInvalidError, EllyError, StorageFailureError
 from ..domain.models import (
     AuditEvent,
     ConversationOutcome,
     Message,
     ProvenanceReference,
+    RouteDecision,
     RouteRequest,
     TaskRequest,
+    TaskResult,
 )
 from ..domain.state_machine import ensure_transition
 from ..guardrails.controller import GuardrailController
@@ -57,6 +59,7 @@ from .response_composer import (
     compose_possible_duplicate,
     compose_success,
 )
+from .route_compatibility import enrich_task_result, is_local_route
 from .routing import RoutingPolicy
 
 
@@ -116,7 +119,7 @@ class ConversationOrchestrator:
         dependent turns may inherit that intent from one bounded prior user turn.
         Timeless conversation remains on the local generalist.
         """
-        return self._routing_policy.decide(
+        decision = self._routing_policy.decide(
             RouteRequest(
                 request_id=request.request_id,
                 text=request.text,
@@ -124,7 +127,8 @@ class ConversationOrchestrator:
                 cloud_mode=request.cloud_mode,
             ),
             proposal=request.route_proposal,
-        ).route
+        )
+        return decision.generic_route
 
     def _emit(
         self,
@@ -132,19 +136,21 @@ class ConversationOrchestrator:
         request: TaskRequest,
         task_id: str,
         route: Route,
+        route_decision: RouteDecision | None = None,
         event_type: str,
         status: TaskStatus | None = None,
         error_class: ErrorClass | None = None,
         detail: str = "",
     ) -> None:
         """Append one redacted, correlated audit event (DATA-004/SEC-007)."""
+        audit_route = route_decision.generic_route if route_decision is not None else route
         self._audit.append(
             AuditEvent(
                 task_id=task_id,
                 session_id=request.session_id,
                 event_type=event_type,
                 at=self._clock.now(),
-                route=route,
+                route=audit_route,
                 task_status=status,
                 error_class=error_class,
                 detail=detail,
@@ -265,7 +271,10 @@ class ConversationOrchestrator:
             proposal=request.route_proposal,
             intent=request.capability_intent,
         )
-        route = route_decision.route
+        route = route_decision.generic_route
+
+        def decorate(result: TaskResult) -> TaskResult:
+            return enrich_task_result(result, route_decision)
         # Lifecycle transitions go through the state machine so the application —
         # not ad-hoc code — owns valid task states (AI-002, FR-006).
         status = ensure_transition(TaskStatus.QUEUED, TaskStatus.RUNNING)
@@ -299,7 +308,7 @@ class ConversationOrchestrator:
             request_id=request.request_id,
             capability_id=(
                 route_decision.capability_id
-                or ("local_generalist" if route is Route.LOCAL_GENERALIST else "optional")
+                or ("local_generalist" if is_local_route(route) else "optional")
             ),
             request_digest=payload_hash(request.text),
             at=self._clock.now(),
@@ -319,7 +328,7 @@ class ConversationOrchestrator:
                 request_id=request.request_id,
                 capability_id=(
                     route_decision.capability_id
-                    or ("local_generalist" if route is Route.LOCAL_GENERALIST else "optional")
+                    or ("local_generalist" if is_local_route(route) else "optional")
                 ),
                 request_digest=payload_hash(request.text),
                 at=self._clock.now(),
@@ -330,6 +339,7 @@ class ConversationOrchestrator:
                 request=request,
                 task_id=task_id,
                 route=route,
+                route_decision=route_decision,
                 event_type="task.duplicate_prevented",
                 status=duplicate_status,
                 error_class=ErrorClass.PERMISSION_DENIED,
@@ -339,7 +349,7 @@ class ConversationOrchestrator:
                 ),
             )
             return ConversationOutcome(
-                result=compose_possible_duplicate(task_id=task_id, route=route),
+                result=decorate(compose_possible_duplicate(task_id=task_id, route=route)),
                 manifest=context_manifest,
             )
 
@@ -348,6 +358,7 @@ class ConversationOrchestrator:
                 request=request,
                 task_id=task_id,
                 route=route,
+                route_decision=route_decision,
                 event_type="task.received",
                 status=status,
                 detail=f"route_reason={route_decision.reason_code.value}",
@@ -356,7 +367,7 @@ class ConversationOrchestrator:
             self._completion.best_effort_fail_operation(operation_lease)
             self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
             return ConversationOutcome(
-                result=compose_failed(task_id=task_id, reason=exc.summary, route=route),
+                result=decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route)),
                 manifest=context_manifest,
             )
 
@@ -377,9 +388,43 @@ class ConversationOrchestrator:
                 self._completion.best_effort_fail_operation(operation_lease)
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=compose_failed(task_id=task_id, reason=exc.summary, route=route),
+                    result=decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route)),
                     manifest=context_manifest,
                 )
+
+        if route_decision.reason_code is RouteReasonCode.ACTION_UNSUPPORTED:
+            blocked_result = decorate(
+                compose_blocked(
+                    task_id=task_id,
+                    reason="the requested consequential action is not supported",
+                    route=route,
+                )
+            )
+            try:
+                blocked_status = ensure_transition(status, TaskStatus.BLOCKED)
+                self._completion.emit(
+                    request=request,
+                    task_id=task_id,
+                    route=route,
+                    route_decision=route_decision,
+                    event_type="action.authorization_denied",
+                    status=blocked_status,
+                    error_class=ErrorClass.PERMISSION_DENIED,
+                    detail="reason=ACTION_UNSUPPORTED provider_dispatch=not_started",
+                )
+                self._completion.fail_operation(operation_lease)
+                self._completion.persist_result(blocked_result)
+                self._completion.finish_task(task_id, blocked_status)
+            except StorageFailureError as exc:
+                self._completion.best_effort_fail_operation(operation_lease)
+                self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
+                return ConversationOutcome(
+                    result=decorate(
+                        compose_failed(task_id=task_id, reason=exc.summary, route=route)
+                    ),
+                    manifest=context_manifest,
+                )
+            return ConversationOutcome(result=blocked_result, manifest=context_manifest)
 
         if route_decision.clarification_required:
             clarification = compose_clarification(
@@ -387,11 +432,13 @@ class ConversationOrchestrator:
                 fields=route_decision.clarification_fields,
                 route=route,
             )
+            clarification = decorate(clarification)
             try:
                 self._completion.complete_clarification(
                     request=request,
                     task_id=task_id,
                     route=route,
+                    route_decision=route_decision,
                     result=clarification,
                     operation_lease=operation_lease,
                     fields=route_decision.clarification_fields,
@@ -402,18 +449,18 @@ class ConversationOrchestrator:
                 )
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=compose_failed(task_id=task_id, reason=exc.summary, route=route),
+                    result=decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route)),
                     manifest=context_manifest,
                 )
             return ConversationOutcome(result=clarification, manifest=context_manifest)
 
-        if route is not Route.LOCAL_GENERALIST:
+        if not is_local_route(route):
             if self._capability_workflow is None:
                 reason = "optional capability workflow is unavailable"
                 self._completion.best_effort_fail_operation(operation_lease)
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=compose_failed(task_id=task_id, reason=reason, route=route),
+                    result=decorate(compose_failed(task_id=task_id, reason=reason, route=route)),
                     manifest=context_manifest,
                 )
             capability_outcome = self._capability_workflow.execute(
@@ -453,14 +500,15 @@ class ConversationOrchestrator:
             self._completion.best_effort_fail_operation(operation_lease, possible_duplicate=True)
             self._completion.best_effort_finish_task(task_id, TaskStatus.PARTIAL)
             return ConversationOutcome(
-                result=compose_partial(
+                result=decorate(compose_partial(
                     task_id=task_id,
                     reason=exc.summary,
+                    route=route,
                     answer=text,
                     partial_work=(
                         "local response was generated but durable completion was incomplete",
                     ) if text else (),
-                ),
+                )),
                 manifest=context_manifest,
                 assistant_message=None,
             )
@@ -469,12 +517,13 @@ class ConversationOrchestrator:
             cancelled = ensure_transition(status, TaskStatus.CANCELLED)
             self._emit(
                 request=request, task_id=task_id, route=route, event_type="task.cancelled",
+                route_decision=route_decision,
                 status=cancelled, error_class=exc.error_class,
                 detail=self._failure_detail(exc.summary, started, request_guardrails),
             )
             self._completion.finish_task(task_id, cancelled)
             return ConversationOutcome(
-                result=compose_cancelled(task_id=task_id, partial_work=exc.partial_work), manifest=context_manifest,
+                result=decorate(compose_cancelled(task_id=task_id, partial_work=exc.partial_work, route=route)), manifest=context_manifest,
                 assistant_message=None,
             )
         except EllyError as exc:
@@ -484,6 +533,7 @@ class ConversationOrchestrator:
                 request=request,
                 task_id=task_id,
                 route=route,
+                route_decision=route_decision,
                 event_type="generalist.failed",
                 status=blocked,
                 error_class=exc.error_class,
@@ -491,7 +541,7 @@ class ConversationOrchestrator:
             )
             self._completion.finish_task(task_id, blocked)
             return ConversationOutcome(
-                result=compose_blocked(task_id=task_id, reason=exc.summary),
+                result=decorate(compose_blocked(task_id=task_id, reason=exc.summary, route=route)),
                 manifest=context_manifest,
                 assistant_message=None,
             )
@@ -507,11 +557,13 @@ class ConversationOrchestrator:
                     for message_id in context_manifest.included_message_ids
                 ) + profile_provenance,
             )
+            result = decorate(result)
             ensure_transition(status, result.task_status)
             self._completion.complete_local(
                 request=request,
                 task_id=task_id,
                 route=route,
+                route_decision=route_decision,
                 result=result,
                 started=started,
                 request_guardrails=request_guardrails,
@@ -527,7 +579,7 @@ class ConversationOrchestrator:
             self._completion.best_effort_fail_operation(operation_lease, possible_duplicate=True)
             self._completion.best_effort_finish_task(task_id, TaskStatus.PARTIAL)
             return ConversationOutcome(
-                result=compose_partial(
+                result=decorate(compose_partial(
                     task_id=task_id,
                     reason=exc.summary,
                     route=route,
@@ -535,7 +587,7 @@ class ConversationOrchestrator:
                     partial_work=(
                         "local response was generated but durable completion was incomplete",
                     ),
-                ),
+                )),
                 manifest=context_manifest,
                 assistant_message=assistant_message,
             )

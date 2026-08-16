@@ -45,7 +45,7 @@ from .application.routing import RoutingPolicy
 from .application.specialist_policy import SpecialistExecutionPolicy
 from .application.specialists import SpecialistWorkflow
 from .config import Config, load_config
-from .domain.enums import CloudMode, HealthState, PersistenceMode, Route
+from .domain.enums import CloudMode, HealthState, PersistenceMode
 from .domain.errors import ConfigInvalidError
 from .domain.models import ConversationOutcome, HealthReport, SessionRecord, TaskRequest
 from .guardrails import BoundedTaskExecutor, GuardrailController, LimitPolicy
@@ -54,7 +54,6 @@ from .operations import BackupService
 from .ports.audit import AuditPort
 from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
-from .ports.intent import IntentInterpreterPort
 from .ports.repository import SessionRepositoryPort
 from .privacy import ConsentWorkflow, PrivacyPolicy
 from .research.evidence_policy import EvidencePolicy
@@ -88,37 +87,15 @@ def _specialist_capability_handlers(
     specialist_registry: SpecialistRegistry,
     specialist_workflow: SpecialistWorkflow | None,
 ) -> tuple[SpecialistCapabilityHandler, ...]:
-    """Adapt every configured specialist manifest without adding core branches."""
-    handlers: list[SpecialistCapabilityHandler] = []
-    registered_ids: set[str] = set()
-    for manifest in specialist_registry.enabled():
-        route = (
-            Route.CODING_SPECIALIST
-            if manifest.role == "coding"
-            else Route.RESEARCH_SPECIALIST
+    """Adapt valid manifests into registry-backed capability handlers."""
+    return tuple(
+        SpecialistCapabilityHandler(
+            manifest.id,
+            manifest,
+            specialist_workflow,
         )
-        handlers.append(
-            SpecialistCapabilityHandler(
-                manifest.id, route, manifest, specialist_workflow
-            )
-        )
-        registered_ids.add(manifest.id)
-    # Preserve explicit availability for the two V1 routes even when their
-    # manifests are absent or disabled; routing can report NOT_CONFIGURED.
-    for specialist_id, route in (
-        ("coding", Route.CODING_SPECIALIST),
-        ("research", Route.RESEARCH_SPECIALIST),
-    ):
-        if specialist_id not in registered_ids:
-            handlers.append(
-                SpecialistCapabilityHandler(
-                    specialist_id,
-                    route,
-                    specialist_registry.get(specialist_id),
-                    specialist_workflow,
-                )
-            )
-    return tuple(handlers)
+        for manifest in specialist_registry.all()
+    )
 
 
 class Application:
@@ -154,7 +131,6 @@ class Application:
         specialist_workflow: SpecialistWorkflow | None = None,
         consent: ConsentWorkflow | None = None,
         capability_registry: CapabilityRegistry | None = None,
-        intent_interpreter: IntentInterpreterPort | None = None,
         action_authorization: ActionAuthorizationService | None = None,
     ) -> None:
         self.config = config
@@ -184,7 +160,6 @@ class Application:
         self.capability_registry.validate()
         self.routing_policy = RoutingPolicy(
             capabilities=self.capability_registry,
-            intent_interpreter=intent_interpreter,
         )
         self.privacy_policy = PrivacyPolicy()
         self.cloud_authorization_policy = CloudAuthorizationPolicy()
