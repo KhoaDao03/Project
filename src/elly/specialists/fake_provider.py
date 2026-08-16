@@ -10,7 +10,8 @@ from .contracts import SpecialistResult, SpecialistTask
 class FakeSpecialistProvider:
     def __init__(self, *, result: SpecialistResult | None = None, fail: str | None = None) -> None:
         self.result = result or SpecialistResult(
-            status="inferred", answer="The supplied material supports a bounded specialist assessment.",
+            status="inferred",
+            answer="The supplied material supports a bounded specialist assessment.",
             assumptions=("Only the supplied context was considered.",),
         )
         self.fail = fail
@@ -22,14 +23,18 @@ class FakeSpecialistProvider:
     def cancel(self) -> None:
         return None
 
-    def execute(self, task: SpecialistTask, *, model: str, prompt_version: str, output_limit: int) -> SpecialistResult:
-        self.calls.append({
-            "specialist_id": task.specialist_id,
-            "model": model,
-            "prompt_version": prompt_version,
-            "goal": task.goal,
-            "context": task.context,
-        })
+    def execute(
+        self, task: SpecialistTask, *, model: str, prompt_version: str, output_limit: int
+    ) -> SpecialistResult:
+        self.calls.append(
+            {
+                "specialist_id": task.specialist_id,
+                "model": model,
+                "prompt_version": prompt_version,
+                "goal": task.goal,
+                "context": task.context,
+            }
+        )
         if self.fail == "malformed":
             # This is deliberately converted to a typed failure by the workflow.
             raise ValueError("fake malformed result")

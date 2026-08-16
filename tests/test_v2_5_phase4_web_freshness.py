@@ -56,7 +56,9 @@ class Phase4WebFreshnessTests(unittest.TestCase):
     def test_web_research_publishes_normal_current_and_live_operations(self) -> None:
         descriptor = ResearchCapabilityHandler(None).descriptor
         assert descriptor.routing is not None
-        operations = {operation.operation_id: operation for operation in descriptor.routing.operations}
+        operations = {
+            operation.operation_id: operation for operation in descriptor.routing.operations
+        }
 
         self.assertEqual(
             {
@@ -68,16 +70,12 @@ class Phase4WebFreshnessTests(unittest.TestCase):
             },
             set(operations),
         )
-        self.assertIs(
-            FreshnessSupport.CURRENT, operations["news.current"].freshness
+        self.assertIs(FreshnessSupport.CURRENT, operations["news.current"].freshness)
+        self.assertIs(FreshnessSupport.CURRENT, operations["release.lookup"].freshness)
+        self.assertIs(FreshnessSupport.LIVE, operations["market.quote"].freshness)
+        self.assertEqual(
+            ("ticker", "company", "security"), operations["market.quote"].optional_entities
         )
-        self.assertIs(
-            FreshnessSupport.CURRENT, operations["release.lookup"].freshness
-        )
-        self.assertIs(
-            FreshnessSupport.LIVE, operations["market.quote"].freshness
-        )
-        self.assertEqual(("ticker", "company", "security"), operations["market.quote"].optional_entities)
 
     def test_web_operations_are_selected_by_operation_and_freshness(self) -> None:
         registry = _capability_registry()
@@ -98,15 +96,11 @@ class Phase4WebFreshnessTests(unittest.TestCase):
                 self.assertEqual("web_research", decision.capability_id)
                 self.assertEqual(operation, decision.operation)
                 self.assertEqual(Route.REGISTERED_CAPABILITY, decision.route)
-                self.assertEqual(
-                    RouteReasonCode.CATALOG_SINGLE_MATCH, decision.reason_code
-                )
+                self.assertEqual(RouteReasonCode.CATALOG_SINGLE_MATCH, decision.reason_code)
 
     def test_live_quote_prefers_web_over_analysis_only_stock(self) -> None:
         registry = _capability_registry()
-        decision = RoutingPolicy(capabilities=registry).decide(
-            _request("What is AAPL trading at?")
-        )
+        decision = RoutingPolicy(capabilities=registry).decide(_request("What is AAPL trading at?"))
 
         self.assertEqual("web_research", decision.capability_id)
         self.assertEqual("market.quote", decision.operation)

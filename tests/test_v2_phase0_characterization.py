@@ -248,8 +248,12 @@ class Phase0PersistenceOrderCharacterizationTests(unittest.TestCase):
             self.assertLess(events.index("message:user"), events.index("provider.generate"))
             self.assertLess(events.index("provider.generate"), events.index("message:assistant"))
             self.assertLess(events.index("message:assistant"), events.index("audit:task.completed"))
-            self.assertLess(events.index("audit:task.completed"), events.index("finish_task:completed"))
-            self.assertLess(events.index("finish_task:completed"), events.index("complete_operation"))
+            self.assertLess(
+                events.index("audit:task.completed"), events.index("finish_task:completed")
+            )
+            self.assertLess(
+                events.index("finish_task:completed"), events.index("complete_operation")
+            )
         finally:
             repository.close()
 

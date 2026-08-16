@@ -60,7 +60,9 @@ class _Capability:
 
     def status(self) -> CapabilityStatus:
         return CapabilityStatus(
-            CapabilityAvailability.AVAILABLE if self._available else CapabilityAvailability.UNAVAILABLE,
+            CapabilityAvailability.AVAILABLE
+            if self._available
+            else CapabilityAvailability.UNAVAILABLE,
             "" if self._available else "TEST_DISABLED",
         )
 
@@ -86,7 +88,9 @@ class _Capability:
 
 def _request() -> CapabilityRequest:
     task = TaskRequest(
-        request_id="req-1", session_id="session-1", text="test",
+        request_id="req-1",
+        session_id="session-1",
+        text="test",
         cloud_mode=CloudMode.LOCAL_ONLY,
         persistence_mode=PersistenceMode.STORE_WITH_RETENTION,
         submitted_at=UTC,
@@ -102,7 +106,9 @@ def _request() -> CapabilityRequest:
 class CapabilityRegistryTests(unittest.TestCase):
     def test_registers_descriptor_and_exposes_availability(self) -> None:
         registry = CapabilityRegistry((_Capability(),))
-        self.assertEqual(registry.get("test-capability").descriptor.capability_id, "test-capability")  # type: ignore[union-attr]
+        self.assertEqual(
+            registry.get("test-capability").descriptor.capability_id, "test-capability"
+        )  # type: ignore[union-attr]
         self.assertTrue(registry.status("test-capability").available)
         self.assertEqual(len(registry.available()), 1)
 

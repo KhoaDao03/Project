@@ -17,11 +17,20 @@ class FixtureWebResearchProvider:
     contacting a network or sending owner data anywhere.
     """
 
-    def __init__(self, *, answer: str | None = None, citations: tuple[ProviderCitation, ...] | None = None) -> None:
+    def __init__(
+        self, *, answer: str | None = None, citations: tuple[ProviderCitation, ...] | None = None
+    ) -> None:
         self.calls: list[str] = []
-        self.answer = answer or "The fixture reports a current result supported by the cited source."
+        self.answer = (
+            answer or "The fixture reports a current result supported by the cited source."
+        )
         self.citations = citations or (
-            ProviderCitation("https://www.example.com/current", "Fixture current source", "Example", "Current result."),
+            ProviderCitation(
+                "https://www.example.com/current",
+                "Fixture current source",
+                "Example",
+                "Current result.",
+            ),
         )
 
     def health(self) -> HealthReport:

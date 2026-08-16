@@ -34,8 +34,13 @@ from ..privacy import ConsentProposal
 from .action_authorization import safe_action_target_reference
 
 
-def compose_success(*, task_id: str, answer: str, route: Route = Route.LOCAL_CONVERSATION,
-                    provenance: tuple[ProvenanceReference, ...] = ()) -> TaskResult:
+def compose_success(
+    *,
+    task_id: str,
+    answer: str,
+    route: Route = Route.LOCAL_CONVERSATION,
+    provenance: tuple[ProvenanceReference, ...] = (),
+) -> TaskResult:
     """Compose a COMPLETED local conversational result."""
     return TaskResult(
         task_id=task_id,
@@ -49,8 +54,13 @@ def compose_success(*, task_id: str, answer: str, route: Route = Route.LOCAL_CON
     )
 
 
-def compose_blocked(*, task_id: str, reason: str, route: Route = Route.LOCAL_CONVERSATION,
-                    outcome_code: OutcomeCode = OutcomeCode.BLOCKED) -> TaskResult:
+def compose_blocked(
+    *,
+    task_id: str,
+    reason: str,
+    route: Route = Route.LOCAL_CONVERSATION,
+    outcome_code: OutcomeCode = OutcomeCode.BLOCKED,
+) -> TaskResult:
     """Compose a BLOCKED result carrying a safe, non-sensitive reason."""
     return TaskResult(
         task_id=task_id,
@@ -105,7 +115,9 @@ def compose_partial(
     )
 
 
-def compose_cancelled(*, task_id: str, partial_work: str = "", route: Route = Route.LOCAL_CONVERSATION) -> TaskResult:
+def compose_cancelled(
+    *, task_id: str, partial_work: str = "", route: Route = Route.LOCAL_CONVERSATION
+) -> TaskResult:
     """Compose an honest owner-cancelled result with no fabricated answer."""
     return TaskResult(
         task_id=task_id,
@@ -136,24 +148,47 @@ def compose_possible_duplicate(*, task_id: str, route: Route) -> TaskResult:
     )
 
 
-def compose_research(*, task_id: str, answer: str, citations: tuple[str, ...], claims: tuple[str, ...],
-                     epistemic: EpistemicStatus, validation: ValidationStatus = ValidationStatus.QUALIFIED,
-                     claim_supports: tuple[ClaimSupport, ...] = (),
-                     provenance: tuple[ProvenanceReference, ...] = ()) -> TaskResult:
+def compose_research(
+    *,
+    task_id: str,
+    answer: str,
+    citations: tuple[str, ...],
+    claims: tuple[str, ...],
+    epistemic: EpistemicStatus,
+    validation: ValidationStatus = ValidationStatus.QUALIFIED,
+    claim_supports: tuple[ClaimSupport, ...] = (),
+    provenance: tuple[ProvenanceReference, ...] = (),
+) -> TaskResult:
     """Compose a research result whose sources were validated by the application."""
     return TaskResult(
-        task_id=task_id, task_status=TaskStatus.COMPLETED, epistemic_status=epistemic,
-        validation_status=validation, answer=answer, route_summary=Route.REGISTERED_CAPABILITY,
-        claims=claims, citations=citations,
-        outcome_code=OutcomeCode.UNKNOWN if epistemic is EpistemicStatus.UNKNOWN else OutcomeCode.SUCCESS,
-        claim_supports=claim_supports, provenance=provenance,
+        task_id=task_id,
+        task_status=TaskStatus.COMPLETED,
+        epistemic_status=epistemic,
+        validation_status=validation,
+        answer=answer,
+        route_summary=Route.REGISTERED_CAPABILITY,
+        claims=claims,
+        citations=citations,
+        outcome_code=OutcomeCode.UNKNOWN
+        if epistemic is EpistemicStatus.UNKNOWN
+        else OutcomeCode.SUCCESS,
+        claim_supports=claim_supports,
+        provenance=provenance,
     )
 
 
-def compose_specialist(*, task_id: str, answer: str, route: Route, epistemic: EpistemicStatus,
-                       assumptions: tuple[str, ...] = (), uncertainties: tuple[str, ...] = (),
-                       sources: tuple[str, ...] = (), partial: bool = False,
-                       provenance: tuple[ProvenanceReference, ...] = ()) -> TaskResult:
+def compose_specialist(
+    *,
+    task_id: str,
+    answer: str,
+    route: Route,
+    epistemic: EpistemicStatus,
+    assumptions: tuple[str, ...] = (),
+    uncertainties: tuple[str, ...] = (),
+    sources: tuple[str, ...] = (),
+    partial: bool = False,
+    provenance: tuple[ProvenanceReference, ...] = (),
+) -> TaskResult:
     if epistemic is EpistemicStatus.BLOCKED:
         task_status = TaskStatus.BLOCKED
         outcome_code = OutcomeCode.BLOCKED
@@ -165,9 +200,7 @@ def compose_specialist(*, task_id: str, answer: str, route: Route, epistemic: Ep
     else:
         task_status = TaskStatus.COMPLETED
         outcome_code = (
-            OutcomeCode.SUCCESS
-            if epistemic is EpistemicStatus.KNOWN
-            else OutcomeCode.UNKNOWN
+            OutcomeCode.SUCCESS if epistemic is EpistemicStatus.KNOWN else OutcomeCode.UNKNOWN
         )
         validation_status = (
             ValidationStatus.VALIDATED
@@ -175,9 +208,13 @@ def compose_specialist(*, task_id: str, answer: str, route: Route, epistemic: Ep
             else ValidationStatus.QUALIFIED
         )
     return TaskResult(
-        task_id=task_id, task_status=task_status,
-        epistemic_status=epistemic, validation_status=validation_status,
-        answer=answer, route_summary=route, citations=sources,
+        task_id=task_id,
+        task_status=task_status,
+        epistemic_status=epistemic,
+        validation_status=validation_status,
+        answer=answer,
+        route_summary=route,
+        citations=sources,
         partial_work=tuple(f"Assumption: {item}" for item in assumptions),
         next_actions=uncertainties,
         outcome_code=outcome_code,
@@ -190,8 +227,10 @@ def compose_consent_required(
 ) -> TaskResult:
     """Render every material field of an exact cloud-disclosure proposal."""
     return TaskResult(
-        task_id=task_id, task_status=TaskStatus.AWAITING_CONSENT,
-        epistemic_status=EpistemicStatus.BLOCKED, validation_status=ValidationStatus.QUALIFIED,
+        task_id=task_id,
+        task_status=TaskStatus.AWAITING_CONSENT,
+        epistemic_status=EpistemicStatus.BLOCKED,
+        validation_status=ValidationStatus.QUALIFIED,
         answer=(
             "Consent required before sending this payload. "
             f"Proposal: {proposal.proposal_id}; provider={proposal.provider}; model={proposal.model}; "

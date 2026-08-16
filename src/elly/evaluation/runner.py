@@ -19,6 +19,7 @@ from .catalog import EvaluationCase, catalog
 @dataclass(frozen=True, slots=True)
 class EvaluationRecord:
     """Pinned evidence status for one catalog case."""
+
     case_id: str
     status: str
     evidence_class: str
@@ -34,6 +35,7 @@ class EvaluationRecord:
 @dataclass(frozen=True, slots=True)
 class ReleaseEvidence:
     """Aggregate release gates; only explicit evidence may produce pass states."""
+
     generated_at: str
     python: str
     platform: str
@@ -47,7 +49,15 @@ class ReleaseEvidence:
 
     @property
     def releasable(self) -> bool:
-        return all(gate == "pass" for gate in (self.deterministic_gate, self.quality_gate, self.uat_gate, self.hardware_gate))
+        return all(
+            gate == "pass"
+            for gate in (
+                self.deterministic_gate,
+                self.quality_gate,
+                self.uat_gate,
+                self.hardware_gate,
+            )
+        )
 
     def write_json(self, destination: str) -> None:
         """Serialize the immutable report to a caller-selected local path."""
@@ -77,19 +87,45 @@ def run_release_evidence(
             status, evidence = "covered", case.deterministic_coverage or "regression suite"
         else:
             status, evidence = "pending", f"required evidence class: {case.evidence_class}"
-        records.append(EvaluationRecord(
-            case_id=case.case_id, status=status, evidence_class=case.evidence_class,
-            model_id=model_id, provider=provider, prompt_version=prompt_version,
-            configuration=configuration, fixture_version=fixture_version,
-            recorded_at=stamp, evidence=evidence,
-        ))
-    deterministic = "pass" if regression_status == "pass" and all(r.status == "covered" for r in records if r.evidence_class == "deterministic") else "pending"
-    quality = "pass" if all(r.status == "pass" for r in records if r.evidence_class in {"provider_quality", "live_research", "live_provider"}) else "pending"
+        records.append(
+            EvaluationRecord(
+                case_id=case.case_id,
+                status=status,
+                evidence_class=case.evidence_class,
+                model_id=model_id,
+                provider=provider,
+                prompt_version=prompt_version,
+                configuration=configuration,
+                fixture_version=fixture_version,
+                recorded_at=stamp,
+                evidence=evidence,
+            )
+        )
+    deterministic = (
+        "pass"
+        if regression_status == "pass"
+        and all(r.status == "covered" for r in records if r.evidence_class == "deterministic")
+        else "pending"
+    )
+    quality = (
+        "pass"
+        if all(
+            r.status == "pass"
+            for r in records
+            if r.evidence_class in {"provider_quality", "live_research", "live_provider"}
+        )
+        else "pending"
+    )
     return ReleaseEvidence(
-        generated_at=stamp, python=platform.python_version(), platform=platform.platform(),
+        generated_at=stamp,
+        python=platform.python_version(),
+        platform=platform.platform(),
         regression_command="PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -t .",
-        regression_status=regression_status, records=tuple(records),
-        deterministic_gate=deterministic, quality_gate=quality, uat_gate="pending",
+        regression_status=regression_status,
+        records=tuple(records),
+        deterministic_gate=deterministic,
+        quality_gate=quality,
+        uat_gate="pending",
         # Hardware evidence is collected separately. Callers must opt in with an
         # explicit evidence-backed status; a report generator cannot infer it.
         hardware_gate=hardware_status,

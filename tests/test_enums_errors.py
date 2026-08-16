@@ -19,7 +19,9 @@ from elly.domain.errors import (
 
 class EnumStabilityTests(unittest.TestCase):
     def test_three_axis_status_values(self) -> None:
-        self.assertEqual({s.value for s in EpistemicStatus}, {"known", "inferred", "unknown", "blocked"})
+        self.assertEqual(
+            {s.value for s in EpistemicStatus}, {"known", "inferred", "unknown", "blocked"}
+        )
         self.assertEqual(
             {s.value for s in ValidationStatus}, {"validated", "qualified", "rejected"}
         )
@@ -30,9 +32,19 @@ class EnumStabilityTests(unittest.TestCase):
         # The frozen taxonomy (DESIGN §6.8) must be complete even though M1 only
         # raises a subset.
         expected = {
-            "INPUT_INVALID", "CONFIG_INVALID", "PERMISSION_DENIED", "LIMIT_EXCEEDED",
-            "TRANSIENT_PROVIDER", "PERMANENT_PROVIDER", "TIMEOUT", "MALFORMED_RESULT",
-            "UNSAFE_URL", "UNSUPPORTED_CONTENT", "STORAGE_FAILURE", "CANCELLED", "CONFLICT",
+            "INPUT_INVALID",
+            "CONFIG_INVALID",
+            "PERMISSION_DENIED",
+            "LIMIT_EXCEEDED",
+            "TRANSIENT_PROVIDER",
+            "PERMANENT_PROVIDER",
+            "TIMEOUT",
+            "MALFORMED_RESULT",
+            "UNSAFE_URL",
+            "UNSUPPORTED_CONTENT",
+            "STORAGE_FAILURE",
+            "CANCELLED",
+            "CONFLICT",
         }
         self.assertEqual({e.value for e in ErrorClass}, expected)
 

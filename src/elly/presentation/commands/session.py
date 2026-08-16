@@ -31,9 +31,7 @@ class NewSessionHandler:
             if args == ("--no-store",)
             else PersistenceMode.STORE_WITH_RETENTION
         )
-        result = context.api.create_session(
-            CreateSessionRequest(persistence_mode=persistence)
-        )
+        result = context.api.create_session(CreateSessionRequest(persistence_mode=persistence))
         if not result.is_success:
             return api_failure(result, prefix="Session creation failed: ")
         assert result.value is not None
@@ -50,9 +48,7 @@ class ModeHandler:
     def handle(self, args: tuple[str, ...], context: CommandContext) -> CommandResult:
         if context.session is None:
             return CommandResult("No active session.")
-        cloud_mode = (
-            CloudMode.LOCAL_ONLY if args[0] == "local" else CloudMode.CLOUD_PERMITTED
-        )
+        cloud_mode = CloudMode.LOCAL_ONLY if args[0] == "local" else CloudMode.CLOUD_PERMITTED
         result = context.api.change_session_mode(
             ChangeModeRequest(
                 session_id=context.session.session_id,

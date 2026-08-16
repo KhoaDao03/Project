@@ -60,7 +60,10 @@ class V2SessionPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(CloudMode.CLOUD_PERMITTED, updated.cloud_mode)
             self.assertEqual(2, updated.version)
-            self.assertEqual(["session.mode_change_succeeded"], [e.event_type for e in repository.audit_by_task("session:phase1-session")])
+            self.assertEqual(
+                ["session.mode_change_succeeded"],
+                [e.event_type for e in repository.audit_by_task("session:phase1-session")],
+            )
             repository.close()
 
             reopened = SqliteSessionRepository(str(path))

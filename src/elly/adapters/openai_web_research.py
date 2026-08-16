@@ -33,10 +33,16 @@ class OpenAIHostedWebSearch:
     """
 
     def __init__(
-        self, *, api_key: str | None = None, model: str = "gpt-5.6-luna",
-        base_url: str = "https://api.openai.com/v1", max_output_tokens: int = 2048,
+        self,
+        *,
+        api_key: str | None = None,
+        model: str = "gpt-5.6-luna",
+        base_url: str = "https://api.openai.com/v1",
+        max_output_tokens: int = 2048,
     ) -> None:
-        self._key = (api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")).strip()
+        self._key = (
+            api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
+        ).strip()
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.max_output_tokens = max_output_tokens
@@ -52,7 +58,11 @@ class OpenAIHostedWebSearch:
     def health(self) -> HealthReport:
         """Report whether hosted search credentials are configured; make no call."""
         if not self._key:
-            return HealthReport(component="research(openai_web_search)", state=HealthState.DISABLED, detail="OPENAI_API_KEY not configured")
+            return HealthReport(
+                component="research(openai_web_search)",
+                state=HealthState.DISABLED,
+                detail="OPENAI_API_KEY not configured",
+            )
         return HealthReport(component="research(openai_web_search)", state=HealthState.HEALTHY)
 
     def research(self, query: str, budget: ResearchBudget) -> ResearchResponse:
@@ -81,22 +91,22 @@ class OpenAIHostedWebSearch:
             ),
             "store": False,
             "reasoning": {"effort": "low"},
-            "tools": [{
-                "type": "web_search",
-                "search_context_size": "medium",
-                "external_web_access": True,
-                "filters": {
-                    "blocked_domains": [
-                        "reddit.com", "quora.com", "wikipedia.org"
-                    ]
-                },
-            }],
+            "tools": [
+                {
+                    "type": "web_search",
+                    "search_context_size": "medium",
+                    "external_web_access": True,
+                    "filters": {"blocked_domains": ["reddit.com", "quora.com", "wikipedia.org"]},
+                }
+            ],
             "tool_choice": "required",
             "include": ["web_search_call.action.sources"],
             "max_output_tokens": self.max_output_tokens,
         }
         request = urllib.request.Request(
-            self.base_url + "/responses", data=json.dumps(body).encode(), method="POST",
+            self.base_url + "/responses",
+            data=json.dumps(body).encode(),
+            method="POST",
             headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
         )
         started = time.monotonic()
@@ -111,9 +121,13 @@ class OpenAIHostedWebSearch:
                         self._active_response = None
         except urllib.error.HTTPError as exc:
             if exc.code in {401, 403}:
-                raise AuthenticationProviderError("hosted web research authentication failed") from exc
+                raise AuthenticationProviderError(
+                    "hosted web research authentication failed"
+                ) from exc
             if exc.code == 404:
-                raise ModelUnavailableError("configured hosted research model is unavailable") from exc
+                raise ModelUnavailableError(
+                    "configured hosted research model is unavailable"
+                ) from exc
             if exc.code == 429:
                 if _http_error_code(exc) == "insufficient_quota":
                     raise ProviderQuotaError("hosted web research quota is unavailable") from exc
@@ -135,12 +149,14 @@ class OpenAIHostedWebSearch:
         # its top-level summary. No citations, however, can never satisfy Elly's
         # research contract and is retried by the application guardrail.
         if not citations:
-            raise TransientProviderError(
-                "hosted web research returned no cited sources"
-            )
+            raise TransientProviderError("hosted web research returned no cited sources")
         return ResearchResponse(
-            answer_text=text, citations=tuple(citations), provider="openai_web_search", model=self.model,
-            retrieved_at=datetime.now(timezone.utc), failures=(f"latency_ms={int((time.monotonic()-started)*1000)}",),
+            answer_text=text,
+            citations=tuple(citations),
+            provider="openai_web_search",
+            model=self.model,
+            retrieved_at=datetime.now(timezone.utc),
+            failures=(f"latency_ms={int((time.monotonic() - started) * 1000)}",),
         )
 
 
@@ -175,14 +191,22 @@ def _response_citations(payload: dict[str, Any]) -> list[ProviderCitation]:
                 if isinstance(url, str) and url:
                     snippet = ""
                     start, end = annotation.get("start_index"), annotation.get("end_index")
-                    if isinstance(content_text, str) and isinstance(start, int) and isinstance(end, int):
+                    if (
+                        isinstance(content_text, str)
+                        and isinstance(start, int)
+                        and isinstance(end, int)
+                    ):
                         if 0 <= start < end <= len(content_text):
                             snippet = content_text[start:end].strip()
-                    found.append(ProviderCitation(
-                        url=url, title=str(annotation.get("title", "")),
-                        publisher=str(annotation.get("publisher", "")),
-                        snippet=snippet, supporting_passage=snippet,
-                    ))
+                    found.append(
+                        ProviderCitation(
+                            url=url,
+                            title=str(annotation.get("title", "")),
+                            publisher=str(annotation.get("publisher", "")),
+                            snippet=snippet,
+                            supporting_passage=snippet,
+                        )
+                    )
                     seen.add(url)
         action = item.get("action", {})
         if not isinstance(action, dict):
@@ -193,12 +217,14 @@ def _response_citations(payload: dict[str, Any]) -> list[ProviderCitation]:
             url = source.get("url")
             if not isinstance(url, str) or not url or url in seen:
                 continue
-            found.append(ProviderCitation(
-                url=url,
-                title=str(source.get("title", "")),
-                publisher=str(source.get("publisher", "")),
-                snippet="",
-            ))
+            found.append(
+                ProviderCitation(
+                    url=url,
+                    title=str(source.get("title", "")),
+                    publisher=str(source.get("publisher", "")),
+                    snippet="",
+                )
+            )
             seen.add(url)
     return found
 

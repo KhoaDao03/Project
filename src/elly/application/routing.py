@@ -38,16 +38,11 @@ def _selection_trace_metadata(
     candidates: tuple[CandidateMatch, ...] = (),
 ) -> tuple[int, tuple[str, ...], bool]:
     """Build bounded observability fields from validated catalog evidence."""
-    evidence = candidates or (
-        selection.ranked_alternatives if selection is not None else ()
-    )
+    evidence = candidates or (selection.ranked_alternatives if selection is not None else ())
     return (
         len(evidence),
         _rejected_candidate_reason_codes(evidence),
-        bool(
-            intent is not None
-            and intent.freshness is not FreshnessRequirement.NONE
-        ),
+        bool(intent is not None and intent.freshness is not FreshnessRequirement.NONE),
     )
 
 
@@ -137,9 +132,7 @@ class RoutingPolicy:
                 force=True,
             )
             if catalog_decision is None:  # pragma: no cover - force is fail-closed
-                return self._catalog_rejected(
-                    "CAPABILITY_CATALOG_UNAVAILABLE", intent=task_intent
-                )
+                return self._catalog_rejected("CAPABILITY_CATALOG_UNAVAILABLE", intent=task_intent)
             return catalog_decision
 
         catalog_decision = self._decide_from_catalog(request)
@@ -244,9 +237,7 @@ class RoutingPolicy:
                 reason=RouteReasonCode.CATALOG_SINGLE_MATCH,
             )
 
-        selected_task_intent = task_intent or self._catalog_interpreter.interpret(
-            request, catalog
-        )
+        selected_task_intent = task_intent or self._catalog_interpreter.interpret(request, catalog)
         result = self._candidate_selector.select(selected_task_intent, catalog)
         if (
             result.reason_code == "CATALOG_NO_MATCH"
@@ -257,10 +248,7 @@ class RoutingPolicy:
             # conversation route. Positive evidence and selection failures stay
             # on the catalog path below.
             return None
-        if (
-            result.selection is not None
-            and result.reason_code == "CATALOG_SINGLE_MATCH"
-        ):
+        if result.selection is not None and result.reason_code == "CATALOG_SINGLE_MATCH":
             validation = self._candidate_selector.validate_proposal(
                 result.selection,
                 catalog,
@@ -310,10 +298,8 @@ class RoutingPolicy:
             )
         status = handler.status()
         if not status.available:
-            candidate_count, rejected_codes, freshness_affected = (
-                _selection_trace_metadata(
-                    intent=task_intent, selection=selection, candidates=candidates
-                )
+            candidate_count, rejected_codes, freshness_affected = _selection_trace_metadata(
+                intent=task_intent, selection=selection, candidates=candidates
             )
             return RouteDecision(
                 Route.REGISTERED_CAPABILITY,
@@ -378,12 +364,10 @@ class RoutingPolicy:
                 unavailable_selection = result.selection or self._candidate_selector.proposal_for(
                     task_intent, best, result.matches
                 )
-                candidate_count, rejected_codes, freshness_affected = (
-                    _selection_trace_metadata(
-                        intent=task_intent,
-                        selection=unavailable_selection,
-                        candidates=result.matches,
-                    )
+                candidate_count, rejected_codes, freshness_affected = _selection_trace_metadata(
+                    intent=task_intent,
+                    selection=unavailable_selection,
+                    candidates=result.matches,
                 )
                 return RouteDecision(
                     Route.REGISTERED_CAPABILITY,

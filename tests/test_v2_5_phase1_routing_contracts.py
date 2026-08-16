@@ -84,9 +84,7 @@ class _CatalogHandler:
     def can_handle(self, _request: CapabilityRequest) -> CapabilityMatch:
         return CapabilityMatch(True, "TEST_MATCH")
 
-    def prepare(
-        self, _intent, _request: CapabilityRequest
-    ) -> CapabilityPreparation:
+    def prepare(self, _intent, _request: CapabilityRequest) -> CapabilityPreparation:
         return CapabilityPreparation(True, "TEST_PREPARED")
 
     def execute(self, _request: CapabilityRequest) -> CapabilityExecution:

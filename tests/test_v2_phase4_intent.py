@@ -122,9 +122,7 @@ class Phase4IntentTests(unittest.TestCase):
             ),
         )
         self.assertTrue(decision.clarification_required)
-        self.assertEqual(
-            RouteReasonCode.CATALOG_AMBIGUOUS, decision.reason_code
-        )
+        self.assertEqual(RouteReasonCode.CATALOG_AMBIGUOUS, decision.reason_code)
 
     def test_unrelated_keyword_combinations_do_not_select_coding(self) -> None:
         for text in (
@@ -162,13 +160,9 @@ class Phase4IntentTests(unittest.TestCase):
                 rationale_code="TEST",
             ),
         )
-        self.assertEqual(
-            RouteReasonCode.SELECTION_PROPOSAL_REJECTED, unknown.reason_code
-        )
+        self.assertEqual(RouteReasonCode.SELECTION_PROPOSAL_REJECTED, unknown.reason_code)
         self.assertEqual("CAPABILITY_NOT_REGISTERED", unknown.diagnostic)
-        self.assertEqual(
-            RouteReasonCode.SELECTION_PROPOSAL_REJECTED, unsupported.reason_code
-        )
+        self.assertEqual(RouteReasonCode.SELECTION_PROPOSAL_REJECTED, unsupported.reason_code)
         self.assertEqual("OPERATION_UNSUPPORTED", unsupported.diagnostic)
 
     def test_prepare_validates_input_without_provider_execution(self) -> None:
@@ -200,7 +194,9 @@ class Phase4IntentTests(unittest.TestCase):
         self.assertFalse(missing.accepted)
         self.assertEqual(("subject",), missing.clarification_fields)
 
-    def test_unmatched_request_uses_local_conversation_without_provider_capability_call(self) -> None:
+    def test_unmatched_request_uses_local_conversation_without_provider_capability_call(
+        self,
+    ) -> None:
         repository = SqliteSessionRepository(":memory:")
         repository.apply_migrations()
         repository.create_session(
@@ -234,9 +230,7 @@ class Phase4IntentTests(unittest.TestCase):
                 capability_registry=CapabilityRegistry((_PreparedCapability(),)),
                 completion=completion,
             ),
-            routing_policy=RoutingPolicy(
-                capabilities=CapabilityRegistry((_PreparedCapability(),))
-            ),
+            routing_policy=RoutingPolicy(capabilities=CapabilityRegistry((_PreparedCapability(),))),
         )
         try:
             outcome = orchestrator.handle(

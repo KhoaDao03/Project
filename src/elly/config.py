@@ -13,12 +13,124 @@ hosted research without disabling local Ollama conversation (DEC-OQ-07).
 
 from __future__ import annotations
 
+import logging
+import math
 import os
+import re
 import tomllib
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, NoReturn, cast
 from urllib.parse import urlsplit
 
 from .domain.errors import ConfigInvalidError
+
+if TYPE_CHECKING:
+    from .planning.contracts import PlanLimitsSnapshot
+
+_LOCAL_MODEL_ROLES = ("conversation", "planner", "synthesis")
+_LOCAL_MODEL_PROFILE_FIELDS = frozenset({"provider", "model_id", "base_url", "timeout_seconds"})
+_PROFILE_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+
+
+def _validate_profile_name(value: object, name: str = "profile name") -> str:
+    if not isinstance(value, str) or _PROFILE_NAME.fullmatch(value) is None:
+        raise ConfigInvalidError(f"{name} must be a safe local-model profile identifier")
+    return value
+
+
+def _validate_local_endpoint(value: object, name: str = "base_url") -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigInvalidError(f"{name} must be a non-empty URL")
+    normalized = value.rstrip("/")
+    parsed = urlsplit(normalized)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ConfigInvalidError(f"{name} has an invalid port") from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or port is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ConfigInvalidError(f"{name} must be an origin on 127.0.0.1 over HTTP")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class LocalModelProfile:
+    """Reusable, validated identity for one local model endpoint."""
+
+    name: str
+    provider: str
+    model_id: str
+    base_url: str
+    timeout_seconds: float
+
+    def __post_init__(self) -> None:
+        _validate_profile_name(self.name)
+        provider = self.provider.lower() if isinstance(self.provider, str) else ""
+        if provider not in {"fake", "ollama"}:
+            raise ConfigInvalidError("local model provider must be fake or ollama")
+        if not isinstance(self.model_id, str) or not self.model_id.strip():
+            raise ConfigInvalidError("local model model_id must be non-empty")
+        timeout = _as_float(
+            self.timeout_seconds,
+            "local model timeout_seconds",
+            strictly_positive=True,
+        )
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "base_url", _validate_local_endpoint(self.base_url))
+        object.__setattr__(self, "timeout_seconds", timeout)
+
+
+@dataclass(frozen=True, slots=True)
+class LocalModelRoleConfig:
+    """Immutable role binding plus an independently configurable output limit."""
+
+    role: str
+    profile: LocalModelProfile
+    max_output_tokens: int
+
+    def __post_init__(self) -> None:
+        if self.role not in _LOCAL_MODEL_ROLES:
+            raise ConfigInvalidError("local model role is unsupported")
+        if not isinstance(self.profile, LocalModelProfile):
+            raise ConfigInvalidError("local model role profile is invalid")
+        if (
+            isinstance(self.max_output_tokens, bool)
+            or not isinstance(self.max_output_tokens, int)
+            or self.max_output_tokens <= 0
+        ):
+            raise ConfigInvalidError("local model role output limit must be > 0")
+
+    @property
+    def profile_name(self) -> str:
+        return self.profile.name
+
+    @property
+    def provider(self) -> str:
+        return self.profile.provider
+
+    @property
+    def model_id(self) -> str:
+        return self.profile.model_id
+
+    @property
+    def base_url(self) -> str:
+        return self.profile.base_url
+
+    @property
+    def timeout_seconds(self) -> float:
+        return self.profile.timeout_seconds
+
+    @property
+    def endpoint_host(self) -> str:
+        return urlsplit(self.profile.base_url).hostname or ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,20 +139,28 @@ class Config:
 
     app_name: str
     db_path: str
+    local_model_profiles: tuple[LocalModelProfile, ...]
+    conversation_role: LocalModelRoleConfig
+    planner_role: LocalModelRoleConfig
+    synthesis_role: LocalModelRoleConfig
     max_input_chars: int
     context_window_messages: int
-    generalist_model_id: str
-    generalist_provider: str
-    generalist_max_output_tokens: int
     specialist_max_output_tokens: int
     log_level: str
-    ollama_base_url: str
-    ollama_timeout_seconds: float
     specialist_manifest_dir: str
     specialist_provider: str
     specialist_default_model_id: str
     specialist_model_overrides: tuple[tuple[str, str], ...]
     max_steps: int
+    max_plan_steps: int
+    max_specialist_executions: int
+    max_research_executions: int
+    max_synthesis_executions: int
+    max_replanning_attempts: int
+    max_parallel_steps: int
+    recursive_planning: bool
+    specialist_delegation: bool
+    automatic_replanning: bool
     max_provider_calls: int
     max_retries: int
     tool_timeout_seconds: float
@@ -60,6 +180,21 @@ class Config:
     audit_retention_days: int
     backup_dir: str
 
+    def __post_init__(self) -> None:
+        if not self.local_model_profiles:
+            raise ConfigInvalidError("at least one local model profile is required")
+        names = tuple(profile.name for profile in self.local_model_profiles)
+        if len(set(names)) != len(names):
+            raise ConfigInvalidError("local model profile names must be unique")
+        roles = (self.conversation_role, self.planner_role, self.synthesis_role)
+        if tuple(role.role for role in roles) != _LOCAL_MODEL_ROLES:
+            raise ConfigInvalidError("local model roles must be conversation, planner, synthesis")
+        for role in roles:
+            if role.profile_name not in names:
+                raise ConfigInvalidError(
+                    f"local model role {role.role} references an unknown profile"
+                )
+
     def specialist_model_id(self, specialist_id: str) -> str:
         """Resolve a specialist model from this one centralized configuration."""
         return dict(self.specialist_model_overrides).get(
@@ -70,6 +205,71 @@ class Config:
     def provider_call_cost_usd(self) -> float:
         """Compatibility alias for pre-centralization callers."""
         return self.remote_call_reservation_usd
+
+    def local_model_profile(self, name: str) -> LocalModelProfile:
+        """Return one immutable named local-model profile."""
+        for profile in self.local_model_profiles:
+            if profile.name == name:
+                return profile
+        raise ConfigInvalidError(f"unknown local model profile: {name}")
+
+    def local_model_role(self, role: str) -> LocalModelRoleConfig:
+        """Return the resolved immutable configuration for one logical role."""
+        roles = {
+            "conversation": self.conversation_role,
+            "planner": self.planner_role,
+            "synthesis": self.synthesis_role,
+        }
+        try:
+            return roles[role]
+        except KeyError as exc:
+            raise ConfigInvalidError(f"unknown local model role: {role}") from exc
+
+    def execution_plan_limits(self) -> PlanLimitsSnapshot:
+        """Return the immutable V3 ceilings captured by a validated plan."""
+        from .planning.contracts import PlanLimitsSnapshot
+
+        return PlanLimitsSnapshot(
+            max_plan_steps=self.max_plan_steps,
+            max_specialist_executions=self.max_specialist_executions,
+            max_research_executions=self.max_research_executions,
+            max_synthesis_executions=self.max_synthesis_executions,
+            max_provider_calls=self.max_provider_calls,
+            max_concurrency=self.max_concurrency,
+            max_replanning_attempts=(
+                self.max_replanning_attempts if self.automatic_replanning else 0
+            ),
+            max_parallel_steps=self.max_parallel_steps,
+            max_step_timeout_seconds=self.tool_timeout_seconds,
+            max_total_timeout_seconds=self.total_timeout_seconds,
+        )
+
+    @property
+    def plan_limits(self) -> PlanLimitsSnapshot:
+        """Compatibility alias for callers that use the shorter name."""
+        return self.execution_plan_limits()
+
+    # V2.5 compatibility properties. Existing callers continue to see the
+    # conversation role while all new composition code resolves explicit roles.
+    @property
+    def generalist_model_id(self) -> str:
+        return self.conversation_role.model_id
+
+    @property
+    def generalist_provider(self) -> str:
+        return self.conversation_role.provider
+
+    @property
+    def generalist_max_output_tokens(self) -> int:
+        return self.conversation_role.max_output_tokens
+
+    @property
+    def ollama_base_url(self) -> str:
+        return self.conversation_role.base_url
+
+    @property
+    def ollama_timeout_seconds(self) -> float:
+        return self.conversation_role.timeout_seconds
 
 
 _DEFAULTS: dict[str, object] = {
@@ -89,11 +289,22 @@ _DEFAULTS: dict[str, object] = {
     "specialist_default_model_id": "gpt-5.6-luna",
     "specialist_model_overrides": (),
     "max_steps": 6,
-    "max_provider_calls": 2,
+    "max_plan_steps": 5,
+    "max_specialist_executions": 2,
+    "max_research_executions": 1,
+    "max_synthesis_executions": 1,
+    "max_replanning_attempts": 1,
+    "max_parallel_steps": 2,
+    "recursive_planning": False,
+    "specialist_delegation": False,
+    "automatic_replanning": True,
+    "max_provider_calls": 3,
     "max_retries": 1,
     "tool_timeout_seconds": 60.0,
-    "total_timeout_seconds": 120.0,
-    "max_concurrency": 1,
+    # Supports the required research -> specialist -> local synthesis critical
+    # path at the default 60-second per-step ceiling.
+    "total_timeout_seconds": 180.0,
+    "max_concurrency": 2,
     "max_queue_size": 1,
     "monthly_budget_usd": 10.0,
     # Conservative remote-call reservation derived from the approved token
@@ -111,9 +322,21 @@ _DEFAULTS: dict[str, object] = {
     "backup_dir": "data/backups",
 }
 
+_DEFAULT_LOCAL_PROFILE: dict[str, object] = {
+    "provider": "ollama",
+    "model_id": "qwen3:8b",
+    "base_url": "http://127.0.0.1:11434",
+    "timeout_seconds": 120.0,
+}
+_DEFAULT_LOCAL_ROLE_LIMITS: dict[str, int] = {
+    "conversation": 512,
+    "planner": 1200,
+    "synthesis": 1600,
+}
+
 
 def _as_positive_int(value: object, name: str) -> int:
-    if not isinstance(value, (str, bytes, bytearray, int, float)):
+    if isinstance(value, bool) or not isinstance(value, (str, bytes, bytearray, int, float)):
         raise ConfigInvalidError(f"{name} must be an integer")
     try:
         ivalue = int(value)
@@ -125,7 +348,7 @@ def _as_positive_int(value: object, name: str) -> int:
 
 
 def _as_nonnegative_int(value: object, name: str) -> int:
-    if not isinstance(value, (str, bytes, bytearray, int, float)):
+    if isinstance(value, bool) or not isinstance(value, (str, bytes, bytearray, int, float)):
         raise ConfigInvalidError(f"{name} must be an integer")
     try:
         ivalue = int(value)
@@ -136,11 +359,31 @@ def _as_nonnegative_int(value: object, name: str) -> int:
     return ivalue
 
 
-def _as_float(value: object, name: str, *, minimum: float = 0.0, strictly_positive: bool = False) -> float:
+def _as_bool(value: object, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise ConfigInvalidError(f"{name} must be a boolean")
+
+
+def _as_float(
+    value: object,
+    name: str,
+    *,
+    minimum: float = 0.0,
+    strictly_positive: bool = False,
+) -> float:
     try:
         fvalue = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError) as exc:
         raise ConfigInvalidError(f"{name} must be a number") from exc
+    if not math.isfinite(fvalue):
+        raise ConfigInvalidError(f"{name} must be finite")
     if strictly_positive and fvalue <= minimum:
         raise ConfigInvalidError(f"{name} must be > {minimum}")
     if not strictly_positive and fvalue < minimum:
@@ -160,6 +403,7 @@ def _from_toml(path: str) -> dict[str, object]:
     flat: dict[str, object] = {}
     app = raw.get("app", {})
     limits = raw.get("limits", {})
+    orchestration = raw.get("orchestration", {})
     generalist = raw.get("generalist", {})
     log = raw.get("log", {})
     # Central operational selection. These tables are authoritative when both
@@ -167,6 +411,32 @@ def _from_toml(path: str) -> dict[str, object]:
     providers = raw.get("providers", {})
     models = raw.get("models", {})
     pricing = raw.get("pricing", {})
+    local_models = raw.get("local_models")
+    if local_models is not None:
+        if not isinstance(local_models, dict):
+            raise ConfigInvalidError("local_models must be a TOML table")
+        flat["_local_models_declared"] = True
+        profiles = local_models.get("profiles", {})
+        if not isinstance(profiles, dict):
+            raise ConfigInvalidError("local_models.profiles must be a TOML table")
+        profile_entries = tuple(
+            (str(name), dict(values))
+            for name, values in profiles.items()
+            if isinstance(values, dict)
+        )
+        if len(profile_entries) != len(profiles):
+            raise ConfigInvalidError("local model profiles must be TOML tables")
+        flat["_local_model_profiles"] = profile_entries
+        roles = local_models.get("roles", {})
+        if not isinstance(roles, dict):
+            raise ConfigInvalidError("local_models.roles must be a TOML table")
+        flat["_local_model_roles"] = tuple((str(role), value) for role, value in roles.items())
+        role_limits = local_models.get("role_limits", {})
+        if not isinstance(role_limits, dict):
+            raise ConfigInvalidError("local_models.role_limits must be a TOML table")
+        flat["_local_model_role_limits"] = tuple(
+            (str(role_limit), value) for role_limit, value in role_limits.items()
+        )
     if "name" in app:
         flat["app_name"] = app["name"]
     if "db_path" in app:
@@ -177,24 +447,51 @@ def _from_toml(path: str) -> dict[str, object]:
         flat["context_window_messages"] = limits["context_window_messages"]
     if "specialist_max_output_tokens" in limits:
         flat["specialist_max_output_tokens"] = limits["specialist_max_output_tokens"]
-    for key in ("max_steps", "max_provider_calls", "max_retries", "max_concurrency", "max_queue_size"):
+    for key in (
+        "max_steps",
+        "max_provider_calls",
+        "max_retries",
+        "max_concurrency",
+        "max_queue_size",
+    ):
         if key in limits:
             flat[key] = limits[key]
-    for key in ("tool_timeout_seconds", "total_timeout_seconds", "monthly_budget_usd", "provider_call_cost_usd"):
-        if key in limits:
-            flat["remote_call_reservation_usd" if key == "provider_call_cost_usd" else key] = limits[key]
-    research = raw.get("research", {})
+    if not isinstance(orchestration, dict):
+        raise ConfigInvalidError("orchestration must be a TOML table")
     for key in (
-        "provider", "model_id", "max_results", "max_output_tokens", "timeout_seconds"
+        "max_plan_steps",
+        "max_specialist_executions",
+        "max_research_executions",
+        "max_synthesis_executions",
+        "max_replans",
+        "max_parallel_steps",
+        "recursive_planning",
+        "specialist_delegation",
+        "automatic_replanning",
     ):
+        if key in orchestration:
+            flat["max_replanning_attempts" if key == "max_replans" else key] = orchestration[key]
+    for key in (
+        "tool_timeout_seconds",
+        "total_timeout_seconds",
+        "monthly_budget_usd",
+        "provider_call_cost_usd",
+    ):
+        if key in limits:
+            destination = "remote_call_reservation_usd" if key == "provider_call_cost_usd" else key
+            flat[destination] = limits[key]
+    research = raw.get("research", {})
+    for key in ("provider", "model_id", "max_results", "max_output_tokens", "timeout_seconds"):
         if key in research:
-            flat[{
-                "provider": "research_provider",
-                "model_id": "research_model_id",
-                "max_results": "research_max_results",
-                "max_output_tokens": "research_max_output_tokens",
-                "timeout_seconds": "research_timeout_seconds",
-            }[key]] = research[key]
+            flat[
+                {
+                    "provider": "research_provider",
+                    "model_id": "research_model_id",
+                    "max_results": "research_max_results",
+                    "max_output_tokens": "research_max_output_tokens",
+                    "timeout_seconds": "research_timeout_seconds",
+                }[key]
+            ] = research[key]
     storage = raw.get("storage", {})
     for key in ("session_retention_days", "evidence_retention_days", "audit_retention_days"):
         if key in storage:
@@ -246,6 +543,11 @@ def _from_toml(path: str) -> dict[str, object]:
             flat[destination] = pricing[name]
     if "level" in log:
         flat["log_level"] = log["level"]
+    flat["_legacy_generalist_configured"] = bool(
+        generalist
+        or (isinstance(providers, dict) and "generalist" in providers)
+        or (isinstance(models, dict) and "generalist" in models)
+    )
     return flat
 
 
@@ -265,6 +567,15 @@ def _from_env() -> dict[str, object]:
         "ELLY_SPECIALIST_PROVIDER": "specialist_provider",
         "ELLY_SPECIALIST_DEFAULT_MODEL_ID": "specialist_default_model_id",
         "ELLY_MAX_STEPS": "max_steps",
+        "ELLY_MAX_PLAN_STEPS": "max_plan_steps",
+        "ELLY_MAX_SPECIALIST_EXECUTIONS": "max_specialist_executions",
+        "ELLY_MAX_RESEARCH_EXECUTIONS": "max_research_executions",
+        "ELLY_MAX_SYNTHESIS_EXECUTIONS": "max_synthesis_executions",
+        "ELLY_MAX_REPLANS": "max_replanning_attempts",
+        "ELLY_MAX_PARALLEL_STEPS": "max_parallel_steps",
+        "ELLY_RECURSIVE_PLANNING": "recursive_planning",
+        "ELLY_SPECIALIST_DELEGATION": "specialist_delegation",
+        "ELLY_AUTOMATIC_REPLANNING": "automatic_replanning",
         "ELLY_MAX_PROVIDER_CALLS": "max_provider_calls",
         "ELLY_MAX_RETRIES": "max_retries",
         "ELLY_TOOL_TIMEOUT_SECONDS": "tool_timeout_seconds",
@@ -289,58 +600,310 @@ def _from_env() -> dict[str, object]:
     for env_name, key in env_map.items():
         if env_name in os.environ:
             out[key] = os.environ[env_name]
+    legacy_names = {
+        "ELLY_GENERALIST_MODEL_ID",
+        "ELLY_GENERALIST_PROVIDER",
+        "ELLY_GENERALIST_MAX_OUTPUT_TOKENS",
+        "ELLY_OLLAMA_BASE_URL",
+        "ELLY_OLLAMA_TIMEOUT_SECONDS",
+    }
+    out["_legacy_generalist_configured"] = bool(legacy_names.intersection(os.environ))
+
+    role_bindings: list[tuple[str, object]] = []
+    role_limits: list[tuple[str, object]] = []
+    for role in _LOCAL_MODEL_ROLES:
+        upper_role = role.upper()
+        binding_names = (
+            f"ELLY_LOCAL_{upper_role}_PROFILE",
+            f"ELLY_LOCAL_MODELS_{upper_role}_PROFILE",
+        )
+        binding_values = [os.environ[name] for name in binding_names if name in os.environ]
+        if len(set(binding_values)) > 1:
+            raise ConfigInvalidError(
+                f"conflicting environment bindings for local model role {role}"
+            )
+        if binding_values:
+            role_bindings.append((role, binding_values[0]))
+
+        limit_names = (
+            f"ELLY_LOCAL_{upper_role}_MAX_OUTPUT_TOKENS",
+            f"ELLY_LOCAL_MODELS_{upper_role}_MAX_OUTPUT_TOKENS",
+        )
+        limit_values = [os.environ[name] for name in limit_names if name in os.environ]
+        if len(set(limit_values)) > 1:
+            raise ConfigInvalidError(
+                f"conflicting environment output limits for local model role {role}"
+            )
+        if limit_values:
+            role_limits.append((role, limit_values[0]))
+    if role_bindings:
+        out["_local_model_role_env"] = tuple(role_bindings)
+    if role_limits:
+        out["_local_model_role_limit_env"] = tuple(role_limits)
+
+    profile_env: dict[str, dict[str, object]] = {}
+    profile_fields = {
+        "PROVIDER": "provider",
+        "MODEL_ID": "model_id",
+        "BASE_URL": "base_url",
+        "TIMEOUT_SECONDS": "timeout_seconds",
+    }
+    for env_name, value in os.environ.items():
+        prefix = "ELLY_LOCAL_MODELS_"
+        if not env_name.startswith(prefix):
+            continue
+        for suffix, field_name in profile_fields.items():
+            marker = f"_{suffix}"
+            if not env_name.endswith(marker):
+                continue
+            encoded_name = env_name[len(prefix) : -len(marker)]
+            if not encoded_name:
+                continue
+            profile_name = encoded_name.lower()
+            profile_env.setdefault(profile_name, {})[field_name] = value
+            break
+    if profile_env:
+        out["_local_model_profile_env"] = tuple(
+            (name, dict(fields)) for name, fields in profile_env.items()
+        )
     return out
 
 
+def _pairs(value: object, name: str) -> tuple[tuple[str, object], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, tuple):
+        raise ConfigInvalidError(f"{name} must be a table")
+    result: list[tuple[str, object]] = []
+    for item in value:
+        if not isinstance(item, tuple) or len(item) != 2 or not isinstance(item[0], str):
+            raise ConfigInvalidError(f"{name} contains an invalid entry")
+        result.append((item[0], item[1]))
+    return tuple(result)
+
+
+def _local_profile_values(value: object, name: str) -> tuple[tuple[str, dict[str, object]], ...]:
+    entries = _pairs(value, name)
+    result: list[tuple[str, dict[str, object]]] = []
+    for profile_name, raw_fields in entries:
+        if not isinstance(raw_fields, dict):
+            raise ConfigInvalidError(f"{name} profile {profile_name} must be a table")
+        result.append((profile_name, dict(raw_fields)))
+    return tuple(result)
+
+
+def _apply_profile_overrides(
+    profiles: dict[str, dict[str, object]],
+    overrides: tuple[tuple[str, dict[str, object]], ...],
+    *,
+    source: str,
+) -> None:
+    for profile_name, fields in overrides:
+        _validate_profile_name(profile_name, f"{source} profile name")
+        target = profiles.setdefault(profile_name, {})
+        unknown = set(fields) - _LOCAL_MODEL_PROFILE_FIELDS
+        if unknown:
+            raise ConfigInvalidError(
+                f"{source} profile {profile_name} has unsupported fields: "
+                + ", ".join(sorted(str(item) for item in unknown))
+            )
+        target.update(fields)
+
+
+def _apply_role_bindings(
+    bindings: dict[str, str], entries: tuple[tuple[str, object], ...], source: str
+) -> None:
+    for role, profile_name in entries:
+        if role not in _LOCAL_MODEL_ROLES:
+            raise ConfigInvalidError(f"{source} contains an unsupported local model role: {role}")
+        if not isinstance(profile_name, str) or not profile_name.strip():
+            raise ConfigInvalidError(f"{source} binding for {role} must name a profile")
+        bindings[role] = profile_name
+
+
+def _apply_role_limits(
+    limits: dict[str, object], entries: tuple[tuple[str, object], ...], source: str
+) -> None:
+    for key, value in entries:
+        role = key.removesuffix("_max_output_tokens")
+        if role not in _LOCAL_MODEL_ROLES:
+            raise ConfigInvalidError(f"{source} contains an unsupported role limit: {key}")
+        limits[role] = value
+
+
+def _build_local_roles(
+    merged: dict[str, object],
+    toml_values: dict[str, object],
+    env_values: dict[str, object],
+) -> tuple[tuple[LocalModelProfile, ...], tuple[LocalModelRoleConfig, ...]]:
+    legacy = bool(toml_values.get("_legacy_generalist_configured")) or bool(
+        env_values.get("_legacy_generalist_configured")
+    )
+    new_configuration = bool(toml_values.get("_local_models_declared")) or any(
+        key in env_values
+        for key in (
+            "_local_model_role_env",
+            "_local_model_role_limit_env",
+            "_local_model_profile_env",
+        )
+    )
+
+    if legacy:
+        logging.getLogger("elly.config").warning(
+            "legacy generalist configuration is deprecated; use "
+            "[local_models.profiles] and [local_models.roles]"
+        )
+
+    if legacy and not new_configuration:
+        profiles: dict[str, dict[str, object]] = {
+            "v2_generalist": {
+                "provider": merged["generalist_provider"],
+                "model_id": merged["generalist_model_id"],
+                "base_url": merged["ollama_base_url"],
+                "timeout_seconds": merged["ollama_timeout_seconds"],
+            }
+        }
+        role_bindings = {role: "v2_generalist" for role in _LOCAL_MODEL_ROLES}
+    else:
+        profiles = {"qwen_default": dict(_DEFAULT_LOCAL_PROFILE)}
+        _apply_profile_overrides(
+            profiles,
+            _local_profile_values(
+                toml_values.get("_local_model_profiles"),
+                "local_models.profiles",
+            ),
+            source="local_models.profiles",
+        )
+        role_bindings = {role: "qwen_default" for role in _LOCAL_MODEL_ROLES}
+
+    env_profile_overrides = _local_profile_values(
+        env_values.get("_local_model_profile_env"),
+        "local model environment profiles",
+    )
+    _apply_profile_overrides(profiles, env_profile_overrides, source="local model environment")
+
+    if not (legacy and not new_configuration):
+        _apply_role_bindings(
+            role_bindings,
+            _pairs(toml_values.get("_local_model_roles"), "local_models.roles"),
+            "local_models.roles",
+        )
+        _apply_role_bindings(
+            role_bindings,
+            _pairs(env_values.get("_local_model_role_env"), "local model environment roles"),
+            "local model environment roles",
+        )
+
+    role_limits: dict[str, object] = dict(_DEFAULT_LOCAL_ROLE_LIMITS)
+    if legacy and not new_configuration:
+        role_limits["conversation"] = merged["generalist_max_output_tokens"]
+    else:
+        _apply_role_limits(
+            role_limits,
+            _pairs(
+                toml_values.get("_local_model_role_limits"),
+                "local_models.role_limits",
+            ),
+            "local_models.role_limits",
+        )
+        _apply_role_limits(
+            role_limits,
+            _pairs(
+                env_values.get("_local_model_role_limit_env"),
+                "local model environment role limits",
+            ),
+            "local model environment role limits",
+        )
+
+    resolved_profiles = tuple(
+        LocalModelProfile(
+            name=name,
+            provider=cast(str, fields.get("provider", "")),
+            model_id=cast(str, fields.get("model_id", "")),
+            base_url=cast(str, fields.get("base_url", "")),
+            timeout_seconds=_as_float(
+                fields.get("timeout_seconds"),
+                f"local model profile {name} timeout_seconds",
+                strictly_positive=True,
+            ),
+        )
+        for name, fields in sorted(profiles.items())
+    )
+    by_name = {profile.name: profile for profile in resolved_profiles}
+    role_configs = tuple(
+        LocalModelRoleConfig(
+            role=role,
+            profile=by_name[profile_name]
+            if profile_name in by_name
+            else (_raise_unknown_profile(profile_name)),
+            max_output_tokens=_as_positive_int(role_limits[role], f"{role}_max_output_tokens"),
+        )
+        for role, profile_name in role_bindings.items()
+    )
+    return resolved_profiles, role_configs
+
+
+def _raise_unknown_profile(name: str) -> NoReturn:
+    raise ConfigInvalidError(f"unknown local model profile: {name}")
+
+
 def load_config(toml_path: str | None = None) -> Config:
-    """Return a validated Config. Raise ConfigInvalidError on any invalid value."""
+    """Return validated settings with independent local-model role bindings."""
+    toml_values = _from_toml(toml_path) if toml_path else {}
+    env_values = _from_env()
     merged: dict[str, object] = dict(_DEFAULTS)
-    if toml_path:
-        merged.update(_from_toml(toml_path))
-    merged.update(_from_env())
+    merged.update(toml_values)
+    merged.update(env_values)
 
     log_level = str(merged["log_level"]).upper()
     if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
         raise ConfigInvalidError(f"log_level invalid: {log_level}")
-
     db_path = str(merged["db_path"])
     if not db_path.strip():
         raise ConfigInvalidError("db_path must be non-empty")
-    timeout_seconds = _as_float(merged["ollama_timeout_seconds"], "ollama_timeout_seconds", strictly_positive=True)
-    ollama_base_url = str(merged["ollama_base_url"]).rstrip("/")
-    parsed_ollama_url = urlsplit(ollama_base_url)
-    try:
-        ollama_port = parsed_ollama_url.port
-    except ValueError as exc:
-        raise ConfigInvalidError("ollama_base_url has an invalid port") from exc
-    if (
-        parsed_ollama_url.scheme != "http"
-        or parsed_ollama_url.hostname != "127.0.0.1"
-        or ollama_port is None
-        or parsed_ollama_url.username is not None
-        or parsed_ollama_url.password is not None
-        or parsed_ollama_url.path not in {"", "/"}
-        or parsed_ollama_url.query
-        or parsed_ollama_url.fragment
-    ):
-        raise ConfigInvalidError("ollama_base_url must be an origin on 127.0.0.1 over HTTP")
-    provider = str(merged["generalist_provider"]).lower()
-    if provider not in {"fake", "ollama"}:
-        raise ConfigInvalidError("generalist_provider must be fake or ollama")
+
+    local_profiles, local_roles = _build_local_roles(merged, toml_values, env_values)
+    role_by_name = {role.role: role for role in local_roles}
+
     max_steps = _as_positive_int(merged["max_steps"], "max_steps")
+    max_plan_steps = _as_positive_int(merged["max_plan_steps"], "max_plan_steps")
+    max_specialist_executions = _as_nonnegative_int(
+        merged["max_specialist_executions"], "max_specialist_executions"
+    )
+    max_research_executions = _as_nonnegative_int(
+        merged["max_research_executions"], "max_research_executions"
+    )
+    max_synthesis_executions = _as_nonnegative_int(
+        merged["max_synthesis_executions"], "max_synthesis_executions"
+    )
+    max_replanning_attempts = _as_nonnegative_int(
+        merged["max_replanning_attempts"], "max_replanning_attempts"
+    )
+    max_parallel_steps = _as_positive_int(merged["max_parallel_steps"], "max_parallel_steps")
+    recursive_planning = _as_bool(merged["recursive_planning"], "recursive_planning")
+    specialist_delegation = _as_bool(merged["specialist_delegation"], "specialist_delegation")
+    automatic_replanning = _as_bool(merged["automatic_replanning"], "automatic_replanning")
+    if max_plan_steps > max_steps:
+        raise ConfigInvalidError("max_plan_steps cannot exceed max_steps")
+    if max_replanning_attempts > 1:
+        raise ConfigInvalidError("max_replanning_attempts cannot exceed the compiled V3 maximum")
     max_provider_calls = _as_positive_int(merged["max_provider_calls"], "max_provider_calls")
     max_retries = _as_nonnegative_int(merged["max_retries"], "max_retries")
     max_concurrency = _as_positive_int(merged["max_concurrency"], "max_concurrency")
+    if max_parallel_steps > max_concurrency:
+        raise ConfigInvalidError("max_parallel_steps cannot exceed max_concurrency")
     max_queue_size = _as_nonnegative_int(merged["max_queue_size"], "max_queue_size")
-    tool_timeout_seconds = _as_float(merged["tool_timeout_seconds"], "tool_timeout_seconds", strictly_positive=True)
-    total_timeout_seconds = _as_float(merged["total_timeout_seconds"], "total_timeout_seconds", strictly_positive=True)
+    tool_timeout_seconds = _as_float(
+        merged["tool_timeout_seconds"], "tool_timeout_seconds", strictly_positive=True
+    )
+    total_timeout_seconds = _as_float(
+        merged["total_timeout_seconds"], "total_timeout_seconds", strictly_positive=True
+    )
     monthly_budget_usd = _as_float(merged["monthly_budget_usd"], "monthly_budget_usd")
     remote_call_reservation_usd = _as_float(
         merged["remote_call_reservation_usd"], "remote_call_reservation_usd"
     )
-    consent_max_cost_usd = _as_float(
-        merged["consent_max_cost_usd"], "consent_max_cost_usd"
-    )
+    consent_max_cost_usd = _as_float(merged["consent_max_cost_usd"], "consent_max_cost_usd")
     research_provider = str(merged["research_provider"]).lower()
     if research_provider not in {"openai_web_search", "fixtures"}:
         raise ConfigInvalidError("research_provider must be openai_web_search or fixtures")
@@ -351,17 +914,24 @@ def load_config(toml_path: str | None = None) -> Config:
     research_max_output_tokens = _as_positive_int(
         merged["research_max_output_tokens"], "research_max_output_tokens"
     )
-    research_timeout_seconds = _as_float(merged["research_timeout_seconds"], "research_timeout_seconds", strictly_positive=True)
-    session_retention_days = _as_positive_int(merged["session_retention_days"], "session_retention_days")
+    research_timeout_seconds = _as_float(
+        merged["research_timeout_seconds"],
+        "research_timeout_seconds",
+        strictly_positive=True,
+    )
+    session_retention_days = _as_positive_int(
+        merged["session_retention_days"], "session_retention_days"
+    )
     evidence_retention_days = _as_positive_int(
         merged["evidence_retention_days"], "evidence_retention_days"
     )
-    audit_retention_days = _as_positive_int(
-        merged["audit_retention_days"], "audit_retention_days"
-    )
+    audit_retention_days = _as_positive_int(merged["audit_retention_days"], "audit_retention_days")
     for key in (
-        "app_name", "generalist_model_id", "research_model_id",
-        "specialist_default_model_id", "specialist_manifest_dir", "backup_dir",
+        "app_name",
+        "research_model_id",
+        "specialist_default_model_id",
+        "specialist_manifest_dir",
+        "backup_dir",
     ):
         if not str(merged[key]).strip():
             raise ConfigInvalidError(f"{key} must be non-empty")
@@ -370,34 +940,44 @@ def load_config(toml_path: str | None = None) -> Config:
         raise ConfigInvalidError("specialist_model_overrides must be a TOML table")
     specialist_model_overrides: list[tuple[str, str]] = []
     for item in raw_overrides:
-        if (not isinstance(item, tuple) or len(item) != 2
-                or not str(item[0]).strip() or not str(item[1]).strip()):
+        if (
+            not isinstance(item, tuple)
+            or len(item) != 2
+            or not str(item[0]).strip()
+            or not str(item[1]).strip()
+        ):
             raise ConfigInvalidError("specialist model override must have a non-empty id and model")
         specialist_model_overrides.append((str(item[0]), str(item[1])))
 
     return Config(
         app_name=str(merged["app_name"]),
         db_path=db_path,
+        local_model_profiles=local_profiles,
+        conversation_role=role_by_name["conversation"],
+        planner_role=role_by_name["planner"],
+        synthesis_role=role_by_name["synthesis"],
         max_input_chars=_as_positive_int(merged["max_input_chars"], "max_input_chars"),
         context_window_messages=_as_positive_int(
             merged["context_window_messages"], "context_window_messages"
-        ),
-        generalist_model_id=str(merged["generalist_model_id"]),
-        generalist_provider=provider,
-        generalist_max_output_tokens=_as_positive_int(
-            merged["generalist_max_output_tokens"], "generalist_max_output_tokens"
         ),
         specialist_max_output_tokens=_as_positive_int(
             merged["specialist_max_output_tokens"], "specialist_max_output_tokens"
         ),
         log_level=log_level,
-        ollama_base_url=ollama_base_url,
-        ollama_timeout_seconds=timeout_seconds,
         specialist_manifest_dir=str(merged["specialist_manifest_dir"]),
         specialist_provider=specialist_provider,
         specialist_default_model_id=str(merged["specialist_default_model_id"]),
         specialist_model_overrides=tuple(specialist_model_overrides),
         max_steps=max_steps,
+        max_plan_steps=max_plan_steps,
+        max_specialist_executions=max_specialist_executions,
+        max_research_executions=max_research_executions,
+        max_synthesis_executions=max_synthesis_executions,
+        max_replanning_attempts=max_replanning_attempts,
+        max_parallel_steps=max_parallel_steps,
+        recursive_planning=recursive_planning,
+        specialist_delegation=specialist_delegation,
+        automatic_replanning=automatic_replanning,
         max_provider_calls=max_provider_calls,
         max_retries=max_retries,
         tool_timeout_seconds=tool_timeout_seconds,

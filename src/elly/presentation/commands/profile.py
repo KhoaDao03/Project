@@ -26,8 +26,7 @@ class ProfileHandler:
             assert result.value is not None
             return CommandResult(
                 "\n".join(
-                    f"{item.item_id}: {item.key}={item.value} "
-                    f"[{item.sensitivity}] confirmed"
+                    f"{item.item_id}: {item.key}={item.value} [{item.sensitivity}] confirmed"
                     for item in result.value
                 )
                 or "No confirmed profile items."

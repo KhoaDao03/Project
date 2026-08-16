@@ -94,10 +94,17 @@ def _communication() -> ActionProposal:
 
 def _specialist_request() -> SpecialistPolicyRequest:
     manifest = SpecialistManifest(
-        id="coding", version="1.0", description="coding", role="coding",
-        capabilities=frozenset({"review"}), accepted_inputs=frozenset({"text"}),
-        requires_current_data=False, preferred_runtime="cloud", risk_level="low",
-        estimated_cost="medium", timeout_seconds=30,
+        id="coding",
+        version="1.0",
+        description="coding",
+        role="coding",
+        capabilities=frozenset({"review"}),
+        accepted_inputs=frozenset({"text"}),
+        requires_current_data=False,
+        preferred_runtime="cloud",
+        risk_level="low",
+        estimated_cost="medium",
+        timeout_seconds=30,
     )
     task = SpecialistTask(
         task_id="task-action",
@@ -125,8 +132,11 @@ class ActionPolicyTests(unittest.TestCase):
         self.assertEqual("John", proposal.target.reference if proposal.target else None)
         service = ActionAuthorizationService()
         request = ActionAuthorizationRequest(
-            task_id="task-1", capability_id="messaging", operation="message.send",
-            proposal=proposal, now=UTC,
+            task_id="task-1",
+            capability_id="messaging",
+            operation="message.send",
+            proposal=proposal,
+            now=UTC,
         )
         pending = service.authorize(request)
         self.assertFalse(pending.allowed)
@@ -135,7 +145,9 @@ class ActionPolicyTests(unittest.TestCase):
         service.confirmations.approve(pending.confirmation_proposal.confirmation_id, now=UTC)
         approved = service.authorize(
             ActionAuthorizationRequest(
-                task_id="task-1", capability_id="messaging", operation="message.send",
+                task_id="task-1",
+                capability_id="messaging",
+                operation="message.send",
                 proposal=proposal,
                 confirmation_id=pending.confirmation_proposal.confirmation_id,
                 now=UTC,
@@ -144,7 +156,9 @@ class ActionPolicyTests(unittest.TestCase):
         self.assertTrue(approved.allowed)
         replay = service.authorize(
             ActionAuthorizationRequest(
-                task_id="task-1", capability_id="messaging", operation="message.send",
+                task_id="task-1",
+                capability_id="messaging",
+                operation="message.send",
                 proposal=proposal,
                 confirmation_id=pending.confirmation_proposal.confirmation_id,
                 now=UTC,
@@ -174,8 +188,12 @@ class ActionPolicyTests(unittest.TestCase):
         )
         denied = service.authorize(
             ActionAuthorizationRequest(
-                "task-1", "messaging", "message.send", changed_target,
-                confirmation_id=confirmation_id, now=UTC,
+                "task-1",
+                "messaging",
+                "message.send",
+                changed_target,
+                confirmation_id=confirmation_id,
+                now=UTC,
             )
         )
         self.assertFalse(denied.allowed)
@@ -250,9 +268,7 @@ class _EffectfulCapability:
     def can_handle(self, _request: CapabilityRequest) -> CapabilityMatch:
         return CapabilityMatch(True, "TEST_MATCH")
 
-    def prepare(
-        self, _intent, _request: CapabilityRequest
-    ) -> CapabilityPreparation:
+    def prepare(self, _intent, _request: CapabilityRequest) -> CapabilityPreparation:
         return CapabilityPreparation(True, "TEST_PREPARED")
 
     def propose_action(self, _request: CapabilityRequest) -> ActionProposal:
@@ -422,9 +438,7 @@ class SpecialistActionTests(unittest.TestCase):
                 status="known", answer="answer", recommended_action="Write cleaner documentation"
             )
         )
-        draft = SpecialistWorkflow(provider=draft_provider).execute(
-            request=_specialist_request()
-        )
+        draft = SpecialistWorkflow(provider=draft_provider).execute(request=_specialist_request())
         self.assertEqual(ActionCategory.CONTENT_DRAFT, draft.action_proposal.category)
 
         transmit_provider = FakeSpecialistProvider(

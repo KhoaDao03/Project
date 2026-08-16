@@ -25,7 +25,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="elly", description="Elly local-first assistant")
     parser.add_argument(
-        "--config", default=None,
+        "--config",
+        default=None,
         help="path to a TOML config file (defaults to ./config.local.toml when present)",
     )
     args = parser.parse_args(argv)

@@ -123,7 +123,7 @@ class ConversationOrchestrator:
             RouteRequest(
                 request_id=request.request_id,
                 text=request.text,
-                contextual_text=contextual_text,    # Support follow up questions
+                contextual_text=contextual_text,  # Support follow up questions
                 cloud_mode=request.cloud_mode,
             ),
             proposal=request.route_proposal,
@@ -170,7 +170,9 @@ class ConversationOrchestrator:
 
     @classmethod
     def _failure_detail(
-        cls, summary: str, started: float,
+        cls,
+        summary: str,
+        started: float,
         request_guardrails: GuardrailController | None,
     ) -> str:
         """Add bounded execution metadata to a display-safe failure summary."""
@@ -212,14 +214,24 @@ class ConversationOrchestrator:
     _handle()
     = business workflow
     """
-    def handle(self, request: TaskRequest) -> ConversationOutcome:
+
+    def handle(
+        self,
+        request: TaskRequest,
+        *,
+        route_decision: RouteDecision | None = None,
+    ) -> ConversationOutcome:
         task_id = f"task-{request.request_id}"
         cancellation = CancellationToken()
         with self._active_lock:
             self._active_cancellations[task_id] = cancellation
             self._active_cancellation = cancellation
         try:
-            return self._handle(request, cancellation=cancellation)
+            return self._handle(
+                request,
+                cancellation=cancellation,
+                route_decision=route_decision,
+            )
         finally:
             with self._active_lock:
                 self._active_cancellations.pop(task_id, None)
@@ -229,7 +241,11 @@ class ConversationOrchestrator:
                     )
 
     def _handle(
-        self, request: TaskRequest, *, cancellation: CancellationToken
+        self,
+        request: TaskRequest,
+        *,
+        cancellation: CancellationToken,
+        route_decision: RouteDecision | None = None,
     ) -> ConversationOutcome:
         # Main method
         """Process one local conversational turn (UC-01).
@@ -249,13 +265,13 @@ class ConversationOrchestrator:
         started = time.monotonic()
         cancellation.raise_if_cancelled()
         task_id = f"task-{request.request_id}"
-        request_guardrails = self._guardrails.for_request() if self._guardrails is not None else None
+        request_guardrails = (
+            self._guardrails.for_request() if self._guardrails is not None else None
+        )
         # Read prior context before routing. A dependent turn such as "How about
         # silver?" inherits the current-information intent of "price of gold",
         # while a follow-up to a timeless local question stays local.
-        history = self._repository.recent_messages(
-            request.session_id, self._context_window
-        )
+        history = self._repository.recent_messages(request.session_id, self._context_window)
         conversation_context = resolve_conversation_context(
             current_text=request.text, history=history
         )
@@ -266,7 +282,7 @@ class ConversationOrchestrator:
             contextual_text=conversation_context.routing_text,
             cloud_mode=request.cloud_mode,
         )
-        route_decision = self._routing_policy.decide(
+        route_decision = route_decision or self._routing_policy.decide(
             route_request,
             proposal=request.route_proposal,
             intent=request.capability_intent,
@@ -275,6 +291,7 @@ class ConversationOrchestrator:
 
         def decorate(result: TaskResult) -> TaskResult:
             return enrich_task_result(result, route_decision)
+
         # Lifecycle transitions go through the state machine so the application —
         # not ad-hoc code — owns valid task states (AI-002, FR-006).
         status = ensure_transition(TaskStatus.QUEUED, TaskStatus.RUNNING)
@@ -289,9 +306,7 @@ class ConversationOrchestrator:
         profile_provenance: tuple[ProvenanceReference, ...] = ()
         if self._profile_service is not None:
             profile_items = self._profile_service.context_items()
-            profile_lines = [
-                f"confirmed {item.key}: {item.value}" for item in profile_items
-            ]
+            profile_lines = [f"confirmed {item.key}: {item.value}" for item in profile_items]
             profile_provenance = tuple(
                 ProvenanceReference("profile", item.item_id, item.updated_at)
                 for item in profile_items
@@ -343,10 +358,7 @@ class ConversationOrchestrator:
                 event_type="task.duplicate_prevented",
                 status=duplicate_status,
                 error_class=ErrorClass.PERMISSION_DENIED,
-                detail=(
-                    f"operation={operation_lease.operation_id} "
-                    "provider_dispatch=not_started"
-                ),
+                detail=(f"operation={operation_lease.operation_id} provider_dispatch=not_started"),
             )
             return ConversationOutcome(
                 result=decorate(compose_possible_duplicate(task_id=task_id, route=route)),
@@ -374,11 +386,7 @@ class ConversationOrchestrator:
         # (3) Persist the user turn (verified input; kept even if generation fails).
         # Approval resumes the already-recorded turn; do not duplicate the user
         # body when the exact consent proposal is approved and resubmitted.
-        if (
-            request.approval_id is None
-            and request.action_confirmation_id is None
-            and task_created
-        ):
+        if request.approval_id is None and request.action_confirmation_id is None and task_created:
             try:
                 self._repository.append_message(
                     request.session_id,
@@ -388,7 +396,9 @@ class ConversationOrchestrator:
                 self._completion.best_effort_fail_operation(operation_lease)
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route)),
+                    result=decorate(
+                        compose_failed(task_id=task_id, reason=exc.summary, route=route)
+                    ),
                     manifest=context_manifest,
                 )
 
@@ -449,7 +459,9 @@ class ConversationOrchestrator:
                 )
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route)),
+                    result=decorate(
+                        compose_failed(task_id=task_id, reason=exc.summary, route=route)
+                    ),
                     manifest=context_manifest,
                 )
             return ConversationOutcome(result=clarification, manifest=context_manifest)
@@ -500,15 +512,19 @@ class ConversationOrchestrator:
             self._completion.best_effort_fail_operation(operation_lease, possible_duplicate=True)
             self._completion.best_effort_finish_task(task_id, TaskStatus.PARTIAL)
             return ConversationOutcome(
-                result=decorate(compose_partial(
-                    task_id=task_id,
-                    reason=exc.summary,
-                    route=route,
-                    answer=text,
-                    partial_work=(
-                        "local response was generated but durable completion was incomplete",
-                    ) if text else (),
-                )),
+                result=decorate(
+                    compose_partial(
+                        task_id=task_id,
+                        reason=exc.summary,
+                        route=route,
+                        answer=text,
+                        partial_work=(
+                            "local response was generated but durable completion was incomplete",
+                        )
+                        if text
+                        else (),
+                    )
+                ),
                 manifest=context_manifest,
                 assistant_message=None,
             )
@@ -516,14 +532,21 @@ class ConversationOrchestrator:
             self._completion.fail_operation(operation_lease)
             cancelled = ensure_transition(status, TaskStatus.CANCELLED)
             self._emit(
-                request=request, task_id=task_id, route=route, event_type="task.cancelled",
+                request=request,
+                task_id=task_id,
+                route=route,
+                event_type="task.cancelled",
                 route_decision=route_decision,
-                status=cancelled, error_class=exc.error_class,
+                status=cancelled,
+                error_class=exc.error_class,
                 detail=self._failure_detail(exc.summary, started, request_guardrails),
             )
             self._completion.finish_task(task_id, cancelled)
             return ConversationOutcome(
-                result=decorate(compose_cancelled(task_id=task_id, partial_work=exc.partial_work, route=route)), manifest=context_manifest,
+                result=decorate(
+                    compose_cancelled(task_id=task_id, partial_work=exc.partial_work, route=route)
+                ),
+                manifest=context_manifest,
                 assistant_message=None,
             )
         except EllyError as exc:
@@ -555,7 +578,8 @@ class ConversationOrchestrator:
                 provenance=tuple(
                     ProvenanceReference("message", str(message_id))
                     for message_id in context_manifest.included_message_ids
-                ) + profile_provenance,
+                )
+                + profile_provenance,
             )
             result = decorate(result)
             ensure_transition(status, result.task_status)
@@ -579,15 +603,17 @@ class ConversationOrchestrator:
             self._completion.best_effort_fail_operation(operation_lease, possible_duplicate=True)
             self._completion.best_effort_finish_task(task_id, TaskStatus.PARTIAL)
             return ConversationOutcome(
-                result=decorate(compose_partial(
-                    task_id=task_id,
-                    reason=exc.summary,
-                    route=route,
-                    answer=text,
-                    partial_work=(
-                        "local response was generated but durable completion was incomplete",
-                    ),
-                )),
+                result=decorate(
+                    compose_partial(
+                        task_id=task_id,
+                        reason=exc.summary,
+                        route=route,
+                        answer=text,
+                        partial_work=(
+                            "local response was generated but durable completion was incomplete",
+                        ),
+                    )
+                ),
                 manifest=context_manifest,
                 assistant_message=assistant_message,
             )

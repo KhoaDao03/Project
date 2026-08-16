@@ -20,14 +20,16 @@ class LocalConversationUseCaseTests(unittest.TestCase):
         with self.assertRaises(PermanentProviderError):
             LocalConversationUseCase(
                 generalist=FakeGeneralist(failure=FailureMode.PERMANENT),
-                model_id="fake", max_output_tokens=32,
+                model_id="fake",
+                max_output_tokens=32,
             ).execute("hello")
 
     def test_malformed_output_is_rejected(self) -> None:
         with self.assertRaises(MalformedResultError):
             LocalConversationUseCase(
                 generalist=FakeGeneralist(failure=FailureMode.MALFORMED),
-                model_id="fake", max_output_tokens=32,
+                model_id="fake",
+                max_output_tokens=32,
             ).execute("hello")
 
 

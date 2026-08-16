@@ -21,7 +21,11 @@ class SpecialistTask:
     delegation_depth: int = 1
 
     def __post_init__(self) -> None:
-        for value, name in ((self.task_id, "task_id"), (self.specialist_id, "specialist_id"), (self.goal, "goal")):
+        for value, name in (
+            (self.task_id, "task_id"),
+            (self.specialist_id, "specialist_id"),
+            (self.goal, "goal"),
+        ):
             if not isinstance(value, str) or not value.strip():
                 raise ConfigInvalidError(f"specialist {name} must be non-empty")
         if self.delegation_depth != 1:
@@ -66,10 +70,14 @@ class SpecialistResult:
             raise ConfigInvalidError("specialist action_proposal must be typed or null")
 
 
-def validate_result(result: SpecialistResult, *, allowed_evidence: frozenset[str] = frozenset()) -> SpecialistResult:
+def validate_result(
+    result: SpecialistResult, *, allowed_evidence: frozenset[str] = frozenset()
+) -> SpecialistResult:
     """Reject unsupported evidence and false claims that an action was performed."""
     if allowed_evidence and any(item not in allowed_evidence for item in result.key_evidence):
         raise ConfigInvalidError("specialist cited evidence outside the supplied set")
-    if re.search(r"(?i)\b(i|we)\s+(executed|deleted|sent|submitted|purchased|traded|wrote)\b", result.answer):
+    if re.search(
+        r"(?i)\b(i|we)\s+(executed|deleted|sent|submitted|purchased|traded|wrote)\b", result.answer
+    ):
         raise ConfigInvalidError("specialist falsely claimed a prohibited action was performed")
     return result

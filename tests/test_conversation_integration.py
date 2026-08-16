@@ -70,7 +70,11 @@ class FailureMappingTests(unittest.TestCase):
         self.assertIs(outcome.result.task_status, TaskStatus.BLOCKED)
         self.assertIs(outcome.result.epistemic_status, EpistemicStatus.BLOCKED)
         self.assertIsNone(outcome.assistant_message)
-        self.assertFalse(any(e.task_status is TaskStatus.COMPLETED for e in audit.by_task(outcome.result.task_id)))
+        self.assertFalse(
+            any(
+                e.task_status is TaskStatus.COMPLETED for e in audit.by_task(outcome.result.task_id)
+            )
+        )
 
     def test_permanent_failure_blocks(self) -> None:
         orch, repo, _audit = _orchestrator(FailureMode.PERMANENT)
@@ -121,10 +125,19 @@ class SessionIsolationTests(unittest.TestCase):
             ),
         )
         orch.handle(
-            TaskRequest("rA", "A", "fact from A", CloudMode.LOCAL_ONLY, PersistenceMode.STORE_WITH_RETENTION, UTC)
+            TaskRequest(
+                "rA",
+                "A",
+                "fact from A",
+                CloudMode.LOCAL_ONLY,
+                PersistenceMode.STORE_WITH_RETENTION,
+                UTC,
+            )
         )
         outcome_b = orch.handle(
-            TaskRequest("rB", "B", "hi", CloudMode.LOCAL_ONLY, PersistenceMode.STORE_WITH_RETENTION, UTC)
+            TaskRequest(
+                "rB", "B", "hi", CloudMode.LOCAL_ONLY, PersistenceMode.STORE_WITH_RETENTION, UTC
+            )
         )
         # B's context was built from B's (empty) prior history — no A turns.
         self.assertEqual(len(outcome_b.manifest.included_message_ids), 0)

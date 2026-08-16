@@ -98,9 +98,7 @@ class ExternalCancellationTests(unittest.TestCase):
 
         provider = CancelOnFirstAttempt()
         guardrails = GuardrailController(
-            policy=LimitPolicy(
-                max_provider_calls=2, max_retries=1, max_output_tokens=4096
-            ),
+            policy=LimitPolicy(max_provider_calls=2, max_retries=1, max_output_tokens=4096),
             tool_timeout_seconds=1,
             total_timeout_seconds=2,
             sleep=lambda _delay: None,
@@ -134,6 +132,7 @@ class ExternalCancellationTests(unittest.TestCase):
                 released.set()
 
         connection = Connection()
+
         def resolver(*_args, **_kwargs):
             return [(2, 1, 6, "", ("93.184.216.34", 443))]
 
@@ -142,15 +141,16 @@ class ExternalCancellationTests(unittest.TestCase):
             connection_factory=lambda _host, _address, timeout: connection,
         )
         evidence = EvidenceObject(
-            evidence_id="E1", url="https://example.com/source", title="Source",
-            publisher="Example", retrieved_at=UTC,
+            evidence_id="E1",
+            url="https://example.com/source",
+            title="Source",
+            publisher="Example",
+            retrieved_at=UTC,
         )
         token = CancellationToken()
 
         failures = _run_and_cancel(
-            lambda: retriever.retrieve(
-                evidence, timeout_seconds=2, cancellation=token
-            ),
+            lambda: retriever.retrieve(evidence, timeout_seconds=2, cancellation=token),
             token,
             started,
         )
@@ -177,19 +177,26 @@ class ExternalCancellationTests(unittest.TestCase):
 
         context = "Review this public Python function"
         task = SpecialistTask(
-            task_id="task-specialist-cancel", specialist_id="coding",
-            goal="review", context=context,
+            task_id="task-specialist-cancel",
+            specialist_id="coding",
+            goal="review",
+            context=context,
             privacy_class=classify_payload(context).value,
         )
         manifest = SpecialistManifest(
-            id="coding", version="1.0", description="coding", role="coding",
-            capabilities=frozenset({"review"}), accepted_inputs=frozenset({"text"}),
-            requires_current_data=False, preferred_runtime="cloud", risk_level="low",
-            estimated_cost="medium", timeout_seconds=30,
+            id="coding",
+            version="1.0",
+            description="coding",
+            role="coding",
+            capabilities=frozenset({"review"}),
+            accepted_inputs=frozenset({"text"}),
+            requires_current_data=False,
+            preferred_runtime="cloud",
+            risk_level="low",
+            estimated_cost="medium",
+            timeout_seconds=30,
         )
-        workflow = SpecialistWorkflow(
-            provider=Provider()
-        )
+        workflow = SpecialistWorkflow(provider=Provider())
         token = CancellationToken()
 
         failures = _run_and_cancel(

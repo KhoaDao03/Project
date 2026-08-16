@@ -43,9 +43,7 @@ class ContextBuilderTests(unittest.TestCase):
             Message(role="user", content="How about silver?", created_at=UTC),
             Message(role="assistant", content="Silver is 10.", created_at=UTC),
         ]
-        resolved = resolve_conversation_context(
-            current_text="And platinum?", history=history
-        )
+        resolved = resolve_conversation_context(current_text="And platinum?", history=history)
         self.assertTrue(resolved.dependent)
         self.assertEqual(resolved.prior_user, "How about silver?")
         self.assertEqual(resolved.prior_assistant, "Silver is 10.")
@@ -62,9 +60,7 @@ class ContextBuilderTests(unittest.TestCase):
                 created_at=UTC,
             ),
         ]
-        resolved = resolve_conversation_context(
-            current_text="Tell me more.", history=history
-        )
+        resolved = resolve_conversation_context(current_text="Tell me more.", history=history)
         self.assertNotIn("latest current price", resolved.routing_text)
         self.assertIn("latest current price", resolved.remote_text)
 

@@ -15,9 +15,7 @@ class ConsentDecisionHandler:
         self._approve = approve
 
     def handle(self, args: tuple[str, ...], context: CommandContext) -> CommandResult:
-        result = context.api.decide_consent(
-            ConsentDecisionRequest(args[0], approve=self._approve)
-        )
+        result = context.api.decide_consent(ConsentDecisionRequest(args[0], approve=self._approve))
         if not result.is_success:
             return api_failure(result, prefix="Consent decision failed: ")
         assert result.value is not None
@@ -39,9 +37,7 @@ class ActionDecisionHandler:
         self._approve = approve
 
     def handle(self, args: tuple[str, ...], context: CommandContext) -> CommandResult:
-        result = context.api.decide_action(
-            ActionDecisionRequest(args[0], approve=self._approve)
-        )
+        result = context.api.decide_action(ActionDecisionRequest(args[0], approve=self._approve))
         if not result.is_success:
             return api_failure(result, prefix="Action confirmation failed: ")
         assert result.value is not None

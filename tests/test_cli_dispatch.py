@@ -46,7 +46,9 @@ class CliDispatchTests(unittest.TestCase):
         self.assertIn("remote reservation=$0.0100/call", out)
 
     def test_request_scoped_guardrail_reservation_does_not_leak_between_tasks(self) -> None:
-        self.cli.app.guardrails.ledger.reserve(provider_calls=self.cli.app.config.max_provider_calls)
+        self.cli.app.guardrails.ledger.reserve(
+            provider_calls=self.cli.app.config.max_provider_calls
+        )
         out = self.cli.dispatch("this must be blocked by the guardrail")
         self.assertIn("fake-generalist", out)
 

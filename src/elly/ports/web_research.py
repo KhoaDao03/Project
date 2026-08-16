@@ -44,11 +44,9 @@ class WebResearchProvider(Protocol):
     Implementations must not expose provider-specific exceptions across this port.
     """
 
-    def health(self) -> HealthReport:
-        ...
+    def health(self) -> HealthReport: ...
 
-    def research(self, query: str, budget: ResearchBudget) -> ResearchResponse:
-        ...
+    def research(self, query: str, budget: ResearchBudget) -> ResearchResponse: ...
 
     def cancel(self) -> None:
         """Interrupt active work when supported; otherwise safely no-op."""
@@ -57,5 +55,6 @@ class WebResearchProvider(Protocol):
 
 @runtime_checkable
 class CitationValidator(Protocol):
-    def validate(self, citations: tuple[ProviderCitation, ...]) -> tuple[tuple[EvidenceObject, ...], tuple[str, ...]]:
-        ...
+    def validate(
+        self, citations: tuple[ProviderCitation, ...]
+    ) -> tuple[tuple[EvidenceObject, ...], tuple[str, ...]]: ...

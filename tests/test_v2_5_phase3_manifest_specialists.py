@@ -26,7 +26,7 @@ def _request(text: str) -> RouteRequest:
 
 
 def _security_manifest(*, enabled: bool = True) -> str:
-    return f'''[specialist]
+    return f"""[specialist]
 id = "security_review"
 version = "1.0"
 description = "Reviews public security posture and control evidence."
@@ -58,7 +58,7 @@ freshness = "static"
 specificity = 85
 examples = ["Review this organization's security posture"]
 counterexamples = ["Execute a security change"]
-'''
+"""
 
 
 class Phase3ManifestSpecialistTests(unittest.TestCase):
@@ -73,9 +73,10 @@ class Phase3ManifestSpecialistTests(unittest.TestCase):
         assert research is not None
         assert stock is not None
 
-        self.assertEqual(("specialist.analyze",), tuple(
-            operation.operation_id for operation in coding.routing_operations
-        ))
+        self.assertEqual(
+            ("specialist.analyze",),
+            tuple(operation.operation_id for operation in coding.routing_operations),
+        )
         self.assertEqual(
             (
                 "security.analyze",
@@ -101,14 +102,13 @@ class Phase3ManifestSpecialistTests(unittest.TestCase):
                 directory, default_model="central-model"
             )
             workflow = SpecialistWorkflow(provider=FakeSpecialistProvider())
-            handlers = _specialist_capability_handlers(
-                specialist_registry, workflow
-            )
+            handlers = _specialist_capability_handlers(specialist_registry, workflow)
             capability_registry = CapabilityRegistry(handlers)
 
-            self.assertEqual(("security_review",), tuple(
-                handler.descriptor.capability_id for handler in handlers
-            ))
+            self.assertEqual(
+                ("security_review",),
+                tuple(handler.descriptor.capability_id for handler in handlers),
+            )
             decision = RoutingPolicy(capabilities=capability_registry).decide(
                 _request("Review this organization's security posture")
             )
@@ -128,17 +128,13 @@ class Phase3ManifestSpecialistTests(unittest.TestCase):
                 directory, default_model="central-model"
             )
             workflow = SpecialistWorkflow(provider=FakeSpecialistProvider())
-            handlers = _specialist_capability_handlers(
-                specialist_registry, workflow
-            )
+            handlers = _specialist_capability_handlers(specialist_registry, workflow)
             capability_registry = CapabilityRegistry(handlers)
 
-            self.assertEqual(("security_review",), tuple(
-                manifest.id for manifest in specialist_registry.all()
-            ))
-            self.assertIs(
-                handlers[0].status().state, CapabilityAvailability.UNAVAILABLE
+            self.assertEqual(
+                ("security_review",), tuple(manifest.id for manifest in specialist_registry.all())
             )
+            self.assertIs(handlers[0].status().state, CapabilityAvailability.UNAVAILABLE)
             self.assertEqual("DISABLED", handlers[0].status().reason_code)
             decision = RoutingPolicy(capabilities=capability_registry).decide(
                 _request("Review this organization's security posture")
@@ -151,40 +147,24 @@ class Phase3ManifestSpecialistTests(unittest.TestCase):
 
     def test_invalid_routing_declaration_fails_startup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            invalid = _security_manifest().replace(
-                "specificity = 85", "specificity = 101"
-            )
-            Path(directory, "security_review.toml").write_text(
-                invalid, encoding="utf-8"
-            )
+            invalid = _security_manifest().replace("specificity = 85", "specificity = 101")
+            Path(directory, "security_review.toml").write_text(invalid, encoding="utf-8")
             with self.assertRaises(ConfigInvalidError):
-                SpecialistRegistry.from_directory(
-                    directory, default_model="central-model"
-                )
+                SpecialistRegistry.from_directory(directory, default_model="central-model")
 
     def test_enabled_manifest_without_routing_contract_fails_startup(self) -> None:
         manifest = _security_manifest().split("\n[routing]", maxsplit=1)[0]
         with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "security_review.toml").write_text(
-                manifest, encoding="utf-8"
-            )
+            Path(directory, "security_review.toml").write_text(manifest, encoding="utf-8")
             with self.assertRaises(ConfigInvalidError):
-                SpecialistRegistry.from_directory(
-                    directory, default_model="central-model"
-                )
+                SpecialistRegistry.from_directory(directory, default_model="central-model")
 
     def test_duplicate_manifest_ids_fail_startup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "first.toml").write_text(
-                _security_manifest(), encoding="utf-8"
-            )
-            Path(directory, "second.toml").write_text(
-                _security_manifest(), encoding="utf-8"
-            )
+            Path(directory, "first.toml").write_text(_security_manifest(), encoding="utf-8")
+            Path(directory, "second.toml").write_text(_security_manifest(), encoding="utf-8")
             with self.assertRaises(ConfigInvalidError):
-                SpecialistRegistry.from_directory(
-                    directory, default_model="central-model"
-                )
+                SpecialistRegistry.from_directory(directory, default_model="central-model")
 
     def test_stock_analysis_is_selected_for_company_valuation(self) -> None:
         specialist_registry = SpecialistRegistry.from_directory(

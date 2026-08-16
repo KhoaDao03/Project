@@ -156,10 +156,10 @@ class Phase5PersistenceTests(unittest.TestCase):
             self.addCleanup(repository.close)
             repository.apply_migrations()
             self.assertEqual(
-                6,
-                repository._conn.execute(
-                    "SELECT version FROM schema_meta WHERE id=1"
-                ).fetchone()[0],
+                7,
+                repository._conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()[
+                    0
+                ],
             )
             loaded = repository.get_task_result("legacy-task")
             self.assertIsNotNone(loaded)

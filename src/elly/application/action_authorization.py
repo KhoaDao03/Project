@@ -55,6 +55,8 @@ class ActionAuthorizationRequest:
     declared_action: ActionProposal | None = None
     confirmation_id: str | None = None
     now: datetime | None = None
+    plan_id: str = ""
+    step_id: str = ""
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -72,10 +74,11 @@ class ActionAuthorizationRequest:
             raise ConfigInvalidError("declared action proposal is invalid")
         if self.confirmation_id is not None and not self.confirmation_id.strip():
             raise ConfigInvalidError("action confirmation_id must be non-empty")
-        if self.now is not None and (
-            not isinstance(self.now, datetime) or self.now.tzinfo is None
-        ):
+        if self.now is not None and (not isinstance(self.now, datetime) or self.now.tzinfo is None):
             raise ConfigInvalidError("action authorization now must be timezone-aware")
+        for value, name in ((self.plan_id, "plan_id"), (self.step_id, "step_id")):
+            if not isinstance(value, str):
+                raise ConfigInvalidError(f"action authorization {name} must be text")
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,9 +117,7 @@ _TARGET_REQUIRED = frozenset(
         ActionCategory.IRREVERSIBLE_OPERATION,
     }
 )
-_SECRET_VALUE = re.compile(
-    r"(?i)\b(api[_ -]?key|secret|password|token)\b\s*[:=]\s*([^\s,;]+)"
-)
+_SECRET_VALUE = re.compile(r"(?i)\b(api[_ -]?key|secret|password|token)\b\s*[:=]\s*([^\s,;]+)")
 _RISK_RANK = {
     ActionCategory.NONE: 0,
     ActionCategory.CONTENT_DRAFT: 1,
@@ -275,7 +276,7 @@ class ActionConfirmationWorkflow:
         self._proposals: dict[str, ActionConfirmationProposal] = {}
         self._approvals: dict[str, ActionApproval] = {}
         self._decided: set[str] = set()
-        self._by_scope: dict[tuple[str, str, str, str], str] = {}
+        self._by_scope: dict[tuple[str, str, str, str, str, str], str] = {}
 
     def propose(
         self,
@@ -284,11 +285,13 @@ class ActionConfirmationWorkflow:
         capability_id: str,
         operation: str,
         proposal: ActionProposal,
+        plan_id: str = "",
+        step_id: str = "",
         now: datetime | None = None,
     ) -> ActionConfirmationProposal:
         stamp = _utc(now)
         digest = normalized_action_digest(proposal)
-        scope = (task_id, capability_id, operation, digest)
+        scope = (task_id, plan_id, step_id, capability_id, operation, digest)
         existing_id = self._by_scope.get(scope)
         existing = self._proposals.get(existing_id or "")
         if existing is not None and stamp < existing.expires_at:
@@ -304,6 +307,8 @@ class ActionConfirmationWorkflow:
             created_at=stamp,
             expires_at=stamp + timedelta(seconds=self._ttl),
             nonce=secrets.token_urlsafe(12),
+            plan_id=plan_id,
+            step_id=step_id,
         )
         self._proposals[confirmation_id] = confirmation
         self._by_scope[scope] = confirmation_id
@@ -361,6 +366,8 @@ class ActionConfirmationWorkflow:
         capability_id: str,
         operation: str,
         action_digest: str,
+        plan_id: str = "",
+        step_id: str = "",
         now: datetime | None = None,
     ) -> bool:
         if not confirmation_id:
@@ -376,6 +383,8 @@ class ActionConfirmationWorkflow:
             and proposal.task_id == task_id
             and proposal.capability_id == capability_id
             and proposal.operation == operation
+            and proposal.plan_id == plan_id
+            and proposal.step_id == step_id
             and proposal.action_digest == action_digest
             and approval.action_digest == action_digest
         )
@@ -432,6 +441,8 @@ class ActionAuthorizationService:
             capability_id=request.capability_id,
             operation=request.operation,
             proposal=assessment.proposal,
+            plan_id=request.plan_id,
+            step_id=request.step_id,
             now=request.now,
         )
 
@@ -476,6 +487,8 @@ class ActionAuthorizationService:
             capability_id=request.capability_id,
             operation=request.operation,
             action_digest=assessment.action_digest,
+            plan_id=request.plan_id,
+            step_id=request.step_id,
             now=request.now,
         ):
             return ActionAuthorizationDecision(

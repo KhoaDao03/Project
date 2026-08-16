@@ -43,6 +43,15 @@ class InputInvalidError(EllyError):
     error_class = ErrorClass.INPUT_INVALID
 
 
+class PlanValidationError(InputInvalidError):
+    """A planner proposal failed deterministic application-owned validation."""
+
+    def __init__(self, reason_code: str, diagnostics: tuple[str, ...] = ()) -> None:
+        self.reason_code = reason_code
+        self.diagnostics = tuple(diagnostics)
+        super().__init__(reason_code)
+
+
 class ConfigInvalidError(EllyError):
     """Configuration missing/invalid; fail closed for the affected capability (OPS-002)."""
 

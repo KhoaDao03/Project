@@ -116,13 +116,8 @@ class CapabilityIntent:
         _require_nonempty(self.rationale_code, "intent rationale_code")
         if self.ambiguity is IntentAmbiguity.NONE_PROPOSED:
             if self.proposed_capability_id is not None:
-                raise InputInvalidError(
-                    "none-proposed intent cannot name a capability"
-                )
-        elif (
-            self.ambiguity is IntentAmbiguity.CLEAR
-            and self.proposed_capability_id is None
-        ):
+                raise InputInvalidError("none-proposed intent cannot name a capability")
+        elif self.ambiguity is IntentAmbiguity.CLEAR and self.proposed_capability_id is None:
             raise InputInvalidError("selected intent must name a capability")
 
 
@@ -169,9 +164,7 @@ class ActionProposal:
         if not isinstance(self.reversibility, ActionReversibility):
             raise InputInvalidError("action reversibility must be an ActionReversibility")
         if not isinstance(self.data_sensitivity, ActionDataSensitivity):
-            raise InputInvalidError(
-                "action data_sensitivity must be an ActionDataSensitivity"
-            )
+            raise InputInvalidError("action data_sensitivity must be an ActionDataSensitivity")
         if not isinstance(self.impact_flags, tuple) or any(
             not isinstance(flag, ActionImpactFlag) for flag in self.impact_flags
         ):
@@ -222,6 +215,8 @@ class ActionConfirmationProposal:
     created_at: datetime
     expires_at: datetime
     nonce: str
+    plan_id: str = ""
+    step_id: str = ""
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -233,6 +228,12 @@ class ActionConfirmationProposal:
             (self.nonce, "nonce"),
         ):
             _require_nonempty(value, f"action confirmation {name}")
+        for value, name in (
+            (self.plan_id, "action confirmation plan_id"),
+            (self.step_id, "action confirmation step_id"),
+        ):
+            if not isinstance(value, str):
+                raise InputInvalidError(f"{name} must be text")
         if not isinstance(self.proposal, ActionProposal):
             raise InputInvalidError("action confirmation proposal is invalid")
         object.__setattr__(
@@ -291,7 +292,9 @@ class TaskRequest:
             self.capability_intent, CapabilityIntent
         ):
             raise InputInvalidError("capability_intent must be a CapabilityIntent or null")
-        object.__setattr__(self, "submitted_at", _require_aware_utc(self.submitted_at, "submitted_at"))
+        object.__setattr__(
+            self, "submitted_at", _require_aware_utc(self.submitted_at, "submitted_at")
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,9 +358,10 @@ class TaskResult:
             raise InputInvalidError("task result candidate_count must be an integer")
         if not 0 <= self.candidate_count <= 10000:
             raise InputInvalidError("task result candidate_count is out of range")
-        if not isinstance(self.rejected_candidate_reason_codes, tuple) or len(
-            self.rejected_candidate_reason_codes
-        ) > 64:
+        if (
+            not isinstance(self.rejected_candidate_reason_codes, tuple)
+            or len(self.rejected_candidate_reason_codes) > 64
+        ):
             raise InputInvalidError(
                 "task result rejected_candidate_reason_codes must be a bounded tuple"
             )
@@ -375,19 +379,22 @@ class TaskResult:
         if not isinstance(self.clarification_required, bool):
             raise InputInvalidError("task result clarification_required must be a bool")
         if not isinstance(self.freshness_affected_selection, bool):
-            raise InputInvalidError(
-                "task result freshness_affected_selection must be a bool"
-            )
+            raise InputInvalidError("task result freshness_affected_selection must be a bool")
         if any(not isinstance(item, ProvenanceReference) for item in self.provenance):
             raise InputInvalidError("provenance must contain ProvenanceReference values")
         if any(not isinstance(item, ClaimSupport) for item in self.claim_supports):
             raise InputInvalidError("claim_supports must contain ClaimSupport values")
         # answer may be empty ONLY for a typed failure/blocked result.
-        if not self.answer.strip() and self.answer_retained and self.task_status not in (
-            TaskStatus.FAILED,
-            TaskStatus.BLOCKED,
-            TaskStatus.CANCELLED,
-            TaskStatus.PARTIAL,
+        if (
+            not self.answer.strip()
+            and self.answer_retained
+            and self.task_status
+            not in (
+                TaskStatus.FAILED,
+                TaskStatus.BLOCKED,
+                TaskStatus.CANCELLED,
+                TaskStatus.PARTIAL,
+            )
         ):
             raise InputInvalidError("answer may be empty only for a failed/blocked task")
 
@@ -417,12 +424,19 @@ class EvidenceObject:
     source_published_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        for value, name in ((self.evidence_id, "evidence_id"), (self.url, "url"), (self.title, "title")):
+        for value, name in (
+            (self.evidence_id, "evidence_id"),
+            (self.url, "url"),
+            (self.title, "title"),
+        ):
             _require_nonempty(value, name)
-        object.__setattr__(self, "retrieved_at", _require_aware_utc(self.retrieved_at, "retrieved_at"))
+        object.__setattr__(
+            self, "retrieved_at", _require_aware_utc(self.retrieved_at, "retrieved_at")
+        )
         if self.source_published_at is not None:
             object.__setattr__(
-                self, "source_published_at",
+                self,
+                "source_published_at",
                 _require_aware_utc(self.source_published_at, "source_published_at"),
             )
 
@@ -441,7 +455,14 @@ class ClaimSupport:
         _require_nonempty(self.claim_id, "claim_id")
         _require_nonempty(self.text, "text")
         if self.support_status not in {
-            "direct", "indirect", "supported", "conflicted", "unsupported", "unverified"
+            "direct",
+            "indirect",
+            "supported",
+            "conflicted",
+            "unsupported",
+            "unverified",
+            "absent",
+            "contradicted",
         }:
             raise InputInvalidError("support_status is invalid")
 
@@ -497,9 +518,7 @@ class RouteProposal:
         if self.capability_id is not None:
             _require_nonempty(self.capability_id, "route proposal capability_id")
         if self.route is Route.REGISTERED_CAPABILITY and self.capability_id is None:
-            raise InputInvalidError(
-                "registered-capability route proposal must name a capability"
-            )
+            raise InputInvalidError("registered-capability route proposal must name a capability")
 
 
 @dataclass(frozen=True, slots=True)
@@ -528,9 +547,7 @@ class RouteDecision:
         if self.capability_id is not None:
             _require_nonempty(self.capability_id, "route decision capability_id")
         if self.route is Route.REGISTERED_CAPABILITY and self.capability_id is None:
-            raise InputInvalidError(
-                "registered-capability route must name a capability"
-            )
+            raise InputInvalidError("registered-capability route must name a capability")
         if not isinstance(self.operation, str):
             raise InputInvalidError("route decision operation must be text")
         if self.intent is not None and not isinstance(self.intent, CapabilityIntent):
@@ -543,14 +560,11 @@ class RouteDecision:
         if not isinstance(self.clarification_required, bool):
             raise InputInvalidError("route decision clarification_required must be a bool")
         if not isinstance(self.clarification_fields, tuple) or any(
-            not isinstance(field, str) or not field.strip()
-            for field in self.clarification_fields
+            not isinstance(field, str) or not field.strip() for field in self.clarification_fields
         ):
             raise InputInvalidError("route decision clarification fields are invalid")
         if self.clarification_required and not self.clarification_fields:
-            raise InputInvalidError(
-                "clarification-required route must name missing fields"
-            )
+            raise InputInvalidError("clarification-required route must name missing fields")
         if self.selection is not None:
             from ..application.routing_contracts import CapabilitySelectionProposal
 
@@ -560,9 +574,10 @@ class RouteDecision:
             raise InputInvalidError("route decision candidate_count must be an integer")
         if not 0 <= self.candidate_count <= 10000:
             raise InputInvalidError("route decision candidate_count is out of range")
-        if not isinstance(self.rejected_candidate_reason_codes, tuple) or len(
-            self.rejected_candidate_reason_codes
-        ) > 64:
+        if (
+            not isinstance(self.rejected_candidate_reason_codes, tuple)
+            or len(self.rejected_candidate_reason_codes) > 64
+        ):
             raise InputInvalidError(
                 "route decision rejected_candidate_reason_codes must be a bounded tuple"
             )
@@ -578,9 +593,7 @@ class RouteDecision:
                     "route decision rejected candidate reason codes must be safe codes"
                 )
         if not isinstance(self.freshness_affected_selection, bool):
-            raise InputInvalidError(
-                "route decision freshness_affected_selection must be a bool"
-            )
+            raise InputInvalidError("route decision freshness_affected_selection must be a bool")
 
     @property
     def generic_route(self) -> Route:
@@ -589,6 +602,7 @@ class RouteDecision:
         from ..application.route_compatibility import generic_route_for
 
         return generic_route_for(self.route, self.capability_id)
+
 
 @dataclass(frozen=True, slots=True)
 class OperationLease:

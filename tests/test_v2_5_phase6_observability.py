@@ -174,16 +174,16 @@ class Phase6RoutingTraceTests(unittest.TestCase):
         )
         repository.save_task_result(enrich_task_result(_result(), decision), UTC)
 
-        version = repository._conn.execute(
-            "SELECT version FROM schema_meta WHERE id=1"
-        ).fetchone()[0]
+        version = repository._conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()[
+            0
+        ]
         raw = repository._conn.execute(
             "SELECT candidate_count, rejected_candidate_reason_codes_json, "
             "clarification_required, freshness_affected_selection FROM task_results"
         ).fetchone()
         loaded = repository.get_task_result("phase6-task")
 
-        self.assertEqual(6, version)
+        self.assertEqual(7, version)
         self.assertEqual((1, '["FRESHNESS_UNSUPPORTED"]', 0, 1), tuple(raw))
         self.assertIsNotNone(loaded)
         assert loaded is not None
@@ -310,8 +310,7 @@ class Phase6InterfaceParityTests(unittest.TestCase):
             RestTestAdapter(self.application),
         )
         outcomes = [
-            self._adapter_metadata(adapter, index)
-            for index, adapter in enumerate(adapters)
+            self._adapter_metadata(adapter, index) for index, adapter in enumerate(adapters)
         ]
 
         cli = Cli.start(self.application)

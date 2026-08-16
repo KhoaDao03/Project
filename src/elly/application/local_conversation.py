@@ -67,9 +67,7 @@ class LocalConversationUseCase:
         if cancellation is not None:
             cancellation.raise_if_cancelled()
         unregister = (
-            cancellation.register(self._generalist.cancel)
-            if cancellation is not None
-            else None
+            cancellation.register(self._generalist.cancel) if cancellation is not None else None
         )
         try:
             if active_guardrails is None:

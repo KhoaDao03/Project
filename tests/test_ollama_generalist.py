@@ -43,7 +43,9 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"not-json\n")
             return
         for index, value in enumerate(("local ", "answer")):
-            self.wfile.write((json.dumps({"response": value, "thinking": "secret reasoning"}) + "\n").encode())
+            self.wfile.write(
+                (json.dumps({"response": value, "thinking": "secret reasoning"}) + "\n").encode()
+            )
             self.wfile.flush()
             if self.mode == "slow" and index == 0:
                 time.sleep(0.2)

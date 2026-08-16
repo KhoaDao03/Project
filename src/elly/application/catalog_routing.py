@@ -43,9 +43,7 @@ _MARKET_INDEX = re.compile(
     r"Nasdaq(?:\s+Composite)?|Russell\s+2000)\b",
     re.IGNORECASE,
 )
-_LOCATION = re.compile(
-    r"\b(?:in|near|around|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})"
-)
+_LOCATION = re.compile(r"\b(?:in|near|around|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})")
 
 _STOP_WORDS = frozenset(
     {
@@ -205,11 +203,11 @@ def _expected_effect(text: str) -> ActionCategory:
     return ActionCategory.NONE
 
 
-def _catalog_operations(catalog: RoutingCatalog) -> tuple[tuple[CapabilityRoutingDescriptor, OperationIntentContract], ...]:
+def _catalog_operations(
+    catalog: RoutingCatalog,
+) -> tuple[tuple[CapabilityRoutingDescriptor, OperationIntentContract], ...]:
     return tuple(
-        (descriptor, operation)
-        for descriptor in catalog
-        for operation in descriptor.operations
+        (descriptor, operation) for descriptor in catalog for operation in descriptor.operations
     )
 
 
@@ -308,9 +306,8 @@ class CatalogIntentInterpreter:
         # leave that conflict to the selector's specificity/priority ranking.
         # Different top operation classes are genuinely ambiguous at the task
         # interpretation boundary.
-        ambiguous = (
-            len({operation_id for _capability_id, operation_id in top_pairs}) > 1
-            or (len(top_pairs) > 1 and top_domain_hits == 0)
+        ambiguous = len({operation_id for _capability_id, operation_id in top_pairs}) > 1 or (
+            len(top_pairs) > 1 and top_domain_hits == 0
         )
         # Scope extraction to the leading operation.  Extracting every entity
         # required anywhere in the catalog would put unrelated fields into the
@@ -350,8 +347,7 @@ class CatalogIntentInterpreter:
     def _best_domain(text: str, operation: OperationIntentContract) -> str:
         request_tokens = _word_forms(text)
         if not any(
-            request_tokens & _word_forms(domain.replace("_", " "))
-            for domain in operation.domains
+            request_tokens & _word_forms(domain.replace("_", " ")) for domain in operation.domains
         ):
             return "general"
         ranked = sorted(
@@ -369,22 +365,16 @@ class CatalogIntentInterpreter:
         text: str,
         catalog: RoutingCatalog | tuple[OperationIntentContract, ...],
     ) -> tuple[tuple[IntentEntity, ...], dict[str, str]]:
-        if catalog and all(
-            isinstance(item, OperationIntentContract) for item in catalog
-        ):
+        if catalog and all(isinstance(item, OperationIntentContract) for item in catalog):
             operations = tuple(
                 item for item in catalog if isinstance(item, OperationIntentContract)
             )
         else:
             descriptors = tuple(
-                item
-                for item in catalog
-                if isinstance(item, CapabilityRoutingDescriptor)
+                item for item in catalog if isinstance(item, CapabilityRoutingDescriptor)
             )
             operations = tuple(
-                operation
-                for descriptor in descriptors
-                for operation in descriptor.operations
+                operation for descriptor in descriptors for operation in descriptor.operations
             )
         needed = {
             entity
@@ -431,9 +421,7 @@ class CatalogIntentInterpreter:
             market_index = _MARKET_INDEX.search(text)
             if market_index:
                 security = " ".join(market_index.group(0).split())
-                entities.append(
-                    IntentEntity("security", security, IntentEntitySource.EXPLICIT)
-                )
+                entities.append(IntentEntity("security", security, IntentEntitySource.EXPLICIT))
                 arguments["security"] = security
 
         location = explicit.get("location")
@@ -615,15 +603,12 @@ class CatalogSelectionResult:
         if not isinstance(self.clarification_required, bool):
             raise InputInvalidError("catalog clarification flag is invalid")
         if not isinstance(self.clarification_fields, tuple) or any(
-            not isinstance(field, str) or not field.strip()
-            for field in self.clarification_fields
+            not isinstance(field, str) or not field.strip() for field in self.clarification_fields
         ):
             raise InputInvalidError("catalog clarification fields are invalid")
         if self.clarification_required and not self.clarification_fields:
             raise InputInvalidError("catalog clarification fields are required")
-        if self.best_candidate is not None and not isinstance(
-            self.best_candidate, CandidateMatch
-        ):
+        if self.best_candidate is not None and not isinstance(self.best_candidate, CandidateMatch):
             raise InputInvalidError("catalog best candidate is invalid")
 
 
@@ -739,7 +724,10 @@ class CatalogCandidateSelector:
         if compatible:
             top = compatible[0]
             second = compatible[1] if len(compatible) > 1 else None
-            if second is not None and _rank_score(top) - _rank_score(second) <= self._ambiguity_threshold:
+            if (
+                second is not None
+                and _rank_score(top) - _rank_score(second) <= self._ambiguity_threshold
+            ):
                 return CatalogSelectionResult(
                     matches=matches,
                     selection=self._proposal(
@@ -769,11 +757,7 @@ class CatalogCandidateSelector:
                 intent,
                 matches[0],
                 matches,
-                ambiguity=(
-                    IntentAmbiguity.MISSING_FIELDS
-                    if fields
-                    else IntentAmbiguity.CLEAR
-                ),
+                ambiguity=(IntentAmbiguity.MISSING_FIELDS if fields else IntentAmbiguity.CLEAR),
                 rationale_code=reason,
             )
         return CatalogSelectionResult(
@@ -856,7 +840,9 @@ class CatalogCandidateSelector:
         if match.operation_match is MatchStrength.NONE:
             return SelectionValidationResult(False, "OPERATION_UNSUPPORTED", match=match)
         if not match.compatible:
-            reason = match.rejection_codes[0] if match.rejection_codes else "SELECTION_PROPOSAL_REJECTED"
+            reason = (
+                match.rejection_codes[0] if match.rejection_codes else "SELECTION_PROPOSAL_REJECTED"
+            )
             return SelectionValidationResult(False, reason, match=match)
 
         canonical = CapabilitySelectionProposal(
@@ -981,6 +967,7 @@ class CatalogCandidateSelector:
                         specificity=operation.specificity,
                         examples=operation.examples,
                         counterexamples=operation.counterexamples,
+                        output_schema_versions=operation.output_schema_versions,
                     ),
                     intent,
                 )
@@ -989,9 +976,13 @@ class CatalogCandidateSelector:
                 return "REQUIRED_ENTITY_MISSING", tuple(dict.fromkeys(missing))
             if any("FRESHNESS_UNSUPPORTED" in match.rejection_codes for match in operation_matches):
                 return "FRESHNESS_UNSUPPORTED", ()
-            if any("CAPABILITY_UNAVAILABLE" in match.rejection_codes for match in operation_matches):
+            if any(
+                "CAPABILITY_UNAVAILABLE" in match.rejection_codes for match in operation_matches
+            ):
                 return "CAPABILITY_UNAVAILABLE", ()
-            if any("ACTION_EFFECT_MISMATCH" in match.rejection_codes for match in operation_matches):
+            if any(
+                "ACTION_EFFECT_MISMATCH" in match.rejection_codes for match in operation_matches
+            ):
                 return "ACTION_EFFECT_MISMATCH", ()
         return "CATALOG_NO_MATCH", ()
 

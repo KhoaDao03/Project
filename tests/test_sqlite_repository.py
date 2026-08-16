@@ -87,7 +87,9 @@ class SqliteRepositoryTests(unittest.TestCase):
             path = os.path.join(directory, "elly.db")
             first = SqliteSessionRepository(path)
             first.apply_migrations()
-            rec = SessionRecord("persistent", PersistenceMode.STORE_WITH_RETENTION, CloudMode.LOCAL_ONLY, UTC)
+            rec = SessionRecord(
+                "persistent", PersistenceMode.STORE_WITH_RETENTION, CloudMode.LOCAL_ONLY, UTC
+            )
             first.create_session(rec)
             first.start_task("task-restart", rec.session_id, UTC)
             first.close()

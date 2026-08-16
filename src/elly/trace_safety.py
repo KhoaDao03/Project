@@ -16,7 +16,8 @@ _SENSITIVE_VALUE = re.compile(
     r"(?ix)"
     r"(?P<key>"
     r"api[_ -]?key|secret|password|token|prompt|request|message|answer|content|"
-    r"payload|private[_ -]?payload|context(?:[_ -]?text)?|model[_ -]?rationale|"
+    r"payload|private[_ -]?payload|provider[_ -]?(?:body|response)|"
+    r"result[_ -]?body|body|context(?:[_ -]?text)?|model[_ -]?rationale|"
     r"chain[_ -]?of[_ -]?thought|thoughts?"
     r")\s*[:=]\s*"
     r"(?P<value>\"[^\"]*\"|'[^']*'|.*?)(?=\s+[A-Za-z][A-Za-z0-9_.-]*\s*[:=]|$)"
@@ -28,9 +29,7 @@ def redact_trace_detail(detail: str) -> str:
     if not isinstance(detail, str):
         return ""
     normalized = " ".join(detail.split())
-    redacted = _SENSITIVE_VALUE.sub(
-        lambda match: f"{match.group('key')}=[REDACTED]", normalized
-    )
+    redacted = _SENSITIVE_VALUE.sub(lambda match: f"{match.group('key')}=[REDACTED]", normalized)
     return " ".join(redacted.split())[:_MAX_DETAIL]
 
 

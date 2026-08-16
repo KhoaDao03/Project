@@ -45,6 +45,9 @@ class CloudAuthorizationRequest:
     now: datetime
     capability_available: bool = True
     requires_external_boundary: bool = True
+    plan_id: str = ""
+    step_id: str = ""
+    operation: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or not self.task_id.strip():
@@ -72,15 +75,18 @@ class CloudAuthorizationRequest:
         if not isinstance(self.capability_available, bool):
             raise ConfigInvalidError("authorization capability_available must be a bool")
         if not isinstance(self.requires_external_boundary, bool):
-            raise ConfigInvalidError(
-                "authorization requires_external_boundary must be a bool"
-            )
+            raise ConfigInvalidError("authorization requires_external_boundary must be a bool")
+        for value, name in (
+            (self.plan_id, "authorization plan_id"),
+            (self.step_id, "authorization step_id"),
+            (self.operation, "authorization operation"),
+        ):
+            if not isinstance(value, str):
+                raise ConfigInvalidError(f"{name} must be text")
         if self.requires_external_boundary and (
             not self.destination.strip() or not self.model.strip()
         ):
-            raise ConfigInvalidError(
-                "external authorization destination and model are required"
-            )
+            raise ConfigInvalidError("external authorization destination and model are required")
 
 
 class CloudAuthorizationPolicy:
@@ -100,9 +106,7 @@ class CloudAuthorizationPolicy:
         if not request.requires_external_boundary:
             return AuthorizationDecision(True, "LOCAL_BOUNDARY", privacy, digest)
         if request.classification is None:
-            return AuthorizationDecision(
-                False, "CLASSIFICATION_UNAVAILABLE", privacy, digest
-            )
+            return AuthorizationDecision(False, "CLASSIFICATION_UNAVAILABLE", privacy, digest)
         if not request.capability_available:
             return AuthorizationDecision(False, "CAPABILITY_UNAVAILABLE", privacy, digest)
         if request.cloud_mode is not CloudMode.CLOUD_PERMITTED:
@@ -114,7 +118,9 @@ class CloudAuthorizationPolicy:
         categories = (privacy.value,)
         if privacy is PrivacyClass.LOCAL:
             if request.consent is None:
-                return AuthorizationDecision(False, "CONSENT_CAPABILITY_UNAVAILABLE", privacy, digest)
+                return AuthorizationDecision(
+                    False, "CONSENT_CAPABILITY_UNAVAILABLE", privacy, digest
+                )
             if request.consent.check(
                 proposal_id=request.approval_id,
                 payload=request.payload,
@@ -122,6 +128,9 @@ class CloudAuthorizationPolicy:
                 model=request.model,
                 purpose=request.purpose,
                 capability_id=request.capability_id,
+                plan_id=request.plan_id,
+                step_id=request.step_id,
+                operation=request.operation,
                 categories=categories,
                 max_cost=request.max_cost,
                 now=request.now,
@@ -133,6 +142,9 @@ class CloudAuthorizationPolicy:
                 model=request.model,
                 purpose=request.purpose,
                 capability_id=request.capability_id,
+                plan_id=request.plan_id,
+                step_id=request.step_id,
+                operation=request.operation,
                 payload=request.payload,
                 categories=categories,
                 max_cost=request.max_cost,

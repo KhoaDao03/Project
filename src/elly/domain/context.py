@@ -72,14 +72,11 @@ def resolve_conversation_context(
     usable = [
         (index, message)
         for index, message in enumerate(history)
-        if message.content.strip() and not (
-            message.role == "user"
-            and message.content.strip() == current_text.strip()
-        )
+        if message.content.strip()
+        and not (message.role == "user" and message.content.strip() == current_text.strip())
     ]
     prior_user_item = next(
-        ((index, message) for index, message in reversed(usable)
-         if message.role == "user"),
+        ((index, message) for index, message in reversed(usable) if message.role == "user"),
         None,
     )
     if prior_user_item is None:
@@ -101,15 +98,11 @@ def resolve_conversation_context(
         (
             message.content.strip()[:_MAX_PRIOR_USER_CHARS]
             for _index, message in reversed(usable)
-            if message.role == "user"
-            and not _DEPENDENT_TURN.search(message.content)
+            if message.role == "user" and not _DEPENDENT_TURN.search(message.content)
         ),
         prior_user,
     )
-    routing_text = (
-        f"User follow-up: {current_text}\n"
-        f"Earlier user intent: {intent_user}"
-    )
+    routing_text = f"User follow-up: {current_text}\nEarlier user intent: {intent_user}"
     remote_parts = [
         f"User follow-up: {current_text}",
         f"Subject from the prior user turn: {prior_user}",

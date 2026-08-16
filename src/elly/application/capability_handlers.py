@@ -21,6 +21,7 @@ from .research import ResearchPipeline
 from .response_composer import compose_research, compose_specialist
 from .routing_contracts import (
     CapabilityAvailability,
+    CapabilityKind,
     CapabilityRoutingDescriptor,
     FreshnessSupport,
     OperationIntentContract,
@@ -50,9 +51,7 @@ _WEB_RESEARCH_OPERATIONS: tuple[OperationIntentContract, ...] = (
         required_entities=("subject",),
         freshness=FreshnessSupport.CURRENT,
         specificity=70,
-        examples=(
-            "Find the latest public information about this topic",
-        ),
+        examples=("Find the latest public information about this topic",),
     ),
     OperationIntentContract(
         operation_id="news.current",
@@ -62,9 +61,7 @@ _WEB_RESEARCH_OPERATIONS: tuple[OperationIntentContract, ...] = (
         required_entities=("subject",),
         freshness=FreshnessSupport.CURRENT,
         specificity=85,
-        examples=(
-            "What news is developing about this company?",
-        ),
+        examples=("What news is developing about this company?",),
     ),
     OperationIntentContract(
         operation_id="release.lookup",
@@ -74,9 +71,7 @@ _WEB_RESEARCH_OPERATIONS: tuple[OperationIntentContract, ...] = (
         required_entities=("subject",),
         freshness=FreshnessSupport.CURRENT,
         specificity=80,
-        examples=(
-            "Look up the Python release",
-        ),
+        examples=("Look up the Python release",),
     ),
     OperationIntentContract(
         operation_id="market.quote",
@@ -113,9 +108,7 @@ class ResearchCapabilityHandler:
             description="Research current public information with validated sources",
             routes=(Route.REGISTERED_CAPABILITY,),
             request_schema="research-request-v1",
-            operations=tuple(
-                operation.operation_id for operation in _WEB_RESEARCH_OPERATIONS
-            ),
+            operations=tuple(operation.operation_id for operation in _WEB_RESEARCH_OPERATIONS),
             requires_external_boundary=True,
             requires_consent=True,
             destination=self.provider_id,
@@ -126,6 +119,9 @@ class ResearchCapabilityHandler:
                 capability_id="web_research",
                 description="Research current public information with validated sources",
                 operations=_WEB_RESEARCH_OPERATIONS,
+                kind=CapabilityKind.RESEARCH,
+                requires_external_access=True,
+                requires_consent=True,
             ),
         )
 
@@ -141,7 +137,10 @@ class ResearchCapabilityHandler:
         return CapabilityStatus(CapabilityAvailability.AVAILABLE)
 
     def can_handle(self, request: CapabilityRequest) -> CapabilityMatch:
-        accepted = request.route_request.contextual_text is not None or request.route_request.text.strip() != ""
+        accepted = (
+            request.route_request.contextual_text is not None
+            or request.route_request.text.strip() != ""
+        )
         return CapabilityMatch(accepted, "RESEARCH_REQUEST" if accepted else "EMPTY_REQUEST")
 
     def prepare(
@@ -159,12 +158,8 @@ class ResearchCapabilityHandler:
         )
         if operation is None:
             return CapabilityPreparation(False, "OPERATION_NOT_SUPPORTED")
-        if "subject" in operation.required_entities and not intent.arguments.get(
-            "subject"
-        ):
-            return CapabilityPreparation(
-                False, "RESEARCH_QUERY_REQUIRED", ("subject",)
-            )
+        if "subject" in operation.required_entities and not intent.arguments.get("subject"):
+            return CapabilityPreparation(False, "RESEARCH_QUERY_REQUIRED", ("subject",))
         return CapabilityPreparation(True, "RESEARCH_INPUT_ACCEPTED")
 
     def propose_action(self, _request: CapabilityRequest) -> ActionProposal:
@@ -188,8 +183,7 @@ class ResearchCapabilityHandler:
             cancellation=request.cancellation,
             current_information=(
                 operation is not None
-                and operation.freshness
-                in {FreshnessSupport.CURRENT, FreshnessSupport.LIVE}
+                and operation.freshness in {FreshnessSupport.CURRENT, FreshnessSupport.LIVE}
             )
             if operation is not None
             else None,
@@ -227,9 +221,7 @@ class SpecialistCapabilityHandler:
             else f"{self.capability_id} specialist capability"
         )
         accepted_inputs = (
-            tuple(sorted(self.manifest.accepted_inputs))
-            if self.manifest is not None
-            else ("text",)
+            tuple(sorted(self.manifest.accepted_inputs)) if self.manifest is not None else ("text",)
         )
         domains = (
             tuple(sorted(self.manifest.capabilities))
@@ -276,11 +268,10 @@ class SpecialistCapabilityHandler:
                 capability_id=self.capability_id,
                 description=description,
                 operations=routing_operations,
-                priority=(
-                    self.manifest.routing_priority
-                    if self.manifest is not None
-                    else 50
-                ),
+                priority=(self.manifest.routing_priority if self.manifest is not None else 50),
+                kind=CapabilityKind.SPECIALIST,
+                requires_external_access=True,
+                requires_consent=True,
             ),
         )
 
@@ -327,12 +318,8 @@ class SpecialistCapabilityHandler:
                 missing.append(required)
         if missing:
             if missing == ["subject"]:
-                return CapabilityPreparation(
-                    False, "SPECIALIST_SUBJECT_REQUIRED", ("subject",)
-                )
-            return CapabilityPreparation(
-                False, "SPECIALIST_ENTITY_REQUIRED", tuple(missing)
-            )
+                return CapabilityPreparation(False, "SPECIALIST_SUBJECT_REQUIRED", ("subject",))
+            return CapabilityPreparation(False, "SPECIALIST_ENTITY_REQUIRED", tuple(missing))
         return CapabilityPreparation(True, "SPECIALIST_INPUT_ACCEPTED")
 
     def propose_action(self, _request: CapabilityRequest) -> ActionProposal:
@@ -349,7 +336,7 @@ class SpecialistCapabilityHandler:
         specialist_task = SpecialistTask(
             task_id=request.task_id,
             specialist_id=self.manifest.id,
-            goal=request.task.text,
+            goal=request.objective or request.task.text,
             context=request.context_text,
             privacy_class=request.classification.classification.value,
             approval_id=request.task.approval_id,

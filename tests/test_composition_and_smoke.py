@@ -54,7 +54,9 @@ class CompositionTests(unittest.TestCase):
         # boundary composes: model port -> repository -> audit.
         session = self.app.new_session()
         response = self.app.generalist.generate(
-            GeneralistRequest(prompt="ping", model_id=self.app.config.generalist_model_id, max_output_tokens=32)
+            GeneralistRequest(
+                prompt="ping", model_id=self.app.config.generalist_model_id, max_output_tokens=32
+            )
         )
         self.assertTrue(response.text.startswith("[fake-generalist]"))
         self.app.repository.append_message(
@@ -107,13 +109,17 @@ class CompositionTests(unittest.TestCase):
     def test_completed_local_trace_contains_model_usage_and_request_limits(self) -> None:
         session = self.app.new_session()
         request = TaskRequest(
-            request_id="req-trace", session_id=session.session_id, text="hello",
+            request_id="req-trace",
+            session_id=session.session_id,
+            text="hello",
             cloud_mode=CloudMode.LOCAL_ONLY,
-            persistence_mode=session.persistence_mode, submitted_at=self.app.clock.now(),
+            persistence_mode=session.persistence_mode,
+            submitted_at=self.app.clock.now(),
         )
         self.app.orchestrator.handle(request)
         completed = next(
-            event for event in self.app.repository.audit_by_task("task-req-trace")
+            event
+            for event in self.app.repository.audit_by_task("task-req-trace")
             if event.event_type == "task.completed"
         )
         self.assertIn("model=fake-generalist-v1", completed.detail)
@@ -126,13 +132,17 @@ class CompositionTests(unittest.TestCase):
         self.app.generalist._failure = FailureMode.PERMANENT
         session = self.app.new_session()
         request = TaskRequest(
-            request_id="req-failed-trace", session_id=session.session_id, text="hello",
+            request_id="req-failed-trace",
+            session_id=session.session_id,
+            text="hello",
             cloud_mode=CloudMode.LOCAL_ONLY,
-            persistence_mode=session.persistence_mode, submitted_at=self.app.clock.now(),
+            persistence_mode=session.persistence_mode,
+            submitted_at=self.app.clock.now(),
         )
         self.app.orchestrator.handle(request)
         failed = next(
-            event for event in self.app.repository.audit_by_task("task-req-failed-trace")
+            event
+            for event in self.app.repository.audit_by_task("task-req-failed-trace")
             if event.event_type == "generalist.failed"
         )
         self.assertIn("duration_ms=", failed.detail)

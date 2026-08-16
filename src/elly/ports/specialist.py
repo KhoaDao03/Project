@@ -22,12 +22,11 @@ class Specialist(Protocol):
 
 @runtime_checkable
 class SpecialistProviderPort(Protocol):
-    def health(self) -> HealthReport:
-        ...
+    def health(self) -> HealthReport: ...
 
-    def execute(self, task: SpecialistTask, *, model: str, prompt_version: str,
-                output_limit: int) -> SpecialistResult:
-        ...
+    def execute(
+        self, task: SpecialistTask, *, model: str, prompt_version: str, output_limit: int
+    ) -> SpecialistResult: ...
 
     def cancel(self) -> None:
         """Interrupt active work when supported; otherwise safely no-op."""

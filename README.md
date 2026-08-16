@@ -33,6 +33,17 @@ milestones, or verification status changes.
 
 ## Project status
 
+**V3 completed and closed by owner request.** As of **2026-08-16**, all 13 V3
+requirements and Phases 0–9 are implemented and deterministically verified. The
+public submission path now performs local typed planning, deterministic DAG
+validation, bounded execution, per-step authorization, typed aggregation, and
+evidence-bounded local synthesis. The full 457-test suite, 100 concurrency and
+cancellation stress runs, Ruff, strict MyPy across 118 source files, compilation,
+and whitespace checks pass. Live local planner and synthesis checks passed with
+`qwen3:8b`; hosted-provider live verification is explicitly deferred because no
+credentials were available. See the [V3 closure record](docs/v3/V3_CLOSURE.md)
+and [Phase 9 verification](docs/v3/PHASE_9_VERIFICATION.md).
+
 **V2.5 completed and closed by owner decision.** As of **2026-08-15**, all seven
 registry-driven routing requirements and the final legacy-routing removal are
 implemented and accepted. The full 368-test suite, Ruff, strict MyPy across 93
@@ -81,6 +92,7 @@ See the [V1.5 closure record](docs/v1.5/V1_5_CLOSURE.md),
 | Persistence | SQLite sessions, confirmed profile items, redacted audit events, task traces, source metadata, independent retention periods, and no-store sessions |
 | Operations | Health/status reporting, bounded queue/concurrency, retry/circuit/timeout controls, cost reservations, authenticated backup/restore, and startup maintenance |
 | Configuration | Provider, model, and pricing choices are centralized in one TOML file, with environment variables as the final override layer |
+| V3 orchestration | Local capability-first planning produces a validated persisted DAG; bounded steps may run in parallel, pause for exact authorization, aggregate partial/disagreement states, and use validated local synthesis or deterministic fallback |
 
 Elly never treats model output as authorization. Specialists cannot execute tools,
 write files, or truthfully claim that they performed external actions.
@@ -188,18 +200,33 @@ empty **Verified facts** section rather than pretending the links prove the text
 ## One-file runtime configuration
 
 Copy [config.example.toml](config.example.toml) to the gitignored
-`config.local.toml`. Provider, model, and pricing changes live together:
+`config.local.toml`. Remote provider, model, and pricing changes live together;
+local conversation, planning, and synthesis use named reusable profiles:
 
 ```toml
 [providers]
-generalist = "ollama"
 research = "openai_web_search"
 specialists = "openai"
 
 [models]
-generalist = "qwen3:8b"
 research = "gpt-5.6-luna"
 specialist_default = "gpt-5.6-luna"
+
+[local_models.profiles.qwen_default]
+provider = "ollama"
+model_id = "qwen3:8b"
+base_url = "http://127.0.0.1:11434"
+timeout_seconds = 120
+
+[local_models.roles]
+conversation = "qwen_default"
+planner = "qwen_default"
+synthesis = "qwen_default"
+
+[local_models.role_limits]
+conversation_max_output_tokens = 512
+planner_max_output_tokens = 1200
+synthesis_max_output_tokens = 1600
 
 [models.specialists]
 # coding = "gpt-5.6-terra"
@@ -212,11 +239,15 @@ remote_call_reservation_usd = 0.01
 consent_max_cost_usd = 0.25
 ```
 
-Additional sections control behavior rather than provider selection:
+Additional sections control behavior rather than provider selection. Existing
+`[generalist]`, `[providers].generalist`, and `[models].generalist` keys remain
+supported during the V3 migration window; new local-model profiles take
+precedence when both forms are present.
 
 - `[limits]`: input, steps, calls, retries, timeouts, concurrency, queue, and
   specialist output ceilings.
-- `[generalist]`: localhost Ollama endpoint, timeout, and output ceiling.
+- `[local_models]`: reusable local profiles, role bindings, and role-specific
+  output ceilings.
 - `[research]`: maximum sources, 2,048-token default output allowance, and timeout.
 - `[storage]`: session/evidence/audit retention and backup directory.
 - `[specialists]`: capability-manifest directory.

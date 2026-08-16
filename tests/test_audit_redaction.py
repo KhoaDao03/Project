@@ -40,9 +40,7 @@ class AuditRedactionTests(unittest.TestCase):
 
     def test_correlation_by_task(self) -> None:
         for i in range(3):
-            self.audit.append(
-                AuditEvent(task_id="tX", session_id="s1", event_type=f"e{i}", at=UTC)
-            )
+            self.audit.append(AuditEvent(task_id="tX", session_id="s1", event_type=f"e{i}", at=UTC))
         self.assertEqual(len(self.audit.by_task("tX")), 3)
         self.assertEqual(self.audit.by_task("other"), [])
 
@@ -57,10 +55,15 @@ class AuditRedactionTests(unittest.TestCase):
         self.assertNotIn(canary, joined)  # allowlisted fields only; detail not logged
 
     def test_persisted_detail_redacts_credential_values(self) -> None:
-        self.audit.append(AuditEvent(
-            task_id="t3", session_id="s1", event_type="provider.failed", at=UTC,
-            detail="api_key=CANARY-DO-NOT-STORE password:also-secret",
-        ))
+        self.audit.append(
+            AuditEvent(
+                task_id="t3",
+                session_id="s1",
+                event_type="provider.failed",
+                at=UTC,
+                detail="api_key=CANARY-DO-NOT-STORE password:also-secret",
+            )
+        )
         stored = self.audit.by_task("t3")[0].detail
         self.assertNotIn("CANARY-DO-NOT-STORE", stored)
         self.assertNotIn("also-secret", stored)

@@ -16,6 +16,7 @@ from typing import TypeAlias
 from ..domain.enums import ActionCategory, IntentAmbiguity
 from ..domain.errors import ConfigInvalidError, InputInvalidError
 from ..domain.models import IntentEntity, IntentScalar
+from .step_results import RESULT_SCHEMA_VERSION
 
 
 class CapabilityAvailability(str, Enum):
@@ -23,6 +24,13 @@ class CapabilityAvailability(str, Enum):
 
     AVAILABLE = "available"
     UNAVAILABLE = "unavailable"
+
+
+class CapabilityKind(str, Enum):
+    """Application-owned execution class used for bounded plan accounting."""
+
+    SPECIALIST = "specialist"
+    RESEARCH = "research"
 
 
 class FreshnessSupport(str, Enum):
@@ -73,6 +81,9 @@ _SAFE_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 _MAX_DESCRIPTION = 500
 _MAX_EXAMPLE = 240
 _MAX_EXAMPLES = 8
+_DECLARED_RESULT_TYPE = re.compile(
+    r"^[a-z][a-z0-9_.-]*_(?:result|output|record|report|claims|finding|findings|analysis)$"
+)
 
 
 def _config_nonempty(value: str, name: str, *, maximum: int = 64) -> None:
@@ -145,18 +156,24 @@ class OperationIntentContract:
     specificity: int = 50
     examples: tuple[str, ...] = ()
     counterexamples: tuple[str, ...] = ()
+    output_type: str = "task_result"
+    output_schema_versions: tuple[str, ...] = (RESULT_SCHEMA_VERSION,)
+    objective_classes: tuple[str, ...] = ()
+    perspectives: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_identifier(self.operation_id, "operation_id")
         _config_nonempty(self.description, "operation description", maximum=_MAX_DESCRIPTION)
         _validate_texts(self.domains, "operation domains")
-        _validate_texts(
-            self.accepted_inputs,
-            "operation accepted_inputs",
-            allowed=SUPPORTED_INPUT_TYPES,
-        )
+        _validate_texts(self.accepted_inputs, "operation accepted_inputs")
         if not self.accepted_inputs:
             raise ConfigInvalidError("operation must declare accepted_inputs")
+        unsupported_inputs = set(self.accepted_inputs) - SUPPORTED_INPUT_TYPES
+        if any(_DECLARED_RESULT_TYPE.fullmatch(value) is None for value in unsupported_inputs):
+            raise ConfigInvalidError(
+                "operation accepted_inputs contains unsupported values: "
+                + ", ".join(sorted(unsupported_inputs))
+            )
         _validate_texts(
             self.required_entities,
             "operation required_entities",
@@ -177,6 +194,19 @@ class OperationIntentContract:
             raise ConfigInvalidError("operation specificity must be between 0 and 100")
         _validate_examples(self.examples, "operation examples")
         _validate_examples(self.counterexamples, "operation counterexamples")
+        _validate_identifier(self.output_type, "operation output_type")
+        _validate_texts(self.output_schema_versions, "operation output_schema_versions")
+        if any(_IDENTIFIER.fullmatch(value) is None for value in self.output_schema_versions):
+            raise ConfigInvalidError(
+                "operation output_schema_versions must contain safe identifiers"
+            )
+        for values, name in (
+            (self.objective_classes, "operation objective_classes"),
+            (self.perspectives, "operation perspectives"),
+        ):
+            _validate_texts(values, name)
+            if any(_SAFE_CODE.fullmatch(value) is None for value in values):
+                raise ConfigInvalidError(f"{name} must contain safe codes")
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +219,9 @@ class CapabilityRoutingDescriptor:
     availability: CapabilityAvailability = CapabilityAvailability.AVAILABLE
     availability_reason: str = ""
     priority: int = 50
+    kind: CapabilityKind = CapabilityKind.SPECIALIST
+    requires_external_access: bool = False
+    requires_consent: bool = False
 
     def __post_init__(self) -> None:
         _validate_identifier(self.capability_id, "routing capability_id")
@@ -212,6 +245,12 @@ class CapabilityRoutingDescriptor:
             raise ConfigInvalidError("routing availability_reason must be a safe reason code")
         if isinstance(self.priority, bool) or not 0 <= self.priority <= 100:
             raise ConfigInvalidError("routing priority must be between 0 and 100")
+        if not isinstance(self.kind, CapabilityKind):
+            raise ConfigInvalidError("routing capability kind must be a CapabilityKind")
+        if not isinstance(self.requires_external_access, bool):
+            raise ConfigInvalidError("routing requires_external_access must be a bool")
+        if not isinstance(self.requires_consent, bool):
+            raise ConfigInvalidError("routing requires_consent must be a bool")
 
     @property
     def available(self) -> bool:
@@ -337,8 +376,7 @@ class CapabilitySelectionProposal:
             raise InputInvalidError("selection ambiguity must be an IntentAmbiguity")
         _validate_input_code(self.rationale_code, "selection rationale_code")
         if not isinstance(self.ranked_alternatives, tuple) or any(
-            not isinstance(candidate, CandidateMatch)
-            for candidate in self.ranked_alternatives
+            not isinstance(candidate, CandidateMatch) for candidate in self.ranked_alternatives
         ):
             raise InputInvalidError("selection alternatives must contain CandidateMatch values")
 
@@ -361,6 +399,10 @@ def default_routing_descriptor(
     availability: CapabilityAvailability,
     availability_reason: str,
     effect: ActionCategory,
+    requires_external_access: bool = False,
+    kind: CapabilityKind = CapabilityKind.SPECIALIST,
+    requires_consent: bool = False,
+    output_schema_versions: tuple[str, ...] = (RESULT_SCHEMA_VERSION,),
 ) -> CapabilityRoutingDescriptor:
     """Build a conservative generic contract for a programmatic capability."""
     return CapabilityRoutingDescriptor(
@@ -376,18 +418,23 @@ def default_routing_descriptor(
                 freshness=FreshnessSupport.STATIC,
                 effect=effect,
                 specificity=50,
+                output_schema_versions=output_schema_versions,
             )
             for operation in operations
         ),
         availability=availability,
         availability_reason=availability_reason,
         priority=50,
+        kind=kind,
+        requires_external_access=requires_external_access,
+        requires_consent=requires_consent,
     )
 
 
 __all__ = [
     "CandidateMatch",
     "CapabilityAvailability",
+    "CapabilityKind",
     "CapabilityRoutingDescriptor",
     "CapabilitySelectionProposal",
     "CapabilitySelectionView",

@@ -32,7 +32,9 @@ class _AvailableCapability:
 
     def status(self) -> CapabilityStatus:
         return CapabilityStatus(
-            CapabilityAvailability.AVAILABLE if self._available else CapabilityAvailability.UNAVAILABLE,
+            CapabilityAvailability.AVAILABLE
+            if self._available
+            else CapabilityAvailability.UNAVAILABLE,
             "TEST_DISABLED" if not self._available else "",
         )
 
@@ -50,7 +52,9 @@ class _AvailableCapability:
 
 def _request(text: str, contextual_text: str | None = None) -> RouteRequest:
     return RouteRequest(
-        request_id="r1", text=text, contextual_text=contextual_text,
+        request_id="r1",
+        text=text,
+        contextual_text=contextual_text,
         cloud_mode=CloudMode.LOCAL_ONLY,
     )
 
@@ -65,9 +69,7 @@ class RoutingPolicyTests(unittest.TestCase):
             "analyze the evidence",
         ):
             with self.subTest(text=text):
-                self.assertEqual(
-                    policy.decide(_request(text)).route, Route.LOCAL_CONVERSATION
-                )
+                self.assertEqual(policy.decide(_request(text)).route, Route.LOCAL_CONVERSATION)
 
     def test_route_has_safe_reason_code(self) -> None:
         decision = RoutingPolicy().decide(_request("What is the latest news?"))
@@ -81,11 +83,7 @@ class RoutingPolicyTests(unittest.TestCase):
 
     def test_unavailable_capability_is_not_executable(self) -> None:
         registry = CapabilityRegistry(
-            (
-                _AvailableCapability(
-                    "web_research", Route.REGISTERED_CAPABILITY, available=False
-                ),
-            )
+            (_AvailableCapability("web_research", Route.REGISTERED_CAPABILITY, available=False),)
         )
         decision = RoutingPolicy(capabilities=registry).decide(
             _request("What is the latest gold price?"),
@@ -110,9 +108,7 @@ class RoutingPolicyTests(unittest.TestCase):
             proposal=RouteProposal(capability_id="missing", request_schema="missing-v1"),
         )
         self.assertEqual(decision.route, Route.LOCAL_CONVERSATION)
-        self.assertEqual(
-            decision.reason_code, RouteReasonCode.SELECTION_PROPOSAL_REJECTED
-        )
+        self.assertEqual(decision.reason_code, RouteReasonCode.SELECTION_PROPOSAL_REJECTED)
 
 
 if __name__ == "__main__":

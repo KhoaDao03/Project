@@ -18,6 +18,10 @@ from ...api.contracts import (
     CreateSessionRequest,
     HistoryQuery,
     HistoryView,
+    PlanQuery,
+    PlanTraceQuery,
+    PlanTraceView,
+    PlanView,
     ProfileCommand,
     ProfileQuery,
     SessionView,
@@ -32,7 +36,9 @@ from ...api.contracts import (
 class PublicApplication(Protocol):
     """The application surface a presentation handler is allowed to use."""
 
-    def create_session(self, request: CreateSessionRequest | None = None) -> ApiResult[SessionView]: ...
+    def create_session(
+        self, request: CreateSessionRequest | None = None
+    ) -> ApiResult[SessionView]: ...
 
     def change_session_mode(self, request: ChangeModeRequest) -> ApiResult[SessionView]: ...
 
@@ -50,9 +56,15 @@ class PublicApplication(Protocol):
 
     def get_trace(self, request: TraceQuery) -> ApiResult[TraceView]: ...
 
+    def get_plan(self, request: PlanQuery) -> ApiResult[PlanView]: ...
+
+    def get_plan_trace(self, request: PlanTraceQuery) -> ApiResult[PlanTraceView]: ...
+
     def get_sources(self, request: SourcesQuery) -> ApiResult[SourcesView]: ...
 
-    def list_consents(self, request: ConsentQuery | None = None) -> ApiResult[tuple[ConsentView, ...]]: ...
+    def list_consents(
+        self, request: ConsentQuery | None = None
+    ) -> ApiResult[tuple[ConsentView, ...]]: ...
 
     def decide_consent(self, request: ConsentDecisionRequest) -> ApiResult[TaskView]: ...
 

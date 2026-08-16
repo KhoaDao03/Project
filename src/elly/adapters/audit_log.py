@@ -29,7 +29,9 @@ def _redact_detail(detail: str) -> str:
 class StructuredAuditLog:
     """In-process, redacting audit sink that also emits structured log lines."""
 
-    def __init__(self, logger: logging.Logger | None = None, repository: SessionRepositoryPort | None = None) -> None:
+    def __init__(
+        self, logger: logging.Logger | None = None, repository: SessionRepositoryPort | None = None
+    ) -> None:
         self._events: list[AuditEvent] = []
         self._log = logger or logging.getLogger("elly.audit")
         self._repository = repository
@@ -73,6 +75,7 @@ class StructuredAuditLog:
             return HealthReport(component="audit", state=HealthState.HEALTHY)
         except Exception as exc:  # noqa: BLE001 - health must report, not raise
             return HealthReport(
-                component="audit", state=HealthState.UNAVAILABLE,
+                component="audit",
+                state=HealthState.UNAVAILABLE,
                 detail=type(exc).__name__,
             )

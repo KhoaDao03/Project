@@ -17,8 +17,11 @@ class M7ReleaseEvidenceTests(unittest.TestCase):
 
     def test_report_pins_every_case_and_does_not_fake_release(self):
         report = run_release_evidence(
-            regression_status="pass", hardware_status="pass",
-            recorded_at=__import__("datetime").datetime(2026, 8, 4, tzinfo=__import__("datetime").timezone.utc),
+            regression_status="pass",
+            hardware_status="pass",
+            recorded_at=__import__("datetime").datetime(
+                2026, 8, 4, tzinfo=__import__("datetime").timezone.utc
+            ),
         )
         self.assertEqual(30, len(report.records))
         self.assertTrue(all(record.model_id == "qwen3:8b" for record in report.records))

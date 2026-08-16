@@ -17,8 +17,10 @@ from elly.domain.enums import (
 class SpecialistCompositionTests(unittest.TestCase):
     def test_unknown_is_not_success(self) -> None:
         result = compose_specialist(
-            task_id="task-unknown", answer="Evidence is insufficient.",
-            route=Route.RESEARCH_SPECIALIST, epistemic=EpistemicStatus.UNKNOWN,
+            task_id="task-unknown",
+            answer="Evidence is insufficient.",
+            route=Route.RESEARCH_SPECIALIST,
+            epistemic=EpistemicStatus.UNKNOWN,
         )
         self.assertIs(result.task_status, TaskStatus.COMPLETED)
         self.assertIs(result.outcome_code, OutcomeCode.UNKNOWN)
@@ -26,8 +28,10 @@ class SpecialistCompositionTests(unittest.TestCase):
 
     def test_blocked_is_not_completed(self) -> None:
         result = compose_specialist(
-            task_id="task-blocked", answer="Policy blocked this task.",
-            route=Route.CODING_SPECIALIST, epistemic=EpistemicStatus.BLOCKED,
+            task_id="task-blocked",
+            answer="Policy blocked this task.",
+            route=Route.CODING_SPECIALIST,
+            epistemic=EpistemicStatus.BLOCKED,
         )
         self.assertIs(result.task_status, TaskStatus.BLOCKED)
         self.assertIs(result.outcome_code, OutcomeCode.BLOCKED)
@@ -35,8 +39,10 @@ class SpecialistCompositionTests(unittest.TestCase):
 
     def test_assumptions_are_not_claims(self) -> None:
         result = compose_specialist(
-            task_id="task-assumption", answer="A qualified analysis.",
-            route=Route.CODING_SPECIALIST, epistemic=EpistemicStatus.INFERRED,
+            task_id="task-assumption",
+            answer="A qualified analysis.",
+            route=Route.CODING_SPECIALIST,
+            epistemic=EpistemicStatus.INFERRED,
             assumptions=("The sample is representative.",),
         )
         self.assertEqual((), result.claims)

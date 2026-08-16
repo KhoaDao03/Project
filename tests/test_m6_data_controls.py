@@ -24,7 +24,9 @@ class M6DataControlsTests(unittest.TestCase):
         self.db = str(Path(self.tmp.name) / "elly.db")
         self.repo = SqliteSessionRepository(self.db)
         self.repo.apply_migrations()
-        self.session = SessionRecord("session-m6", PersistenceMode.STORE_WITH_RETENTION, CloudMode.LOCAL_ONLY, NOW)
+        self.session = SessionRecord(
+            "session-m6", PersistenceMode.STORE_WITH_RETENTION, CloudMode.LOCAL_ONLY, NOW
+        )
         self.repo.create_session(self.session)
 
     def tearDown(self):
@@ -39,10 +41,17 @@ class M6DataControlsTests(unittest.TestCase):
         self.assertEqual({"p1", "p2", "p3"}, {x.item_id for x in profile.list()})
         self.assertEqual({"p1", "p3"}, {x.item_id for x in profile.context_items()})
         profile.correct("p1", key="timezone", value="America/New_York")
-        self.assertEqual("America/New_York", next(x.value for x in profile.context_items() if x.item_id == "p1"))
+        self.assertEqual(
+            "America/New_York", next(x.value for x in profile.context_items() if x.item_id == "p1")
+        )
         self.assertTrue(profile.delete("p1"))
         self.assertIsNone(self.repo.get_profile_item("p1"))
-        self.assertEqual(1, self.repo._conn.execute("SELECT COUNT(*) FROM profile_tombstones WHERE item_id='p1'").fetchone()[0])
+        self.assertEqual(
+            1,
+            self.repo._conn.execute(
+                "SELECT COUNT(*) FROM profile_tombstones WHERE item_id='p1'"
+            ).fetchone()[0],
+        )
         self.assertEqual(1, self.repo.purge_expired_profile(NOW + timedelta(days=2)))
 
     def test_no_store_body_is_absent_after_restart(self):
@@ -53,12 +62,27 @@ class M6DataControlsTests(unittest.TestCase):
         reopened = SqliteSessionRepository(self.db)
         reopened.apply_migrations()
         self.assertEqual("", reopened.recent_messages(no_store.session_id, 1)[0].content)
-        self.assertEqual(0, reopened._conn.execute("SELECT stored_body FROM messages WHERE session_id='session-ns'").fetchone()[0])
+        self.assertEqual(
+            0,
+            reopened._conn.execute(
+                "SELECT stored_body FROM messages WHERE session_id='session-ns'"
+            ).fetchone()[0],
+        )
         reopened.close()
 
     def test_audit_and_sources_are_durable_and_redacted(self):
         audit = StructuredAuditLog(repository=self.repo)
-        audit.append(AuditEvent("task-m6", self.session.session_id, "task.completed", NOW, Route.LOCAL_GENERALIST, TaskStatus.COMPLETED, detail="short operational summary\n"))
+        audit.append(
+            AuditEvent(
+                "task-m6",
+                self.session.session_id,
+                "task.completed",
+                NOW,
+                Route.LOCAL_GENERALIST,
+                TaskStatus.COMPLETED,
+                detail="short operational summary\n",
+            )
+        )
         self.repo.add_task_source("task-m6", "https://example.test/source", NOW)
         self.repo.close()
         reopened = SqliteSessionRepository(self.db)
@@ -73,7 +97,9 @@ class M6DataControlsTests(unittest.TestCase):
         self.repo.append_message(self.session.session_id, Message("user", "body", NOW))
         self.repo.start_task("task-delete", self.session.session_id, NOW)
         self.repo.add_task_source("task-delete", "https://example.test", NOW)
-        self.repo.append_audit(AuditEvent("task-delete", self.session.session_id, "task.received", NOW))
+        self.repo.append_audit(
+            AuditEvent("task-delete", self.session.session_id, "task.received", NOW)
+        )
         self.assertTrue(self.repo.delete_session(self.session.session_id))
         self.assertIsNone(self.repo.get_session(self.session.session_id))
         self.assertEqual([], self.repo.audit_by_task("task-delete"))
@@ -83,8 +109,10 @@ class M6DataControlsTests(unittest.TestCase):
         old = NOW - timedelta(days=100)
         recent = NOW - timedelta(days=2)
         old_session = SessionRecord(
-            "session-old", PersistenceMode.STORE_WITH_RETENTION,
-            CloudMode.LOCAL_ONLY, old,
+            "session-old",
+            PersistenceMode.STORE_WITH_RETENTION,
+            CloudMode.LOCAL_ONLY,
+            old,
         )
         self.repo.create_session(old_session)
         self.repo.append_message(old_session.session_id, Message("user", "expired", old))
@@ -145,12 +173,20 @@ class M6DataControlsTests(unittest.TestCase):
         with patch.object(sqlite_repository, "_MIGRATION_V2_STATEMENTS", failing):
             with self.assertRaises(StorageFailureError):
                 self.repo.apply_migrations()
-        self.assertEqual(1, self.repo._conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()[0])
+        self.assertEqual(
+            1, self.repo._conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()[0]
+        )
         self.assertIsNotNone(self.repo.get_session(self.session.session_id))
-        self.assertEqual(0, self.repo._conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='profile_items'").fetchone()[0])
+        self.assertEqual(
+            0,
+            self.repo._conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='profile_items'"
+            ).fetchone()[0],
+        )
 
     def test_backup_restore_reports_local_recovery_time(self):
         import time
+
         with TemporaryDirectory() as td:
             backup = BackupService(db_path=self.db, key="owner-test-key")
             path = backup.create(str(Path(td) / "recovery.backup"))

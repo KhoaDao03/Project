@@ -55,7 +55,9 @@ class FakeGeneralist:
     Implements `ports.generalist.GeneralistPort`.
     """
 
-    def __init__(self, model_id: str = "fake-generalist-v1", failure: FailureMode = FailureMode.NONE) -> None:
+    def __init__(
+        self, model_id: str = "fake-generalist-v1", failure: FailureMode = FailureMode.NONE
+    ) -> None:
         self._model_id = model_id
         self._failure = failure
 
@@ -89,8 +91,12 @@ class FakeGeneralist:
         # prefix makes clear this is not a real answer.
         snippet = request.prompt.strip().splitlines()[-1] if request.prompt.strip() else ""
         snippet = snippet[:200]
-        text = f"{_FAKE_PREFIX}acknowledged: {snippet}" if snippet else f"{_FAKE_PREFIX}acknowledged."
-        usage = GeneralistUsage(output_tokens=min(len(text.split()), request.max_output_tokens), latency_ms=0)
+        text = (
+            f"{_FAKE_PREFIX}acknowledged: {snippet}" if snippet else f"{_FAKE_PREFIX}acknowledged."
+        )
+        usage = GeneralistUsage(
+            output_tokens=min(len(text.split()), request.max_output_tokens), latency_ms=0
+        )
         return GeneralistResponse(text=text, usage=usage)
 
     def cancel(self) -> None:

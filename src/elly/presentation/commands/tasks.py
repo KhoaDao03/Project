@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from ...api.contracts import SourcesQuery, TraceQuery
+from ...api.contracts import PlanQuery, PlanTraceQuery, SourcesQuery, TraceQuery
+from ..render import render_plan_trace_view, render_plan_view
 from .base import CommandArgumentError, CommandContext, CommandResult, api_failure
 
 
@@ -69,3 +70,25 @@ class SourcesHandler:
             return api_failure(result, prefix="Sources unavailable: ")
         assert result.value is not None
         return CommandResult("\n".join(result.value.sources) or "No sources found.")
+
+
+class PlanHandler:
+    """Render a persisted plan through the public application API."""
+
+    def handle(self, args: tuple[str, ...], context: CommandContext) -> CommandResult:
+        result = context.api.get_plan(PlanQuery(args[0]))
+        if not result.is_success:
+            return api_failure(result, prefix="Plan unavailable: ")
+        assert result.value is not None
+        return CommandResult(render_plan_view(result.value))
+
+
+class PlanTraceHandler:
+    """Render safe plan provenance through the public application API."""
+
+    def handle(self, args: tuple[str, ...], context: CommandContext) -> CommandResult:
+        result = context.api.get_plan_trace(PlanTraceQuery(args[0]))
+        if not result.is_success:
+            return api_failure(result, prefix="Plan trace unavailable: ")
+        assert result.value is not None
+        return CommandResult(render_plan_trace_view(result.value))

@@ -23,7 +23,9 @@ class SpecialistRegistry:
     """Registry of valid manifests and explicitly disabled invalid entries."""
 
     def __init__(
-        self, *, default_model: str = "gpt-5.6-luna",
+        self,
+        *,
+        default_model: str = "gpt-5.6-luna",
         model_overrides: dict[str, str] | None = None,
     ) -> None:
         self._manifests: dict[str, SpecialistManifest] = {}
@@ -33,7 +35,10 @@ class SpecialistRegistry:
 
     @classmethod
     def from_directory(
-        cls, directory: str, *, default_model: str,
+        cls,
+        directory: str,
+        *,
+        default_model: str,
         model_overrides: dict[str, str] | None = None,
     ) -> "SpecialistRegistry":
         """Load capability policy and inject models from the central config."""
@@ -81,9 +86,7 @@ class SpecialistRegistry:
                 raise ConfigInvalidError("routing must be a table")
             if enabled and not has_routing_declaration:
                 strict_routing_error = True
-                raise ConfigInvalidError(
-                    "enabled specialist must declare a routing contract"
-                )
+                raise ConfigInvalidError("enabled specialist must declare a routing contract")
             routing_priority = routing_data.get("priority", 50)
             if isinstance(routing_priority, bool) or not isinstance(routing_priority, int):
                 raise ConfigInvalidError("routing priority must be an integer")
@@ -119,9 +122,7 @@ class SpecialistRegistry:
                 enabled=enabled,
                 allowed_tools=allowed_tools,
                 role=role,
-                provider_model=self._model_overrides.get(
-                    str(data["id"]), self._default_model
-                ),
+                provider_model=self._model_overrides.get(str(data["id"]), self._default_model),
                 prompt_version=str(data.get("prompt_version", "v1")),
                 privacy_class=str(data.get("privacy_class", "remote_allowed")),
                 output_limit=int(data.get("output_limit", 2000)),
@@ -132,9 +133,18 @@ class SpecialistRegistry:
             if manifest.id in self._manifests:
                 raise ConfigInvalidError(f"duplicate specialist id: {manifest.id}")
             self._manifests[manifest.id] = manifest
-        except (KeyError, TypeError, ValueError, tomllib.TOMLDecodeError, OSError, ConfigInvalidError) as exc:
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            tomllib.TOMLDecodeError,
+            OSError,
+            ConfigInvalidError,
+        ) as exc:
             identifier = path.stem
-            self._disabled[identifier] = DisabledSpecialist(identifier, f"invalid manifest: {type(exc).__name__}")
+            self._disabled[identifier] = DisabledSpecialist(
+                identifier, f"invalid manifest: {type(exc).__name__}"
+            )
             if strict_routing_error:
                 if isinstance(exc, ConfigInvalidError):
                     raise
@@ -158,9 +168,7 @@ class SpecialistRegistry:
             raise ConfigInvalidError("routing operation id and description must be text")
         effect = value.get("effect", ActionCategory.NONE.value)
         if effect != ActionCategory.NONE.value:
-            raise ConfigInvalidError(
-                "specialist routing operations cannot declare side effects"
-            )
+            raise ConfigInvalidError("specialist routing operations cannot declare side effects")
         freshness = value.get("freshness", FreshnessSupport.STATIC.value)
         if not isinstance(freshness, str):
             raise ConfigInvalidError("routing operation freshness must be text")
@@ -180,17 +188,13 @@ class SpecialistRegistry:
                 ),
                 freshness=FreshnessSupport(freshness),
                 specificity=value.get("specificity", 50),
-                examples=cls._string_tuple(
-                    value.get("examples", []), "operation examples"
-                ),
+                examples=cls._string_tuple(value.get("examples", []), "operation examples"),
                 counterexamples=cls._string_tuple(
                     value.get("counterexamples", []), "operation counterexamples"
                 ),
             )
         except KeyError as exc:
-            raise ConfigInvalidError(
-                f"routing operation missing field: {exc.args[0]}"
-            ) from exc
+            raise ConfigInvalidError(f"routing operation missing field: {exc.args[0]}") from exc
 
     @staticmethod
     def _string_tuple(value: Any, name: str) -> tuple[str, ...]:

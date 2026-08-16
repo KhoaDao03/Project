@@ -15,9 +15,13 @@ UTC = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
 
 def _evidence(*, snippet: str = "", passage: str = "") -> EvidenceObject:
     return EvidenceObject(
-        evidence_id="E1", url="https://example.com/source",
-        canonical_url="https://example.com/source", title="Source",
-        publisher="Example", retrieved_at=UTC, snippet=snippet,
+        evidence_id="E1",
+        url="https://example.com/source",
+        canonical_url="https://example.com/source",
+        title="Source",
+        publisher="Example",
+        retrieved_at=UTC,
+        snippet=snippet,
         supporting_passage=passage,
     )
 
@@ -31,6 +35,7 @@ class _Retriever:
             raise PermanentProviderError("page unavailable")
         raw = self.content.encode()
         import hashlib
+
         return RetrievedDocument(
             canonical_url=evidence.canonical_url,
             content=self.content,

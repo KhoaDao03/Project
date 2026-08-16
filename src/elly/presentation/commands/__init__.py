@@ -13,7 +13,15 @@ from .profile import ProfileHandler
 from .registry import CommandRegistry
 from .session import ModeHandler, NewSessionHandler, validate_mode, validate_new
 from .status import StatusHandler
-from .tasks import CancelHandler, SourcesHandler, TraceHandler, no_args, one_id
+from .tasks import (
+    CancelHandler,
+    PlanHandler,
+    PlanTraceHandler,
+    SourcesHandler,
+    TraceHandler,
+    no_args,
+    one_id,
+)
 
 
 def build_command_registry() -> CommandRegistry:
@@ -105,6 +113,24 @@ def build_command_registry() -> CommandRegistry:
             usage="/trace <task-id>",
             help_text="show redacted durable task events",
             handler=TraceHandler(),
+            validate_args=one_id,
+        )
+    )
+    registry.register(
+        CommandDescriptor(
+            name="/plan",
+            usage="/plan <plan-id>",
+            help_text="show a safe execution-plan summary",
+            handler=PlanHandler(),
+            validate_args=one_id,
+        )
+    )
+    registry.register(
+        CommandDescriptor(
+            name="/plan-trace",
+            usage="/plan-trace <plan-id>",
+            help_text="show redacted execution-plan provenance",
+            handler=PlanTraceHandler(),
             validate_args=one_id,
         )
     )

@@ -12,8 +12,10 @@ import logging
 import threading
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
+from typing import cast
 
 from ..application.action_authorization import safe_action_target_reference
+from ..application.plan_results import aggregate_plan_results
 from ..application.response_composer import compose_cancelled
 from ..application.route_compatibility import inherit_route_metadata
 from ..composition import Application
@@ -49,6 +51,8 @@ from ..domain.models import (
     TaskRequest,
     TaskResult,
 )
+from ..planning.contracts import ExecutionPlan, PlanStatus, StepState
+from ..ports.plan_repository import PlanRepositoryPort
 from ..presentation.validators import normalize_and_validate
 from ..privacy import ConsentProposal
 from ..trace_safety import redact_trace_detail
@@ -69,10 +73,21 @@ from .contracts import (
     ConsentQuery,
     ConsentView,
     CreateSessionRequest,
+    DisagreementView,
     HealthView,
     HistoryQuery,
     HistoryView,
     LimitsStatusView,
+    LocalModelRoleView,
+    PlanQuery,
+    PlanResultView,
+    PlanStepView,
+    PlanSynthesisView,
+    PlanTraceEventView,
+    PlanTraceQuery,
+    PlanTraceView,
+    PlanUsageView,
+    PlanView,
     PricingStatusView,
     ProfileCommand,
     ProfileCommandKind,
@@ -151,7 +166,9 @@ class EllyApplication:
             return ApiResult.failed(_failure(exc, session_id or "session-read"))
 
     def change_session_mode(self, request: ChangeModeRequest) -> ApiResult[SessionView]:
-        correlation_id = request.session_id if isinstance(request, ChangeModeRequest) else "session-mode"
+        correlation_id = (
+            request.session_id if isinstance(request, ChangeModeRequest) else "session-mode"
+        )
         try:
             if not isinstance(request, ChangeModeRequest):
                 raise InputInvalidError("change mode request is invalid")
@@ -236,14 +253,18 @@ class EllyApplication:
         with self._lock:
             future = self._futures.get(accepted.value.task_id)
         if future is None:
-            return ApiResult.failed(_failure_internal("task future was not retained", accepted.value.task_id))
+            return ApiResult.failed(
+                _failure_internal("task future was not retained", accepted.value.task_id)
+            )
         try:
             future.result()
         except BaseException as exc:
             # The durable task state, when available, remains the source of truth.
             if isinstance(exc, EllyError):
                 return ApiResult.failed(_failure(exc, accepted.value.task_id))
-            return ApiResult.failed(_failure_internal("task execution failed", accepted.value.task_id))
+            return ApiResult.failed(
+                _failure_internal("task execution failed", accepted.value.task_id)
+            )
         return self.get_task(accepted.value.task_id)
 
     def get_task(self, task_id: str) -> ApiResult[TaskView]:
@@ -289,7 +310,11 @@ class EllyApplication:
                     self._harvest_future(task_id)
                     with self._lock:
                         outcome = self._outcomes.get(task_id)
-                    result = outcome.result if outcome is not None else self._scope.repository.get_task_result(task_id)
+                    result = (
+                        outcome.result
+                        if outcome is not None
+                        else self._scope.repository.get_task_result(task_id)
+                    )
             else:
                 result = outcome.result
             with self._lock:
@@ -311,6 +336,13 @@ class EllyApplication:
                     ),
                     None,
                 )
+            plan = _latest_plan_for_task(self._scope.repository, task_id)
+            plan_view = _plan_view(self._scope.repository, plan) if plan is not None else None
+            plan_result_view = (
+                _plan_result_view(self._scope.repository, plan, result)
+                if plan is not None
+                else None
+            )
             return ApiResult.success(
                 _task_view(
                     task_id,
@@ -320,10 +352,44 @@ class EllyApplication:
                     self._scope.repository.task_sources(task_id),
                     action_confirmation,
                     fallback_route,
+                    plan_view,
+                    plan_result_view,
                 )
             )
         except BaseException as exc:
             return ApiResult.failed(_failure(exc, task_id or "task-read"))
+
+    def get_plan(self, request: PlanQuery) -> ApiResult[PlanView]:
+        """Return a bounded public view of one persisted execution plan."""
+
+        correlation_id = request.plan_id if isinstance(request, PlanQuery) else "plan-read"
+        try:
+            if not isinstance(request, PlanQuery):
+                raise InputInvalidError("plan query is invalid")
+            _require_id(request.plan_id, "plan_id")
+            _require_id(request.actor_id, "actor_id")
+            plan = cast(PlanRepositoryPort, self._scope.repository).get_plan(request.plan_id)
+            if plan is None:
+                return ApiResult.failed(_failure_not_found("plan", request.plan_id))
+            return ApiResult.success(_plan_view(self._scope.repository, plan))
+        except BaseException as exc:
+            return ApiResult.failed(_failure(exc, correlation_id))
+
+    def get_plan_trace(self, request: PlanTraceQuery) -> ApiResult[PlanTraceView]:
+        """Return safe plan transitions and contributing result/evidence IDs."""
+
+        correlation_id = request.plan_id if isinstance(request, PlanTraceQuery) else "plan-trace"
+        try:
+            if not isinstance(request, PlanTraceQuery):
+                raise InputInvalidError("plan trace query is invalid")
+            _require_id(request.plan_id, "plan_id")
+            _require_id(request.actor_id, "actor_id")
+            plan = cast(PlanRepositoryPort, self._scope.repository).get_plan(request.plan_id)
+            if plan is None:
+                return ApiResult.failed(_failure_not_found("plan", request.plan_id))
+            return ApiResult.success(_plan_trace_view(self._scope.repository, plan))
+        except BaseException as exc:
+            return ApiResult.failed(_failure(exc, correlation_id))
 
     def cancel_task(self, task_id: str) -> ApiResult[TaskView]:
         try:
@@ -379,18 +445,24 @@ class EllyApplication:
 
     # ---- approved query/command operations -----------------------------
 
-    def get_profile(self, request: ProfileQuery | None = None) -> ApiResult[tuple[ProfileView, ...]]:
+    def get_profile(
+        self, request: ProfileQuery | None = None
+    ) -> ApiResult[tuple[ProfileView, ...]]:
         request = request or ProfileQuery()
         try:
             if not isinstance(request, ProfileQuery):
                 raise InputInvalidError("profile query is invalid")
             _require_id(request.actor_id, "actor_id")
-            return ApiResult.success(tuple(_profile_view(item) for item in self._scope.profile.list()))
+            return ApiResult.success(
+                tuple(_profile_view(item) for item in self._scope.profile.list())
+            )
         except BaseException as exc:
             return ApiResult.failed(_failure(exc, "profile-read"))
 
     def change_profile(self, request: ProfileCommand) -> ApiResult[ProfileView | bool]:
-        correlation_id = request.item_id if isinstance(request, ProfileCommand) else "profile-command"
+        correlation_id = (
+            request.item_id if isinstance(request, ProfileCommand) else "profile-command"
+        )
         try:
             if not isinstance(request, ProfileCommand):
                 raise InputInvalidError("profile command is invalid")
@@ -432,7 +504,9 @@ class EllyApplication:
                 if record is None:
                     return ApiResult.failed(_failure_not_found("session", request.session_id))
                 records = [record]
-            return ApiResult.success(HistoryView(tuple(_session_view(record) for record in records)))
+            return ApiResult.success(
+                HistoryView(tuple(_session_view(record) for record in records))
+            )
         except BaseException as exc:
             return ApiResult.failed(_failure(exc, "history-read"))
 
@@ -455,21 +529,43 @@ class EllyApplication:
             if self._scope.repository.task_session_id(request.task_id) is None:
                 return ApiResult.failed(_failure_not_found("task", request.task_id))
             events = self._scope.repository.audit_by_task(request.task_id)
+            plan_trace_events: list[TraceEventView] = []
+            list_plans = getattr(self._scope.repository, "list_plans_for_task", None)
+            if callable(list_plans):
+                for plan in list_plans(request.task_id):
+                    event_reader = getattr(self._scope.repository, "plan_events", None)
+                    if not callable(event_reader):
+                        continue
+                    plan_trace_events.extend(
+                        TraceEventView(
+                            event_type=event.event_type,
+                            at=event.created_at,
+                            route=None,
+                            task_status=None,
+                            error_class=None,
+                            detail=_public_trace_detail(event.detail),
+                        )
+                        for event in event_reader(plan.plan_id)
+                    )
+            audit_trace_events = tuple(
+                TraceEventView(
+                    event_type=event.event_type,
+                    at=event.at,
+                    route=event.route,
+                    task_status=event.task_status,
+                    error_class=event.error_class.value if event.error_class else None,
+                    detail=_public_trace_detail(event.detail),
+                )
+                for event in events
+            )
+            combined_events = tuple(
+                sorted(audit_trace_events + tuple(plan_trace_events), key=lambda event: event.at)
+            )
             result = self._scope.repository.get_task_result(request.task_id)
             return ApiResult.success(
                 TraceView(
                     task_id=request.task_id,
-                    events=tuple(
-                        TraceEventView(
-                            event_type=event.event_type,
-                            at=event.at,
-                            route=event.route,
-                            task_status=event.task_status,
-                            error_class=event.error_class.value if event.error_class else None,
-                            detail=_public_trace_detail(event.detail),
-                        )
-                        for event in events
-                    ),
+                    events=combined_events,
                     route_category=result.route_category if result is not None else None,
                     capability_id=result.capability_id if result is not None else None,
                     operation=result.operation if result is not None else "",
@@ -510,35 +606,50 @@ class EllyApplication:
 
     # ---- consent, action, backup, and status ---------------------------
 
-    def list_consents(self, request: ConsentQuery | None = None) -> ApiResult[tuple[ConsentView, ...]]:
+    def list_consents(
+        self, request: ConsentQuery | None = None
+    ) -> ApiResult[tuple[ConsentView, ...]]:
         request = request or ConsentQuery()
         try:
             if not isinstance(request, ConsentQuery):
                 raise InputInvalidError("consent query is invalid")
             _require_id(request.actor_id, "actor_id")
             if self._scope.consent is None:
-                return ApiResult.failed(_failure_unavailable("consent workflow is unavailable", "consent-list"))
+                return ApiResult.failed(
+                    _failure_unavailable("consent workflow is unavailable", "consent-list")
+                )
             return ApiResult.success(
-                tuple(_consent_view(proposal) for proposal in self._scope.consent.pending(now=self._scope.clock.now()))
+                tuple(
+                    _consent_view(proposal)
+                    for proposal in self._scope.consent.pending(now=self._scope.clock.now())
+                )
             )
         except BaseException as exc:
             return ApiResult.failed(_failure(exc, "consent-list"))
 
     def decide_consent(self, request: ConsentDecisionRequest) -> ApiResult[TaskView]:
-        correlation_id = request.proposal_id if isinstance(request, ConsentDecisionRequest) else "consent-decision"
+        correlation_id = (
+            request.proposal_id
+            if isinstance(request, ConsentDecisionRequest)
+            else "consent-decision"
+        )
         try:
             if not isinstance(request, ConsentDecisionRequest):
                 raise InputInvalidError("consent decision is invalid")
             _require_id(request.proposal_id, "proposal_id")
             _require_id(request.actor_id, "actor_id")
             if self._scope.consent is None:
-                return ApiResult.failed(_failure_unavailable("consent workflow is unavailable", correlation_id))
+                return ApiResult.failed(
+                    _failure_unavailable("consent workflow is unavailable", correlation_id)
+                )
             with self._lock:
                 pending = self._pending_submissions.get(request.proposal_id)
             if pending is None:
                 return ApiResult.failed(_failure_not_found("consent proposal", request.proposal_id))
             if not request.approve:
-                self._scope.consent.deny(request.proposal_id, interface=request.actor_id, now=self._scope.clock.now())
+                self._scope.consent.deny(
+                    request.proposal_id, interface=request.actor_id, now=self._scope.clock.now()
+                )
                 with self._lock:
                     existing = self._outcomes.get(pending.proposal.task_id)
                 blocked = _blocked_after_consent_denial(
@@ -594,7 +705,11 @@ class EllyApplication:
             return ApiResult.failed(_failure(exc, correlation_id))
 
     def decide_action(self, request: ActionDecisionRequest) -> ApiResult[TaskView]:
-        correlation_id = request.confirmation_id if isinstance(request, ActionDecisionRequest) else "action-decision"
+        correlation_id = (
+            request.confirmation_id
+            if isinstance(request, ActionDecisionRequest)
+            else "action-decision"
+        )
         try:
             if not isinstance(request, ActionDecisionRequest):
                 raise InputInvalidError("action decision is invalid")
@@ -626,9 +741,7 @@ class EllyApplication:
                     TaskStatus.BLOCKED.value,
                     self._scope.clock.now(),
                 )
-                self._scope.repository.save_task_result(
-                    blocked, self._scope.clock.now()
-                )
+                self._scope.repository.save_task_result(blocked, self._scope.clock.now())
                 self._scope.audit.append(
                     AuditEvent(
                         task_id=pending.proposal.task_id,
@@ -651,9 +764,7 @@ class EllyApplication:
                     self._outcomes[pending.proposal.task_id] = ConversationOutcome(
                         result=blocked,
                         manifest=(
-                            prior.manifest
-                            if prior is not None
-                            else ContextManifest((), {}, 0, 0)
+                            prior.manifest if prior is not None else ContextManifest((), {}, 0, 0)
                         ),
                     )
                 return self.get_task(pending.proposal.task_id)
@@ -703,7 +814,9 @@ class EllyApplication:
                 raise InputInvalidError("backup request is invalid")
             _require_id(request.destination, "destination")
             if self._scope.backup is None:
-                return ApiResult.failed(_failure_unavailable("backup is unavailable", correlation_id))
+                return ApiResult.failed(
+                    _failure_unavailable("backup is unavailable", correlation_id)
+                )
             return ApiResult.success(BackupView(self._scope.backup.create(request.destination)))
         except BaseException as exc:
             return ApiResult.failed(_failure(exc, correlation_id))
@@ -715,7 +828,9 @@ class EllyApplication:
                 raise InputInvalidError("restore request is invalid")
             _require_id(request.backup_path, "backup_path")
             if self._scope.backup is None:
-                return ApiResult.failed(_failure_unavailable("backup is unavailable", correlation_id))
+                return ApiResult.failed(
+                    _failure_unavailable("backup is unavailable", correlation_id)
+                )
             self._scope.backup.restore(request.backup_path)
             return ApiResult.success(BackupView(request.backup_path, restart_required=True))
         except BaseException as exc:
@@ -741,12 +856,28 @@ class EllyApplication:
                     ),
                     capabilities=capabilities,
                     runtime=RuntimeStatusView(
-                        generalist_provider=config.generalist_provider,
-                        generalist_model_id=config.generalist_model_id,
+                        generalist_provider=config.conversation_role.provider,
+                        generalist_model_id=config.conversation_role.model_id,
                         research_provider=config.research_provider,
                         research_model_id=config.research_model_id,
                         specialist_provider=config.specialist_provider,
                         specialist_model_id=config.specialist_default_model_id,
+                        local_model_roles=tuple(
+                            LocalModelRoleView(
+                                role=role.role,
+                                profile_name=role.profile_name,
+                                provider=role.provider,
+                                model_id=role.model_id,
+                                endpoint_host=role.endpoint_host,
+                                max_output_tokens=role.max_output_tokens,
+                                timeout_seconds=role.timeout_seconds,
+                            )
+                            for role in (
+                                config.conversation_role,
+                                config.planner_role,
+                                config.synthesis_role,
+                            )
+                        ),
                     ),
                     limits=LimitsStatusView(
                         max_steps=config.max_steps,
@@ -791,7 +922,9 @@ class EllyApplication:
         with self._lock:
             self._futures[task_id] = future
             self._requests[task_id] = request
-        future.add_done_callback(lambda completed: self._on_future_done(task_id, request, completed))
+        future.add_done_callback(
+            lambda completed: self._on_future_done(task_id, request, completed)
+        )
         return future
 
     def _on_future_done(
@@ -813,18 +946,18 @@ class EllyApplication:
             # the façade lock until publication so submit_and_wait/get_task
             # cannot observe a processed-but-not-yet-published callback.
             try:
-                self._scope.repository.save_task_result(
-                    outcome.result, self._scope.clock.now()
-                )
+                self._scope.repository.save_task_result(outcome.result, self._scope.clock.now())
             except StorageFailureError:
                 logging.getLogger("elly.api").error(
                     "task result persistence failed task_id=%s", task_id
                 )
             self._outcomes[task_id] = outcome
             if outcome.consent_proposal is not None:
-                self._pending_submissions[outcome.consent_proposal.proposal_id] = _PendingSubmission(
-                    request=request,
-                    proposal=outcome.consent_proposal,
+                self._pending_submissions[outcome.consent_proposal.proposal_id] = (
+                    _PendingSubmission(
+                        request=request,
+                        proposal=outcome.consent_proposal,
+                    )
                 )
             if outcome.action_confirmation is not None:
                 self._pending_actions[outcome.action_confirmation.confirmation_id] = _PendingAction(
@@ -912,6 +1045,282 @@ def _profile_view(item) -> ProfileView:  # type: ignore[no-untyped-def]
     )
 
 
+def _latest_plan_for_task(repository: object, task_id: str) -> ExecutionPlan | None:
+    list_plans = getattr(repository, "list_plans_for_task", None)
+    if not callable(list_plans):
+        return None
+    plans = tuple(plan for plan in list_plans(task_id) if isinstance(plan, ExecutionPlan))
+    if not plans:
+        return None
+    return max(plans, key=lambda plan: (plan.revision, plan.plan_id))
+
+
+def _step_event_parts(detail: str) -> tuple[str, str]:
+    if not isinstance(detail, str):
+        return "", ""
+    values: dict[str, str] = {}
+    for item in detail.split():
+        if "=" in item:
+            key, value = item.split("=", 1)
+            values[key] = value
+    return values.get("step", ""), values.get("state", "")
+
+
+def _plan_view(repository: object, plan: ExecutionPlan) -> PlanView:
+    events_reader = getattr(repository, "plan_events", None)
+    events = tuple(events_reader(plan.plan_id)) if callable(events_reader) else ()
+    step_events: dict[str, list[object]] = {step.step_id: [] for step in plan.steps}
+    for event in events:
+        step_id, _state = _step_event_parts(getattr(event, "detail", ""))
+        if step_id in step_events:
+            step_events[step_id].append(event)
+
+    get_envelope = getattr(repository, "get_step_envelope", None)
+    get_result = getattr(repository, "get_step_result", None)
+    step_views: list[PlanStepView] = []
+    terminal_states = {
+        StepState.COMPLETED,
+        StepState.PARTIAL,
+        StepState.FAILED,
+        StepState.BLOCKED,
+        StepState.UNAVAILABLE,
+        StepState.CANCELLED,
+        StepState.SKIPPED,
+        StepState.INTERRUPTED,
+    }
+    for step in plan.steps:
+        history = step_events[step.step_id]
+        reason_code = getattr(history[-1], "reason_code", "") if history else ""
+        started_at = None
+        completed_at = None
+        for event in history:
+            _step_id, state_value = _step_event_parts(getattr(event, "detail", ""))
+            if state_value == StepState.RUNNING.value and started_at is None:
+                started_at = getattr(event, "created_at", None)
+            if state_value in {state.value for state in terminal_states}:
+                completed_at = getattr(event, "created_at", None)
+            if getattr(event, "event_type", "") == "step.result" and completed_at is None:
+                completed_at = getattr(event, "created_at", None)
+        envelope = get_envelope(plan.plan_id, step.step_id) if callable(get_envelope) else None
+        result = get_result(plan.plan_id, step.step_id) if callable(get_result) else None
+        usage = None
+        if envelope is not None and envelope.usage is not None:
+            usage = PlanUsageView(
+                input_tokens=envelope.usage.input_tokens,
+                output_tokens=envelope.usage.output_tokens,
+                latency_ms=envelope.usage.latency_ms,
+                provider_calls=envelope.usage.provider_calls,
+                cost_usd=envelope.usage.cost_usd,
+            )
+        result_ids = (
+            (f"result-{step.step_id}",) if envelope is not None or result is not None else ()
+        )
+        evidence_ids: list[str] = []
+        if envelope is not None:
+            for claim in envelope.claims:
+                evidence_ids.extend(claim.evidence_ids)
+            for support in envelope.claim_supports:
+                evidence_ids.extend(support.evidence_ids)
+        step_views.append(
+            PlanStepView(
+                step_id=step.step_id,
+                capability_id=step.capability_id,
+                operation=step.operation_id,
+                dependencies=step.dependencies,
+                state=step.state,
+                criticality=step.criticality,
+                reason_code=reason_code,
+                started_at=started_at,
+                completed_at=completed_at,
+                usage=usage,
+                result_ids=result_ids,
+                evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+            )
+        )
+    synthesis_view = None
+    get_synthesis = getattr(repository, "get_synthesis_result", None)
+    synthesis = get_synthesis(plan.plan_id) if callable(get_synthesis) else None
+    if synthesis is not None:
+        synthesis_view = PlanSynthesisView(
+            plan_id=synthesis.plan_id,
+            strategy=synthesis.strategy,
+            validation_state=synthesis.validation_state,
+            referenced_result_ids=synthesis.referenced_result_ids,
+            created_at=synthesis.created_at,
+            updated_at=synthesis.updated_at,
+        )
+    return PlanView(
+        plan_id=plan.plan_id,
+        task_id=plan.task_id,
+        revision=plan.revision,
+        status=plan.status,
+        finalization=plan.finalization,
+        steps=tuple(step_views),
+        parent_plan_id=plan.parent_plan_id,
+        catalog_version=plan.catalog_version,
+        created_at=(getattr(events[0], "created_at", None) if events else None),
+        updated_at=(getattr(events[-1], "created_at", None) if events else None),
+        synthesis=synthesis_view,
+    )
+
+
+def _plan_result_view(
+    repository: object,
+    plan: ExecutionPlan,
+    task_result: TaskResult | None,
+) -> PlanResultView | None:
+    if plan.status in {PlanStatus.PENDING, PlanStatus.RUNNING}:
+        return None
+    get_result = getattr(repository, "get_step_result", None)
+    get_envelope = getattr(repository, "get_step_envelope", None)
+    results = {
+        step.step_id: value
+        for step in plan.steps
+        if callable(get_result) and (value := get_result(plan.plan_id, step.step_id)) is not None
+    }
+    envelopes = {
+        step.step_id: value
+        for step in plan.steps
+        if callable(get_envelope)
+        and (value := get_envelope(plan.plan_id, step.step_id)) is not None
+    }
+    aggregation = aggregate_plan_results(
+        plan,
+        results,
+        envelopes,
+        states={step.step_id: step.state for step in plan.steps},
+        cancellation_accepted=plan.status is PlanStatus.CANCELLED,
+    )
+    answer = task_result.answer if task_result is not None and task_result.answer_retained else ""
+    if not answer and aggregation.eligible_step_ids:
+        answer = "\n".join(
+            aggregation.step_results[step_id].answer
+            for step_id in aggregation.eligible_step_ids
+            if aggregation.step_results.get(step_id) is not None
+            and aggregation.step_results[step_id].answer_retained
+            and aggregation.step_results[step_id].answer
+        )
+    return PlanResultView(
+        plan_id=plan.plan_id,
+        task_id=plan.task_id,
+        # The persisted plan status is the authoritative terminal value. The
+        # aggregate may have less evidence after no-store retention and must
+        # never elevate that status from partial/cancelled to completed.
+        status=plan.status,
+        finalization=plan.finalization,
+        answer=answer,
+        eligible_step_ids=aggregation.eligible_step_ids,
+        failures=aggregation.failures,
+        warnings=aggregation.warnings,
+        uncertainties=aggregation.uncertainties,
+        disagreements=tuple(
+            DisagreementView(
+                disagreement_id=item.disagreement_id,
+                claim_id=item.claim_id,
+                source_kind=item.source_kind,
+                step_ids=item.step_ids,
+                statements=item.statements,
+                evidence_ids=item.evidence_ids,
+                reason_code=item.reason_code,
+            )
+            for item in aggregation.disagreements
+        ),
+    )
+
+
+def _plan_trace_view(repository: object, plan: ExecutionPlan) -> PlanTraceView:
+    events_reader = getattr(repository, "plan_events", None)
+    events = tuple(events_reader(plan.plan_id)) if callable(events_reader) else ()
+    get_envelope = getattr(repository, "get_step_envelope", None)
+    get_result = getattr(repository, "get_step_result", None)
+    result_ids: list[str] = []
+    evidence_ids: list[str] = []
+    for step in plan.steps:
+        envelope = get_envelope(plan.plan_id, step.step_id) if callable(get_envelope) else None
+        result = get_result(plan.plan_id, step.step_id) if callable(get_result) else None
+        if envelope is not None or result is not None:
+            result_ids.append(f"result-{step.step_id}")
+        if envelope is not None:
+            for claim in envelope.claims:
+                evidence_ids.extend(claim.evidence_ids)
+            for support in envelope.claim_supports:
+                evidence_ids.extend(support.evidence_ids)
+    get_synthesis = getattr(repository, "get_synthesis_result", None)
+    synthesis = get_synthesis(plan.plan_id) if callable(get_synthesis) else None
+    synthesis_result_id = None
+    if synthesis is not None:
+        synthesis_result_id = f"synthesis-{plan.plan_id}"
+        result_ids.extend(synthesis.referenced_result_ids)
+    replacements: list[str] = []
+    authorization_ids: list[str] = []
+    for event in events:
+        fields = _safe_event_fields(getattr(event, "detail", ""))
+        replacement = fields.get("replacement_plan")
+        if replacement is not None:
+            replacements.append(replacement)
+        for key in ("authorization_id", "consent_id", "decision_id"):
+            value = fields.get(key)
+            if value is not None:
+                authorization_ids.append(value)
+    lineage = _plan_lineage(repository, plan)
+    public_events = tuple(
+        PlanTraceEventView(
+            event_type=getattr(event, "event_type", ""),
+            reason_code=getattr(event, "reason_code", ""),
+            detail=_public_trace_detail(getattr(event, "detail", "")),
+            at=getattr(event, "created_at"),
+        )
+        for event in events
+    )
+    return PlanTraceView(
+        plan_id=plan.plan_id,
+        task_id=plan.task_id,
+        events=public_events,
+        contributing_result_ids=tuple(dict.fromkeys(result_ids)),
+        contributing_evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+        authorization_ids=tuple(dict.fromkeys(authorization_ids)),
+        revision=plan.revision,
+        parent_plan_id=plan.parent_plan_id,
+        lineage_plan_ids=lineage,
+        replacement_plan_ids=tuple(dict.fromkeys(replacements)),
+        synthesis_result_id=synthesis_result_id,
+    )
+
+
+def _safe_event_fields(detail: str) -> dict[str, str]:
+    """Parse only bounded identifier-like event metadata for provenance links."""
+    if not isinstance(detail, str):
+        return {}
+    fields: dict[str, str] = {}
+    for item in detail.split():
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        if key not in {"replacement_plan", "authorization_id", "consent_id", "decision_id"}:
+            continue
+        if value and all(char.isalnum() or char in "_.:-" for char in value):
+            fields[key] = value[:128]
+    return fields
+
+
+def _plan_lineage(repository: object, plan: ExecutionPlan) -> tuple[str, ...]:
+    """Return original-to-current plan IDs without following untrusted text."""
+    values = [plan.plan_id]
+    current = plan
+    get_plan = getattr(repository, "get_plan", None)
+    seen = {plan.plan_id}
+    while current.parent_plan_id and current.parent_plan_id not in seen:
+        seen.add(current.parent_plan_id)
+        values.append(current.parent_plan_id)
+        if not callable(get_plan):
+            break
+        parent = get_plan(current.parent_plan_id)
+        if not isinstance(parent, ExecutionPlan):
+            break
+        current = parent
+    return tuple(reversed(values))
+
+
 def _task_view(
     task_id: str,
     session_id: str,
@@ -920,6 +1329,8 @@ def _task_view(
     sources: tuple[str, ...],
     action_confirmation: ActionConfirmationProposal | None = None,
     fallback_route: Route | None = None,
+    plan_view: PlanView | None = None,
+    plan_result_view: PlanResultView | None = None,
 ) -> TaskView:
     if result is None:
         return TaskView(
@@ -933,6 +1344,10 @@ def _task_view(
                 if action_confirmation is not None
                 else None
             ),
+            plan_id=plan_view.plan_id if plan_view is not None else None,
+            plan_status=plan_view.status if plan_view is not None else None,
+            plan=plan_view,
+            plan_result=plan_result_view,
         )
     return TaskView(
         task_id=task_id,
@@ -961,6 +1376,10 @@ def _task_view(
         rejected_candidate_reason_codes=result.rejected_candidate_reason_codes,
         clarification_required=result.clarification_required,
         freshness_affected_selection=result.freshness_affected_selection,
+        plan_id=plan_view.plan_id if plan_view is not None else None,
+        plan_status=plan_view.status if plan_view is not None else None,
+        plan=plan_view,
+        plan_result=plan_result_view,
     )
 
 
@@ -969,9 +1388,7 @@ def _action_confirmation_view(
 ) -> ActionConfirmationView:
     target_kind = proposal.proposal.target.kind if proposal.proposal.target else None
     target_reference = (
-        safe_action_target_reference(proposal.proposal.target)
-        if proposal.proposal.target
-        else None
+        safe_action_target_reference(proposal.proposal.target) if proposal.proposal.target else None
     )
     return ActionConfirmationView(
         confirmation_id=proposal.confirmation_id,
@@ -1021,9 +1438,7 @@ def _blocked_after_consent_denial(proposal: ConsentProposal, route: Route) -> Ta
     )
 
 
-def _blocked_after_action_denial(
-    proposal: ActionConfirmationProposal, route: Route
-) -> TaskResult:
+def _blocked_after_action_denial(proposal: ActionConfirmationProposal, route: Route) -> TaskResult:
     return TaskResult(
         task_id=proposal.task_id,
         task_status=TaskStatus.BLOCKED,
@@ -1086,5 +1501,5 @@ def _failure_internal(message: str, correlation_id: str) -> ApiFailure:
 def _public_trace_detail(detail: str) -> str:
     """Apply boundary redaction even when a nonstandard audit port is used."""
     return redact_trace_detail(detail)
-    IntentEntity,
-    RouteProposal,
+    (IntentEntity,)
+    (RouteProposal,)

@@ -111,9 +111,7 @@ class CompletionService:
     ) -> TaskResult:
         """Persist a result and return it with safe routing metadata attached."""
         durable_result = (
-            enrich_task_result(result, route_decision)
-            if route_decision is not None
-            else result
+            enrich_task_result(result, route_decision) if route_decision is not None else result
         )
         self._repository.save_task_result(durable_result, self._clock.now())
         return durable_result
@@ -182,9 +180,7 @@ class CompletionService:
     ) -> None:
         """Persist a validated local result and close its request ledger."""
         durable_result = (
-            enrich_task_result(result, route_decision)
-            if route_decision is not None
-            else result
+            enrich_task_result(result, route_decision) if route_decision is not None else result
         )
         self.emit(
             request=request,
@@ -220,9 +216,7 @@ class CompletionService:
     ) -> None:
         """Persist a non-executing clarification result and close the ledger."""
         durable_result = (
-            enrich_task_result(result, route_decision)
-            if route_decision is not None
-            else result
+            enrich_task_result(result, route_decision) if route_decision is not None else result
         )
         self.emit(
             request=request,
@@ -251,9 +245,7 @@ class CompletionService:
     ) -> None:
         """Persist a non-executing action pause and close this attempt."""
         durable_result = (
-            enrich_task_result(result, route_decision)
-            if route_decision is not None
-            else result
+            enrich_task_result(result, route_decision) if route_decision is not None else result
         )
         target = (
             f"{proposal.proposal.target.kind}={safe_action_target_reference(proposal.proposal.target)}"

@@ -37,7 +37,9 @@ class ResearchExecution:
     claim_supports: tuple[ClaimSupport, ...] = ()
 
 
-_INJECTION = re.compile(r"(?im)^.*(?:ignore\s+(?:all\s+)?(?:previous|policy)|reveal\s+(?:the\s+)?(?:key|secret)|call\s+a\s+tool).*$")
+_INJECTION = re.compile(
+    r"(?im)^.*(?:ignore\s+(?:all\s+)?(?:previous|policy)|reveal\s+(?:the\s+)?(?:key|secret)|call\s+a\s+tool).*$"
+)
 _MARKDOWN_LINK = re.compile(r"\[[^\]\r\n]{1,200}\]\(https?://[^)\s]+\)", re.IGNORECASE)
 _FREE_URL = re.compile(r"https?://[^\s)\]]+", re.IGNORECASE)
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -63,11 +65,20 @@ class ResearchPipeline:
         clock
     """
 
-    def __init__(self, *, provider: WebResearchProvider, clock: ClockPort, max_results: int,
-                 timeout_seconds: float, guardrails: GuardrailController | None = None,
-                 resolve_hosts: bool = False, evidence_token_budget: int = 256,
-                 call_cost_usd: float = 0.0, max_output_tokens: int = 2048,
-                 evidence_policy: EvidencePolicy | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        provider: WebResearchProvider,
+        clock: ClockPort,
+        max_results: int,
+        timeout_seconds: float,
+        guardrails: GuardrailController | None = None,
+        resolve_hosts: bool = False,
+        evidence_token_budget: int = 256,
+        call_cost_usd: float = 0.0,
+        max_output_tokens: int = 2048,
+        evidence_policy: EvidencePolicy | None = None,
+    ) -> None:
         self.provider = provider
         self.clock = clock
         self.max_results = max_results
@@ -80,7 +91,10 @@ class ResearchPipeline:
         self.evidence_policy = evidence_policy or EvidencePolicy()
 
     def execute(
-        self, query: str, *, request_guardrails: GuardrailController | None = None,
+        self,
+        query: str,
+        *,
+        request_guardrails: GuardrailController | None = None,
         cancellation: CancellationToken | None = None,
         current_information: bool | None = None,
     ) -> ResearchExecution:
@@ -89,9 +103,7 @@ class ResearchPipeline:
         if current_information is not None and not isinstance(current_information, bool):
             raise InputInvalidError("current_information must be a bool or null")
         freshness_required = (
-            needs_current_information(query)
-            if current_information is None
-            else current_information
+            needs_current_information(query) if current_information is None else current_information
         )
         budget = ResearchBudget(max_results=self.max_results, timeout_seconds=self.timeout_seconds)
         if cancellation is not None:
@@ -146,12 +158,14 @@ class ResearchPipeline:
             response.citations, now=self.clock.now(), resolve_hosts=self.resolve_hosts
         )
         selection = select_evidence(
-            query, validated.evidence, now=self.clock.now(),
+            query,
+            validated.evidence,
+            now=self.clock.now(),
             current_information=freshness_required,
             token_budget=self.evidence_token_budget,
         )
-        evidence = selection.selected[:self.max_results]
-        overflow = selection.selected[self.max_results:]
+        evidence = selection.selected[: self.max_results]
+        overflow = selection.selected[self.max_results :]
         rejected = (
             validated.rejected
             + selection.excluded
@@ -159,9 +173,13 @@ class ResearchPipeline:
         )
         if not evidence:
             return ResearchExecution(
-                answer="I could not verify this with publicly valid sources.", evidence=(),
-                rejected=rejected, epistemic=EpistemicStatus.UNKNOWN, claims=(),
-                provider=response.provider, model=response.model,
+                answer="I could not verify this with publicly valid sources.",
+                evidence=(),
+                rejected=rejected,
+                epistemic=EpistemicStatus.UNKNOWN,
+                claims=(),
+                provider=response.provider,
+                model=response.model,
             )
         # Only an explicit/provider-validatable claim passage can support a
         # displayed factual claim. Search metadata and arbitrary snippets remain
@@ -170,11 +188,16 @@ class ResearchPipeline:
             (eligible.evidence, eligible.evidence.supporting_passage)
             for item in evidence
             if (
-                (eligible := self.evidence_policy.evaluate(
-                    item, provider_answer=response.answer_text,
-                    now=self.clock.now(), cancellation=cancellation,
-                    current_information=freshness_required,
-                )).evidence is not None
+                (
+                    eligible := self.evidence_policy.evaluate(
+                        item,
+                        provider_answer=response.answer_text,
+                        now=self.clock.now(),
+                        cancellation=cancellation,
+                        current_information=freshness_required,
+                    )
+                ).evidence
+                is not None
                 and eligible.evidence is not None
                 and _supported_passage(eligible.evidence.supporting_passage)
             )
@@ -191,9 +214,12 @@ class ResearchPipeline:
             if not summary:
                 return ResearchExecution(
                     answer="I found source metadata, but the provider returned no safe summary or claim-supporting passage.",
-                    evidence=evidence, rejected=rejected,
-                    epistemic=EpistemicStatus.UNKNOWN, claims=(),
-                    provider=response.provider, model=response.model,
+                    evidence=evidence,
+                    rejected=rejected,
+                    epistemic=EpistemicStatus.UNKNOWN,
+                    claims=(),
+                    provider=response.provider,
+                    model=response.model,
                 )
             conflict = _has_conflict(response.answer_text)
             return ResearchExecution(
@@ -205,12 +231,12 @@ class ResearchPipeline:
                     "None — the provider returned validated source metadata, but no "
                     "claim-supporting passage."
                 ),
-                evidence=evidence, rejected=rejected,
-                epistemic=(
-                    EpistemicStatus.UNKNOWN if conflict else EpistemicStatus.INFERRED
-                ),
+                evidence=evidence,
+                rejected=rejected,
+                epistemic=(EpistemicStatus.UNKNOWN if conflict else EpistemicStatus.INFERRED),
                 claims=(),
-                provider=response.provider, model=response.model,
+                provider=response.provider,
+                model=response.model,
             )
         claims = tuple(f"{snippet} [{item.evidence_id}]" for item, snippet in supported)
         conflicted = _has_conflict(response.answer_text) or _has_structured_conflict(
@@ -218,7 +244,8 @@ class ResearchPipeline:
         )
         claim_supports = tuple(
             ClaimSupport(
-                claim_id=f"claim-{index}", text=snippet,
+                claim_id=f"claim-{index}",
+                text=snippet,
                 support_status="conflicted" if conflicted else "supported",
                 evidence_ids=(item.evidence_id,),
                 note="independent evidence values disagree" if conflicted else "",
@@ -230,9 +257,14 @@ class ResearchPipeline:
             raise MalformedResultError("research provider returned no safe cited answer")
         epistemic = EpistemicStatus.UNKNOWN if conflicted else EpistemicStatus.KNOWN
         return ResearchExecution(
-            answer=answer, evidence=tuple(item for item, _snippet in supported), rejected=rejected,
-            epistemic=epistemic, claims=claims, claim_supports=claim_supports,
-            provider=response.provider, model=response.model,
+            answer=answer,
+            evidence=tuple(item for item, _snippet in supported),
+            rejected=rejected,
+            epistemic=epistemic,
+            claims=claims,
+            claim_supports=claim_supports,
+            provider=response.provider,
+            model=response.model,
         )
 
 
@@ -266,9 +298,16 @@ def _unverified_summary(text: str) -> str:
 
 def _has_conflict(text: str) -> bool:
     lowered = text.lower()
-    return any(marker in lowered for marker in (
-        "conflict", "disagree", "different quote", "quotes vary", "prices vary",
-    ))
+    return any(
+        marker in lowered
+        for marker in (
+            "conflict",
+            "disagree",
+            "different quote",
+            "quotes vary",
+            "prices vary",
+        )
+    )
 
 
 _CURRENT_MARKET = re.compile(
@@ -279,14 +318,10 @@ _CURRENT_MARKET = re.compile(
     r"(?:\b(?:gold|silver|platinum|palladium|bitcoin|ethereum|spx|gspc|dow|nasdaq)\b|"
     r"\bs\s*&?\s*p\s*500\b)"
 )
-_LEADING_VALUE = re.compile(
-    r"(?<![A-Za-z])(?:[$€£]\s*)?(-?\d[\d,]*(?:\.\d+)?)"
-)
+_LEADING_VALUE = re.compile(r"(?<![A-Za-z])(?:[$€£]\s*)?(-?\d[\d,]*(?:\.\d+)?)")
 
 
-def _has_structured_conflict(
-    query: str, supported: tuple[tuple[EvidenceObject, str], ...]
-) -> bool:
+def _has_structured_conflict(query: str, supported: tuple[tuple[EvidenceObject, str], ...]) -> bool:
     """Detect differing primary numeric values across current-market evidence."""
     if not _CURRENT_MARKET.search(query) or len(supported) < 2:
         return False

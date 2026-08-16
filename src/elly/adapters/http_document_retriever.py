@@ -29,9 +29,7 @@ _TEXT_TYPES = ("text/", "application/json", "application/xhtml+xml")
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     """HTTPS connection whose validated numeric peer cannot be DNS-rebound."""
 
-    def __init__(
-        self, host: str, address: tuple[Any, ...], *, timeout: float
-    ) -> None:
+    def __init__(self, host: str, address: tuple[Any, ...], *, timeout: float) -> None:
         port = int(address[4][1])
         self._ssl_context = ssl.create_default_context()
         super().__init__(host, port=port, timeout=timeout, context=self._ssl_context)
@@ -53,7 +51,10 @@ class HttpDocumentRetriever:
     """Fetch public HTTPS text with pinned DNS, bounded redirects and bytes."""
 
     def __init__(
-        self, *, max_bytes: int = 512_000, max_redirects: int = 3,
+        self,
+        *,
+        max_bytes: int = 512_000,
+        max_redirects: int = 3,
         resolver: Callable[..., list[Any]] = socket.getaddrinfo,
         connection_factory: Callable[..., Any] = _PinnedHTTPSConnection,
     ) -> None:
@@ -67,7 +68,10 @@ class HttpDocumentRetriever:
         self._connection_factory = connection_factory
 
     def retrieve(
-        self, evidence: EvidenceObject, *, timeout_seconds: float,
+        self,
+        evidence: EvidenceObject,
+        *,
+        timeout_seconds: float,
         cancellation: CancellationToken | None = None,
     ) -> RetrievedDocument:
         if timeout_seconds <= 0:
@@ -78,14 +82,13 @@ class HttpDocumentRetriever:
             token.raise_if_cancelled()
             parsed, host, addresses = self._validated_target(current_url)
             address = addresses[0]
-            connection = self._connection_factory(
-                host, address, timeout=timeout_seconds
-            )
+            connection = self._connection_factory(host, address, timeout=timeout_seconds)
             token.register(connection.close)
             target = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
             try:
                 connection.request(
-                    "GET", target,
+                    "GET",
+                    target,
                     headers={
                         "Accept": "text/html,text/plain,application/xhtml+xml,application/json",
                         "Accept-Encoding": "identity",
@@ -97,13 +100,9 @@ class HttpDocumentRetriever:
                     location = response.getheader("Location")
                     response.read(1)
                     if not location:
-                        raise PermanentProviderError(
-                            "source redirect omitted a destination"
-                        )
+                        raise PermanentProviderError("source redirect omitted a destination")
                     if redirect_count >= self._max_redirects:
-                        raise PermanentProviderError(
-                            "source exceeded the redirect limit"
-                        )
+                        raise PermanentProviderError("source exceeded the redirect limit")
                     current_url = urljoin(current_url, location)
                     continue
                 if response.status < 200 or response.status >= 300:
@@ -113,9 +112,7 @@ class HttpDocumentRetriever:
                 content_type = (response.getheader("Content-Type") or "").lower()
                 media_type = content_type.split(";", 1)[0].strip()
                 if not any(media_type.startswith(prefix) for prefix in _TEXT_TYPES):
-                    raise PermanentProviderError(
-                        "source content type is not supported text"
-                    )
+                    raise PermanentProviderError("source content type is not supported text")
                 data = response.read(self._max_bytes + 1)
                 token.raise_if_cancelled()
             except CancelledError:
@@ -141,9 +138,7 @@ class HttpDocumentRetriever:
             try:
                 content = data.decode(charset)
             except (LookupError, UnicodeDecodeError) as exc:
-                raise PermanentProviderError(
-                    "source content encoding is not supported"
-                ) from exc
+                raise PermanentProviderError("source content encoding is not supported") from exc
             return RetrievedDocument(
                 canonical_url=current_url,
                 content=content,
@@ -152,9 +147,7 @@ class HttpDocumentRetriever:
             )
         raise PermanentProviderError("source exceeded the redirect limit")
 
-    def _validated_target(
-        self, url: str
-    ) -> tuple[SplitResult, str, tuple[tuple[Any, ...], ...]]:
+    def _validated_target(self, url: str) -> tuple[SplitResult, str, tuple[tuple[Any, ...], ...]]:
         parsed = urlsplit(url)
         if parsed.scheme.lower() != "https" or not parsed.hostname:
             raise UnsafeUrlError("source retrieval requires a public HTTPS URL")
@@ -186,8 +179,12 @@ class HttpDocumentRetriever:
         for address in addresses:
             ip = ipaddress.ip_address(address[4][0])
             if (
-                ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
             ):
                 raise UnsafeUrlError("source host resolves to a non-public address")
         return parsed, host, tuple(addresses)

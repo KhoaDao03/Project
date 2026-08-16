@@ -106,9 +106,7 @@ class Phase3AuthorizationTests(unittest.TestCase):
                     provider_id="fixtures",
                     model_id="fixture-web-v1",
                 ),
-                SpecialistCapabilityHandler(
-                    "coding", _manifest(), specialist
-                ),
+                SpecialistCapabilityHandler("coding", _manifest(), specialist),
             )
         )
         self.workflow = CapabilityExecutionWorkflow(
@@ -160,8 +158,18 @@ class Phase3AuthorizationTests(unittest.TestCase):
 
     def test_shared_cloud_policy_denies_both_capabilities_in_local_mode(self) -> None:
         cases = (
-            ("research-denied", "What is the latest gold price?", Route.REGISTERED_CAPABILITY, "web_research"),
-            ("specialist-denied", "Review this public Python function", Route.REGISTERED_CAPABILITY, "coding"),
+            (
+                "research-denied",
+                "What is the latest gold price?",
+                Route.REGISTERED_CAPABILITY,
+                "web_research",
+            ),
+            (
+                "specialist-denied",
+                "Review this public Python function",
+                Route.REGISTERED_CAPABILITY,
+                "coding",
+            ),
         )
         for request_id, text, route, capability_id in cases:
             with self.subTest(capability_id=capability_id):
@@ -180,8 +188,18 @@ class Phase3AuthorizationTests(unittest.TestCase):
 
     def test_shared_cloud_policy_allows_both_public_capabilities_in_cloud_mode(self) -> None:
         cases = (
-            ("research-allowed", "What is the latest gold price?", Route.REGISTERED_CAPABILITY, "web_research"),
-            ("specialist-allowed", "Review this public Python function", Route.REGISTERED_CAPABILITY, "coding"),
+            (
+                "research-allowed",
+                "What is the latest gold price?",
+                Route.REGISTERED_CAPABILITY,
+                "web_research",
+            ),
+            (
+                "specialist-allowed",
+                "Review this public Python function",
+                Route.REGISTERED_CAPABILITY,
+                "coding",
+            ),
         )
         for request_id, text, route, capability_id in cases:
             with self.subTest(capability_id=capability_id):
@@ -231,7 +249,9 @@ class Phase3AuthorizationTests(unittest.TestCase):
         decision = policy.authorize(request)
         self.assertFalse(decision.allowed)
         self.assertEqual("CLASSIFICATION_UNAVAILABLE", decision.reason_code)
-        self.assertEqual("remote_allowed", PrivacyPolicy().classify(request.payload).classification.value)
+        self.assertEqual(
+            "remote_allowed", PrivacyPolicy().classify(request.payload).classification.value
+        )
 
 
 if __name__ == "__main__":

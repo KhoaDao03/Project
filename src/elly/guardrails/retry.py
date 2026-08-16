@@ -21,7 +21,9 @@ class RetryPolicy:
         if retry_number <= 0:
             return 0.0
         rng = Random(self.seed + retry_number)
-        exponential = min(self.max_delay_seconds, self.base_delay_seconds * (2 ** (retry_number - 1)))
+        exponential = min(
+            self.max_delay_seconds, self.base_delay_seconds * (2 ** (retry_number - 1))
+        )
         return float(exponential + rng.uniform(0.0, self.jitter_seconds))
 
 

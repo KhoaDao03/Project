@@ -38,19 +38,24 @@ class ProfileItem:
 class ProfileService:
     """Thin policy facade; inferred/model-derived values have no write method."""
 
-    def __init__(
-        self, repository: "SessionRepositoryPort", clock: "ClockPort"
-    ) -> None:
+    def __init__(self, repository: "SessionRepositoryPort", clock: "ClockPort") -> None:
         self.repository = repository
         self.clock = clock
         self.degraded = False
 
     def add(
-        self, *, item_id: str, key: str, value: str,
-        sensitivity: str = "local", expires_at: datetime | None = None,
+        self,
+        *,
+        item_id: str,
+        key: str,
+        value: str,
+        sensitivity: str = "local",
+        expires_at: datetime | None = None,
     ) -> ProfileItem:
         now = self.clock.now()
-        item = ProfileItem(item_id, key, value, "owner_confirmed", sensitivity, True, now, now, expires_at)
+        item = ProfileItem(
+            item_id, key, value, "owner_confirmed", sensitivity, True, now, now, expires_at
+        )
         self.repository.add_profile_item(item)
         return item
 
@@ -70,12 +75,24 @@ class ProfileService:
             )
             return ()
 
-    def correct(self, item_id: str, *, key: str, value: str, sensitivity: str | None = None) -> ProfileItem:
+    def correct(
+        self, item_id: str, *, key: str, value: str, sensitivity: str | None = None
+    ) -> ProfileItem:
         current = self.repository.get_profile_item(item_id)
         if current is None:
             raise InputInvalidError("profile item not found")
         now = self.clock.now()
-        item = ProfileItem(item_id, key, value, current.source, sensitivity or current.sensitivity, True, current.created_at, now, current.expires_at)
+        item = ProfileItem(
+            item_id,
+            key,
+            value,
+            current.source,
+            sensitivity or current.sensitivity,
+            True,
+            current.created_at,
+            now,
+            current.expires_at,
+        )
         self.repository.update_profile_item(item)
         return item
 
@@ -83,4 +100,6 @@ class ProfileService:
         return self.repository.delete_profile_item(item_id, self.clock.now())
 
     def context_items(self) -> tuple[ProfileItem, ...]:
-        return tuple(item for item in self.list() if item.confirmed and item.sensitivity != "restricted")
+        return tuple(
+            item for item in self.list() if item.confirmed and item.sensitivity != "restricted"
+        )

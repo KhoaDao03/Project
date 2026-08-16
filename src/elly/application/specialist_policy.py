@@ -79,9 +79,7 @@ class SpecialistExecutionPolicy:
         return SpecialistPolicyDecision(False, reason_code)
 
     @staticmethod
-    def _scope_reason(
-        task: SpecialistTask, manifest: SpecialistManifest
-    ) -> str | None:
+    def _scope_reason(task: SpecialistTask, manifest: SpecialistManifest) -> str | None:
         """Return a stable denial code for clearly out-of-scope specialist work."""
         text = f"{task.goal} {task.context}".lower()
         prohibited = re.search(

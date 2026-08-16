@@ -60,7 +60,7 @@ class V15MigrationTests(unittest.TestCase):
         version = self.repository._conn.execute(
             "SELECT version FROM schema_meta WHERE id=1"
         ).fetchone()[0]
-        self.assertEqual(6, version)
+        self.assertEqual(7, version)
         self.repository.healthcheck()
 
     def test_complete_new_task_runs_on_the_migrated_database(self) -> None:

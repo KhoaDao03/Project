@@ -176,12 +176,8 @@ class CapabilityWorkflowFailureMatrixTests(unittest.TestCase):
         sink = audit or StructuredAuditLog()
         workflow = CapabilityExecutionWorkflow(
             clock=FixedClock(UTC),
-            capability_registry=CapabilityRegistry(
-                (capability,) if capability is not None else ()
-            ),
-            completion=CompletionService(
-                clock=FixedClock(UTC), repository=repo, audit=sink
-            ),
+            capability_registry=CapabilityRegistry((capability,) if capability is not None else ()),
+            completion=CompletionService(clock=FixedClock(UTC), repository=repo, audit=sink),
         )
         intent = CapabilityIntent(
             "matrix.test",

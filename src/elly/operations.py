@@ -100,7 +100,11 @@ class BackupService:
         if not blob.startswith(self.MAGIC) or len(blob) < len(self.MAGIC) + 48:
             raise StorageFailureError("invalid backup envelope")
         offset = len(self.MAGIC)
-        nonce, tag, ciphertext = blob[offset:offset + 16], blob[offset + 16:offset + 48], blob[offset + 48:]
+        nonce, tag, ciphertext = (
+            blob[offset : offset + 16],
+            blob[offset + 16 : offset + 48],
+            blob[offset + 48 :],
+        )
         expected = hmac.new(self.key, nonce + ciphertext, hashlib.sha256).digest()
         if not hmac.compare_digest(tag, expected):
             raise StorageFailureError("backup authentication failed")

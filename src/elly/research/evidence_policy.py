@@ -57,7 +57,9 @@ class EvidencePolicy:
                     evidence,
                     supporting_passage=passage,
                     validation_status="provider_passage",
-                    safety_flags=tuple(dict.fromkeys(evidence.safety_flags + ("claim_level_passage",))),
+                    safety_flags=tuple(
+                        dict.fromkeys(evidence.safety_flags + ("claim_level_passage",))
+                    ),
                 ),
                 "eligible_provider_passage",
             )
@@ -76,9 +78,7 @@ class EvidencePolicy:
         except CancelledError:
             raise
         except (OSError, ValueError):
-            return EvidenceEligibility(
-                None, f"{evidence.evidence_id}: retrieval_failed"
-            )
+            return EvidenceEligibility(None, f"{evidence.evidence_id}: retrieval_failed")
         except EllyError as exc:
             return EvidenceEligibility(None, f"{evidence.evidence_id}: {exc.error_class.value}")
         if not document.content.strip():

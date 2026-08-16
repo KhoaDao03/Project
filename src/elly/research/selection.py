@@ -13,13 +13,32 @@ _WORD = re.compile(r"[a-z0-9]{2,}", re.IGNORECASE)
 _SP500 = re.compile(r"\b(?:s\s*&\s*p|s\s+and\s+p|sp)\s*[- ]?\s*500\b", re.IGNORECASE)
 _SP500_SYMBOL = re.compile(r"\b(?:spx|gspc)\b", re.IGNORECASE)
 _STOP = {
-    "about", "according", "current", "give", "latest", "look", "now",
-    "please", "research", "right", "source", "sources", "status", "tell",
-    "the", "this", "what", "with",
+    "about",
+    "according",
+    "current",
+    "give",
+    "latest",
+    "look",
+    "now",
+    "please",
+    "research",
+    "right",
+    "source",
+    "sources",
+    "status",
+    "tell",
+    "the",
+    "this",
+    "what",
+    "with",
 }
 _CANONICAL = {
-    "indexes": "index", "indices": "index", "stocks": "stock",
-    "points": "point", "prices": "price", "values": "value",
+    "indexes": "index",
+    "indices": "index",
+    "stocks": "stock",
+    "points": "point",
+    "prices": "price",
+    "values": "value",
 }
 _MARKET_ASSET = re.compile(
     r"\b(?:sp500|spx|gspc|dow|nasdaq|gold|silver|platinum|palladium|copper|"
@@ -42,10 +61,21 @@ _NEWS_OR_COMMENTARY_PATH = re.compile(
 )
 _COMMUNITY_HOSTS = ("reddit.com", "quora.com")
 _DIRECT_MARKET_HOSTS = (
-    "spglobal.com", "cmegroup.com", "lbma.org.uk", "finance.yahoo.com",
-    "marketwatch.com", "investing.com", "kitco.com", "monex.com",
-    "findbullionprices.com", "bullionexchanges.com", "ycharts.com",
-    "cnbc.com", "nasdaq.com", "bloomberg.com", "reuters.com",
+    "spglobal.com",
+    "cmegroup.com",
+    "lbma.org.uk",
+    "finance.yahoo.com",
+    "marketwatch.com",
+    "investing.com",
+    "kitco.com",
+    "monex.com",
+    "findbullionprices.com",
+    "bullionexchanges.com",
+    "ycharts.com",
+    "cnbc.com",
+    "nasdaq.com",
+    "bloomberg.com",
+    "reuters.com",
 )
 
 
@@ -132,19 +162,17 @@ def select_evidence(
                 excluded.append(f"{item.evidence_id}: not a direct market quote source")
                 continue
         freshness_time = item.retrieved_at if market_quote else item.source_published_at
+        if current_information and freshness_time is None and now - item.retrieved_at > stale_after:
+            excluded.append(f"{item.evidence_id}: stale")
+            continue
         if (
             current_information
-            and freshness_time is None
-            and now - item.retrieved_at > stale_after
+            and freshness_time is not None
+            and now - freshness_time > stale_after
         ):
             excluded.append(f"{item.evidence_id}: stale")
             continue
-        if current_information and freshness_time is not None and now - freshness_time > stale_after:
-            excluded.append(f"{item.evidence_id}: stale")
-            continue
-        relevance = len(
-            query_terms & _terms(f"{item.title} {item.snippet} {item.url}")
-        )
+        relevance = len(query_terms & _terms(f"{item.title} {item.snippet} {item.url}"))
         if query_terms and relevance == 0:
             excluded.append(f"{item.evidence_id}: unrelated")
             continue
@@ -160,10 +188,15 @@ def select_evidence(
                 else "not_applicable"
             ),
         )
-        ranked.append((
-            market_authority, relevance, item.source_class == "primary", -index,
-            fresh_item,
-        ))
+        ranked.append(
+            (
+                market_authority,
+                relevance,
+                item.source_class == "primary",
+                -index,
+                fresh_item,
+            )
+        )
 
     selected: list[EvidenceObject] = []
     used = 0

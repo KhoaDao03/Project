@@ -18,7 +18,15 @@ class LimitPolicy:
     max_output_tokens: int = 512
 
     def __post_init__(self) -> None:
-        if min(self.max_steps, self.max_provider_calls, self.max_concurrency, self.max_output_tokens) <= 0:
+        if (
+            min(
+                self.max_steps,
+                self.max_provider_calls,
+                self.max_concurrency,
+                self.max_output_tokens,
+            )
+            <= 0
+        ):
             raise ConfigInvalidError("positive guardrail limits are required")
         if self.max_retries < 0 or self.monthly_budget_usd < 0:
             raise ConfigInvalidError("retry and budget limits must be non-negative")
@@ -42,7 +50,14 @@ class ReservationLedger:
         self._provider_calls = 0
         self._active = 0
 
-    def reserve(self, *, steps: int = 0, provider_calls: int = 0, concurrency: int = 0, output_tokens: int = 0) -> Reservation:
+    def reserve(
+        self,
+        *,
+        steps: int = 0,
+        provider_calls: int = 0,
+        concurrency: int = 0,
+        output_tokens: int = 0,
+    ) -> Reservation:
         if min(steps, provider_calls, concurrency, output_tokens) < 0:
             raise LimitExceededError("negative resource reservation")
         if output_tokens > self.policy.max_output_tokens:

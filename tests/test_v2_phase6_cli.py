@@ -130,7 +130,8 @@ class CommandRegistryTests(unittest.TestCase):
             )
         )
         output = CommandDispatcher(registry).dispatch(
-            "/probe value", CommandContext(api=object(), session=None)  # type: ignore[arg-type]
+            "/probe value",
+            CommandContext(api=object(), session=None),  # type: ignore[arg-type]
         )
         self.assertEqual("registered:value", output.text)
         self.assertIn("/probe <value>", registry.help_text())
@@ -143,9 +144,15 @@ class CommandRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             registry.register(CommandDescriptor("/one", "/one", "duplicate", handler))
         with self.assertRaises(ValueError):
-            registry.register(CommandDescriptor("/two", "/two", "duplicate alias", handler, aliases=("/alias",)))
+            registry.register(
+                CommandDescriptor("/two", "/two", "duplicate alias", handler, aliases=("/alias",))
+            )
         with self.assertRaises(ValueError):
-            registry.register(CommandDescriptor("/three", "/three", "duplicate aliases", handler, aliases=("/x", "/x")))
+            registry.register(
+                CommandDescriptor(
+                    "/three", "/three", "duplicate aliases", handler, aliases=("/x", "/x")
+                )
+            )
 
     def test_builtin_help_is_generated_from_registered_commands(self) -> None:
         registry = build_command_registry()

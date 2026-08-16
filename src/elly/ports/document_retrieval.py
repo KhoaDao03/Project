@@ -23,7 +23,10 @@ class RetrievedDocument:
 @runtime_checkable
 class DocumentRetrievalPort(Protocol):
     def retrieve(
-        self, evidence: EvidenceObject, *, timeout_seconds: float,
+        self,
+        evidence: EvidenceObject,
+        *,
+        timeout_seconds: float,
         cancellation: CancellationToken | None = None,
     ) -> RetrievedDocument:
         """Return bounded source content or raise a typed provider error."""

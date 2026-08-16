@@ -104,6 +104,40 @@ interpreter/router/catalog modules have static forbidden-literal coverage. See
 deterministic run passed 368 tests, compilation, whitespace, Ruff, and strict
 MyPy checks. See [V2_5_CLOSURE.md](v2.5/V2_5_CLOSURE.md).
 
+**V3 status:** completed and closed by owner request on 2026-08-16. All phases,
+including Phase 9 end-to-end verification, are implemented and verified. Phase 3 adds
+pure deterministic proposal-to-plan DAG validation, typed producer/consumer
+flow checks, bounded redundancy and verification policy, centrally captured
+plan limits, and additive schema-v7 atomic plan persistence. Phase 4 adds the
+separate bounded plan orchestrator/executor, persisted step transitions,
+dependency scheduling, cancellation, operation leases, and registry-backed
+capability dispatch. Phase 5 adds execution-time per-step authorization,
+derived-input reclassification, versioned typed result envelopes, legacy result
+migration, provider-exception normalization, and verified action receipts. Phase
+6 adds pure status/disagreement aggregation, deterministic direct/template
+finalization, and additive plan/result/trace views. Phase 7 adds a local-only,
+evidence-bounded synthesis port, strict reference-only drafts, deterministic
+canonical rendering, safe fallback, and persisted synthesis validation state.
+Phase 8 adds bounded one-attempt replanning with completed-step reuse,
+conservative startup recovery that never replays uncertain external work, safe
+plan/result/synthesis provenance, lineage views, and shared CLI plan commands.
+Phase 9 connected the public submission path to planning and DAG execution,
+added exact same-revision authorization resume, tightened live structured-output
+schemas, and passed 457 tests plus static and concurrency gates. Local Ollama
+planner/synthesis verification passed with `qwen3:8b`; hosted live verification
+is explicitly deferred because credentials were unavailable. See
+[PHASE_9_VERIFICATION.md](v3/PHASE_9_VERIFICATION.md) and
+[V3_CLOSURE.md](v3/V3_CLOSURE.md).
+The roles reuse one profile by default but may be upgraded separately. See
+[docs/v3/README.md](v3/README.md),
+[docs/v3/PHASE_2_LOCAL_PLANNER.md](v3/PHASE_2_LOCAL_PLANNER.md),
+[docs/v3/PHASE_3_PLAN_VALIDATION.md](v3/PHASE_3_PLAN_VALIDATION.md),
+[docs/v3/PHASE_4_EXECUTION.md](v3/PHASE_4_EXECUTION.md), and
+[docs/v3/PHASE_5_AUTHORIZATION_RESULTS.md](v3/PHASE_5_AUTHORIZATION_RESULTS.md),
+and [docs/v3/PHASE_6_AGGREGATION_FINALIZATION.md](v3/PHASE_6_AGGREGATION_FINALIZATION.md),
+and [docs/v3/PHASE_7_SYNTHESIS.md](v3/PHASE_7_SYNTHESIS.md), and
+[docs/v3/PHASE_8_REPLANNING_RECOVERY.md](v3/PHASE_8_REPLANNING_RECOVERY.md).
+
 ## 5. Users, Actors, and Use Cases
 
 | Actor | Responsibility | Boundary |
@@ -211,7 +245,11 @@ Ports/manifests for future providers/page readers do not make those capabilities
 
 ## 11. Ollama and Model Provider Configuration
 
-Provider and model are separate: `[providers].generalist` selects `ollama` or `fake`; `[models].generalist` selects the model ID. The normal default is real Ollama with `qwen3:8b`; `qwen3:14b` is opt-in via a 14B profile. There is no silent upgrade.
+Local model roles use reusable named profiles: `[local_models.profiles.*]`
+defines the provider, model, endpoint, and timeout, while
+`[local_models.roles]` binds conversation, planning, and synthesis independently.
+The normal default is real Ollama with `qwen3:8b`; `qwen3:14b` is opt-in via a
+14B profile. There is no silent upgrade.
 
 The default endpoint is `http://127.0.0.1:11434`. Ollama must be running and the configured model installed. The adapter applies local timeout/output ceilings and maps unavailable/missing-model/malformed/timeout errors to typed failures. Guardrails cap total time, calls, retries, output, and concurrency.
 
@@ -231,16 +269,16 @@ Authoritative defaults are `config.example.toml`, `.env.example`, and [config.py
 
 | Setting | Purpose/default | Security/consumer |
 |---|---|---|
-| `[providers]` generalist/research/specialists | ollama/openai_web_search/openai; fake/fixtures alternatives | composition; provider choice |
-| `[models]` generalist/research/specialist_default and specialist overrides | qwen3:8b, gpt-5.6-luna, gpt-5.6-luna | centralized model choice |
+| `[local_models.profiles.*]`, `[local_models.roles]`, `[local_models.role_limits]` | qwen_default shared by conversation/planner/synthesis; 512/1200/1600 token role ceilings | local role composition; localhost validation |
+| `[providers]` research/specialists and `[models]` research/specialist_default plus overrides | openai_web_search/openai; fake/fixtures alternatives | remote capability/provider choice |
 | `[pricing]` budget/reservation/consent max | 10 / 0.01 / 0.25 USD | reservation; price assurance open |
 | `[app]` db_path | data/elly.db; :memory: in tests | local state |
 | `[storage]` retention/backup_dir | sessions 30d, evidence 7d, audit 90d | sensitive lifecycle |
 | `[limits]` input/context/steps/calls/retries/timeouts/concurrency/queue/output | defaults in TOML | application ceilings |
-| `[generalist]`, `[research]`, `[specialists]`, `[log]` | endpoint/time/output/results/manifests/redacted level | provider and logging boundaries |
+| `[generalist]` migration keys, `[research]`, `[specialists]`, `[log]` | legacy endpoint/time/output, research limits, manifests, redacted level | compatibility and logging boundaries |
 | `OPENAI_API_KEY` | only for authorized hosted calls | secret; never log/commit |
 | `ELLY_DB_PATH`, `ELLY_LOG_LEVEL` | deployment overrides | local path/log |
-| `ELLY_GENERALIST_MODEL_ID`, `ELLY_GENERALIST_PROVIDER`, `ELLY_GENERALIST_MAX_OUTPUT_TOKENS`, `ELLY_OLLAMA_BASE_URL`, `ELLY_OLLAMA_TIMEOUT_SECONDS` | local overrides | exact localhost validation |
+| `ELLY_LOCAL_CONVERSATION_PROFILE`, `ELLY_LOCAL_PLANNER_PROFILE`, `ELLY_LOCAL_SYNTHESIS_PROFILE`, `ELLY_LOCAL_MODELS_<PROFILE>_{PROVIDER,MODEL_ID,BASE_URL,TIMEOUT_SECONDS}`, and role output-limit overrides | independent local role/profile overrides; TOML precedence is lower | exact localhost validation; legacy generalist env keys remain migration-compatible |
 | `ELLY_SPECIALIST_PROVIDER`, `ELLY_SPECIALIST_DEFAULT_MODEL_ID`, `ELLY_SPECIALIST_MANIFEST_DIR` | specialist overrides | manifests grant no tools |
 | `ELLY_RESEARCH_PROVIDER`, `ELLY_RESEARCH_MODEL_ID`, `ELLY_RESEARCH_MAX_RESULTS`, `ELLY_RESEARCH_MAX_OUTPUT_TOKENS`, `ELLY_RESEARCH_TIMEOUT_SECONDS` | research overrides | hosted boundary |
 | `ELLY_MAX_INPUT_CHARS`, `ELLY_CONTEXT_WINDOW_MESSAGES`, `ELLY_MAX_STEPS`, `ELLY_MAX_PROVIDER_CALLS`, `ELLY_MAX_RETRIES`, `ELLY_TOOL_TIMEOUT_SECONDS`, `ELLY_TOTAL_TIMEOUT_SECONDS`, `ELLY_MAX_CONCURRENCY`, `ELLY_MAX_QUEUE_SIZE` | guardrail overrides | do not weaken silently |
@@ -422,7 +460,9 @@ docs/v1.5/                     Version 1.5 requirements, design, implementation 
 
 **Does it use real Ollama?** Yes by default (`ollama`, `qwen3:8b`), with bounded live-smoke evidence; fakes are test support. See [ollama_generalist.py](../src/elly/adapters/ollama_generalist.py).
 
-**How do I switch to Ollama?** Set the generalist provider to `ollama` and model to `qwen3:8b`, ensure endpoint/model availability, and restart. See [config.py](../src/elly/config.py).
+**How do I switch to Ollama?** Set the relevant local-model profile provider to
+`ollama`, model to `qwen3:8b`, and bind the desired roles to that profile; then
+ensure endpoint/model availability and restart. See [config.py](../src/elly/config.py).
 
 **Which model is configured?** Local default `qwen3:8b`; opt-in `qwen3:14b`; hosted defaults `gpt-5.6-luna`. Availability must be checked, not inferred from IDs.
 

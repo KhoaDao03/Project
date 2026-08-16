@@ -19,7 +19,18 @@ T = TypeVar("T")
 class GuardrailController:
     """Reserves resources before calls and maps retry/timeout policy deterministically."""
 
-    def __init__(self, *, policy: LimitPolicy, tool_timeout_seconds: float, total_timeout_seconds: float, provider_call_cost_usd: float = 0.0, sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic, _cost: FakeCostLedger | None = None, _circuit: CircuitBreaker | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        policy: LimitPolicy,
+        tool_timeout_seconds: float,
+        total_timeout_seconds: float,
+        provider_call_cost_usd: float = 0.0,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        _cost: FakeCostLedger | None = None,
+        _circuit: CircuitBreaker | None = None,
+    ) -> None:
         self.policy = policy
         self.ledger = ReservationLedger(policy)
         self.cost = _cost or FakeCostLedger(policy.monthly_budget_usd)
@@ -36,15 +47,23 @@ class GuardrailController:
     def for_request(self) -> "GuardrailController":
         """Create request-scoped reservations while retaining monthly state."""
         return GuardrailController(
-            policy=self.policy, tool_timeout_seconds=self.tool_timeout_seconds,
+            policy=self.policy,
+            tool_timeout_seconds=self.tool_timeout_seconds,
             total_timeout_seconds=self.total_timeout_seconds,
-            provider_call_cost_usd=self.provider_call_cost_usd, sleep=self._sleep,
-            clock=self._clock, _cost=self.cost, _circuit=self.circuit,
+            provider_call_cost_usd=self.provider_call_cost_usd,
+            sleep=self._sleep,
+            clock=self._clock,
+            _cost=self.cost,
+            _circuit=self.circuit,
         )
 
     def execute(
-        self, operation: Callable[[], T], *, cancel: Callable[[], None] | None = None,
-        output_tokens: int = 0, cost_usd: float | None = None,
+        self,
+        operation: Callable[[], T],
+        *,
+        cancel: Callable[[], None] | None = None,
+        output_tokens: int = 0,
+        cost_usd: float | None = None,
     ) -> T:
         """Run one bounded operation with an optional provider-specific cost.
 
@@ -72,7 +91,9 @@ class GuardrailController:
                         self.cost.reserve(reserved_cost)
                         self.request_cost_usd += reserved_cost
                         value = self._run_with_timeout(
-                            operation, cancel, timeout_seconds=min(self.tool_timeout_seconds, remaining)
+                            operation,
+                            cancel,
+                            timeout_seconds=min(self.tool_timeout_seconds, remaining),
                         )
                     finally:
                         self.ledger.release(call_reservation)
@@ -83,8 +104,10 @@ class GuardrailController:
                     raise
                 except TransientProviderError:
                     self.circuit.record_failure(self._clock())
-                    if (attempt >= self.policy.max_retries
-                            or self.ledger.snapshot[1] >= self.policy.max_provider_calls):
+                    if (
+                        attempt >= self.policy.max_retries
+                        or self.ledger.snapshot[1] >= self.policy.max_provider_calls
+                    ):
                         raise
                     self.retry_count += 1
                     delay = self.retry.delay_for(attempt + 1)
@@ -95,8 +118,11 @@ class GuardrailController:
                     # Retry a timed-out operation only when the adapter exposes a
                     # cancellation hook, avoiding overlapping unknown live calls.
                     self.circuit.record_failure(self._clock())
-                    if (cancel is None or attempt >= self.policy.max_retries
-                            or self.ledger.snapshot[1] >= self.policy.max_provider_calls):
+                    if (
+                        cancel is None
+                        or attempt >= self.policy.max_retries
+                        or self.ledger.snapshot[1] >= self.policy.max_provider_calls
+                    ):
                         raise
                     self.retry_count += 1
                     delay = self.retry.delay_for(attempt + 1)
@@ -108,8 +134,11 @@ class GuardrailController:
             self.ledger.release(reservation)
 
     def _run_with_timeout(
-        self, operation: Callable[[], T], cancel: Callable[[], None] | None,
-        *, timeout_seconds: float,
+        self,
+        operation: Callable[[], T],
+        cancel: Callable[[], None] | None,
+        *,
+        timeout_seconds: float,
     ) -> T:
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="elly-guardrail")
         future = executor.submit(operation)

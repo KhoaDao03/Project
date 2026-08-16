@@ -34,8 +34,17 @@ from ..specialists.contracts import SpecialistResult, SpecialistTask
 
 class OpenAISpecialistProvider:
     """Normalize one tool-free OpenAI Responses call into a SpecialistResult."""
-    def __init__(self, *, api_key: str | None = None, base_url: str = "https://api.openai.com/v1", cost_per_call_usd: float = 0.0) -> None:
-        self._key = (api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")).strip()
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str = "https://api.openai.com/v1",
+        cost_per_call_usd: float = 0.0,
+    ) -> None:
+        self._key = (
+            api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
+        ).strip()
         self.base_url = base_url.rstrip("/")
         self.cost_per_call_usd = cost_per_call_usd
         self.last_usage: dict[str, int] = {}
@@ -55,7 +64,9 @@ class OpenAISpecialistProvider:
         detail = "" if self._key else "OPENAI_API_KEY not configured"
         return HealthReport(component="specialist(openai)", state=state, detail=detail)
 
-    def execute(self, task: SpecialistTask, *, model: str, prompt_version: str, output_limit: int) -> SpecialistResult:
+    def execute(
+        self, task: SpecialistTask, *, model: str, prompt_version: str, output_limit: int
+    ) -> SpecialistResult:
         """Run one bounded, tool-free, non-stored structured specialist call."""
         if not self._key:
             raise PermanentProviderError("OpenAI specialist capability is unavailable")
@@ -67,8 +78,12 @@ class OpenAISpecialistProvider:
         schema = {
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["known", "inferred", "unknown", "blocked", "partial"]},
-                "answer": {"type": "string"}, "assumptions": {"type": "array", "items": {"type": "string"}},
+                "status": {
+                    "type": "string",
+                    "enum": ["known", "inferred", "unknown", "blocked", "partial"],
+                },
+                "answer": {"type": "string"},
+                "assumptions": {"type": "array", "items": {"type": "string"}},
                 "uncertainties": {"type": "array", "items": {"type": "string"}},
                 "key_evidence": {"type": "array", "items": {"type": "string"}},
                 "sources": {"type": "array", "items": {"type": "string"}},
@@ -76,7 +91,10 @@ class OpenAISpecialistProvider:
                 "action_proposal": {
                     "type": ["object", "null"],
                     "properties": {
-                        "category": {"type": "string", "enum": [item.value for item in ActionCategory]},
+                        "category": {
+                            "type": "string",
+                            "enum": [item.value for item in ActionCategory],
+                        },
                         "target": {
                             "type": ["object", "null"],
                             "properties": {
@@ -86,29 +104,74 @@ class OpenAISpecialistProvider:
                             "required": ["kind", "reference"],
                             "additionalProperties": False,
                         },
-                        "side_effect": {"type": "string", "enum": [item.value for item in ActionSideEffect]},
-                        "reversibility": {"type": "string", "enum": [item.value for item in ActionReversibility]},
-                        "data_sensitivity": {"type": "string", "enum": [item.value for item in ActionDataSensitivity]},
-                        "impact_flags": {"type": "array", "items": {"type": "string", "enum": [item.value for item in ActionImpactFlag]}},
+                        "side_effect": {
+                            "type": "string",
+                            "enum": [item.value for item in ActionSideEffect],
+                        },
+                        "reversibility": {
+                            "type": "string",
+                            "enum": [item.value for item in ActionReversibility],
+                        },
+                        "data_sensitivity": {
+                            "type": "string",
+                            "enum": [item.value for item in ActionDataSensitivity],
+                        },
+                        "impact_flags": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": [item.value for item in ActionImpactFlag],
+                            },
+                        },
                         "confirmation_required": {"type": "boolean"},
-                        "source": {"type": "string", "enum": [item.value for item in ActionProposalSource]},
+                        "source": {
+                            "type": "string",
+                            "enum": [item.value for item in ActionProposalSource],
+                        },
                     },
                     "required": [
-                        "category", "target", "side_effect", "reversibility",
-                        "data_sensitivity", "impact_flags", "confirmation_required", "source",
+                        "category",
+                        "target",
+                        "side_effect",
+                        "reversibility",
+                        "data_sensitivity",
+                        "impact_flags",
+                        "confirmation_required",
+                        "source",
                     ],
                     "additionalProperties": False,
                 },
             },
-            "required": ["status", "answer", "assumptions", "uncertainties", "key_evidence", "sources", "recommended_action", "action_proposal"],
+            "required": [
+                "status",
+                "answer",
+                "assumptions",
+                "uncertainties",
+                "key_evidence",
+                "sources",
+                "recommended_action",
+                "action_proposal",
+            ],
             "additionalProperties": False,
         }
         body = {
-            "model": model, "input": prompt, "store": False, "max_output_tokens": output_limit,
-            "text": {"format": {"type": "json_schema", "name": "specialist_result", "strict": True, "schema": schema}},
+            "model": model,
+            "input": prompt,
+            "store": False,
+            "max_output_tokens": output_limit,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "specialist_result",
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
         }
         request = urllib.request.Request(
-            self.base_url + "/responses", data=json.dumps(body).encode(), method="POST",
+            self.base_url + "/responses",
+            data=json.dumps(body).encode(),
+            method="POST",
             headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
         )
         try:
@@ -122,9 +185,13 @@ class OpenAISpecialistProvider:
                         self._active_response = None
         except urllib.error.HTTPError as exc:
             if exc.code in {401, 403}:
-                raise AuthenticationProviderError("OpenAI specialist authentication failed") from exc
+                raise AuthenticationProviderError(
+                    "OpenAI specialist authentication failed"
+                ) from exc
             if exc.code == 404:
-                raise ModelUnavailableError("configured OpenAI specialist model is unavailable") from exc
+                raise ModelUnavailableError(
+                    "configured OpenAI specialist model is unavailable"
+                ) from exc
             if exc.code == 429:
                 error_code = _http_error_code(exc)
                 if error_code == "insufficient_quota":
@@ -142,7 +209,9 @@ class OpenAISpecialistProvider:
         except OSError as exc:
             raise TransientProviderError("OpenAI specialist is unavailable") from exc
         usage = payload.get("usage", {})
-        self.last_usage = {key: int(value) for key, value in usage.items() if isinstance(value, (int, float))}
+        self.last_usage = {
+            key: int(value) for key, value in usage.items() if isinstance(value, (int, float))
+        }
         self.last_cost_usd = self.cost_per_call_usd
         raw = _output_text(payload)
         try:
@@ -156,11 +225,14 @@ class OpenAISpecialistProvider:
                     not isinstance(item, str) for item in value[field]
                 ):
                     raise TypeError(f"specialist {field} must be an array of strings")
-            if value.get("recommended_action") is not None and not isinstance(value["recommended_action"], str):
+            if value.get("recommended_action") is not None and not isinstance(
+                value["recommended_action"], str
+            ):
                 raise TypeError("specialist recommended_action must be text or null")
             action_proposal = _parse_action_proposal(value.get("action_proposal"))
             result = SpecialistResult(
-                status=value["status"], answer=value["answer"],
+                status=value["status"],
+                answer=value["answer"],
                 assumptions=tuple(value["assumptions"]),
                 uncertainties=tuple(value["uncertainties"]),
                 key_evidence=tuple(value["key_evidence"]),
@@ -170,7 +242,9 @@ class OpenAISpecialistProvider:
                 truncated=payload.get("status") == "incomplete",
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise MalformedResultError("OpenAI specialist returned invalid structured output") from exc
+            raise MalformedResultError(
+                "OpenAI specialist returned invalid structured output"
+            ) from exc
         return result
 
 

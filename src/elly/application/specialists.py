@@ -46,17 +46,20 @@ class SpecialistWorkflow:
         consent_max_cost_usd
     """
 
-    def __init__(self, *, provider: SpecialistProviderPort,
-                 policy: SpecialistExecutionPolicy | None = None,
-                 max_output_tokens: int = 2000,
-                 guardrails: GuardrailController | None = None,
-                 provider_name: str = "openai", call_cost_usd: float = 0.0,
-                 consent_max_cost_usd: float = 0.25,
-                 action_policy: ActionAuthorizationPolicy | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        provider: SpecialistProviderPort,
+        policy: SpecialistExecutionPolicy | None = None,
+        max_output_tokens: int = 2000,
+        guardrails: GuardrailController | None = None,
+        provider_name: str = "openai",
+        call_cost_usd: float = 0.0,
+        consent_max_cost_usd: float = 0.25,
+        action_policy: ActionAuthorizationPolicy | None = None,
+    ) -> None:
         self.provider = provider
-        self.policy = policy or SpecialistExecutionPolicy(
-            max_output_tokens=max_output_tokens
-        )
+        self.policy = policy or SpecialistExecutionPolicy(max_output_tokens=max_output_tokens)
         self.guardrails = guardrails
         self.provider_name = provider_name
         self.call_cost_usd = call_cost_usd
@@ -65,9 +68,13 @@ class SpecialistWorkflow:
         self.consent_max_cost_usd = consent_max_cost_usd
         self.action_policy = action_policy or ActionAuthorizationPolicy()
 
-    def execute(self, *, request: SpecialistPolicyRequest,
-                request_guardrails: GuardrailController | None = None,
-                cancellation: CancellationToken | None = None) -> SpecialistExecution:
+    def execute(
+        self,
+        *,
+        request: SpecialistPolicyRequest,
+        request_guardrails: GuardrailController | None = None,
+        cancellation: CancellationToken | None = None,
+    ) -> SpecialistExecution:
         """Execute one specialist request after specialist policy approval."""
         decision = self.policy.evaluate(request)
         if not decision.allowed:
@@ -84,16 +91,21 @@ class SpecialistWorkflow:
                 prompt_version=manifest.prompt_version,
                 output_limit=decision.output_limit,
             )
+
         try:
             if cancellation is not None:
                 cancellation.register(self.provider.cancel)
             if request_guardrails is None and self.guardrails is not None:
                 request_guardrails = self.guardrails.for_request()
-            result = request_guardrails.execute(
-                operation,
-                output_tokens=decision.output_limit,
-                cost_usd=self.call_cost_usd,
-            ) if request_guardrails else operation()
+            result = (
+                request_guardrails.execute(
+                    operation,
+                    output_tokens=decision.output_limit,
+                    cost_usd=self.call_cost_usd,
+                )
+                if request_guardrails
+                else operation()
+            )
         except ValueError as exc:
             raise MalformedResultError("specialist provider returned malformed output") from exc
         except EllyError as exc:
@@ -114,6 +126,4 @@ class SpecialistWorkflow:
                 raise PermissionDeniedError(
                     f"specialist action proposal rejected: {assessment.reason_code}"
                 )
-        return SpecialistExecution(
-            result=validate_result(result), action_proposal=action_proposal
-        )
+        return SpecialistExecution(result=validate_result(result), action_proposal=action_proposal)

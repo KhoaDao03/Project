@@ -170,11 +170,15 @@ class V2ApplicationApiTests(unittest.TestCase):
         history = self.api.list_history(HistoryQuery())
         self.assertTrue(history.is_success)
         assert history.value is not None
-        self.assertTrue(any(item.session_id == session.session_id for item in history.value.sessions))
+        self.assertTrue(
+            any(item.session_id == session.session_id for item in history.value.sessions)
+        )
 
     def test_submit_uses_persisted_session_mode_not_client_supplied_state(self) -> None:
         created = self.api.create_session(
-            CreateSessionRequest(cloud_mode=CloudMode.LOCAL_ONLY, persistence_mode=PersistenceMode.NO_STORE)
+            CreateSessionRequest(
+                cloud_mode=CloudMode.LOCAL_ONLY, persistence_mode=PersistenceMode.NO_STORE
+            )
         )
         assert created.value is not None
         result = self.api.submit_and_wait(
@@ -235,9 +239,7 @@ class V2ApplicationApiTests(unittest.TestCase):
                 proposals = self.api.list_consents().value
                 assert proposals is not None
                 proposal = next(
-                    item
-                    for item in proposals
-                    if item.task_id == f"task-api-consent-stress-{index}"
+                    item for item in proposals if item.task_id == f"task-api-consent-stress-{index}"
                 )
                 decided = self.api.decide_consent(
                     ConsentDecisionRequest(proposal.proposal_id, approve=True)

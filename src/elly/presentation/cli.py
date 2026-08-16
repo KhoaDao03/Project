@@ -94,9 +94,7 @@ class Cli:
         return CommandContext(
             api=self.api,
             session=self.session,
-            pending_consent=(
-                self.pending_consent[1] if self.pending_consent is not None else None
-            ),
+            pending_consent=(self.pending_consent[1] if self.pending_consent is not None else None),
             pending_action=self.pending_action,
             last_task_id=self.last_task_id,
             help_text=self.registry.help_text,

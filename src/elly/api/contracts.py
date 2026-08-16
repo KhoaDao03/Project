@@ -27,6 +27,7 @@ from ..domain.enums import (
     TaskStatus,
     ValidationStatus,
 )
+from ..planning.contracts import FinalizationStrategy, PlanStatus, StepCriticality, StepState
 
 T = TypeVar("T")
 IntentValue = str | int | float | bool | None
@@ -173,6 +174,134 @@ class TaskView:
     rejected_candidate_reason_codes: tuple[str, ...] = ()
     clarification_required: bool = False
     freshness_affected_selection: bool = False
+    # Additive V3 plan/result views. Existing V2/V2.5 fields remain the
+    # compatibility surface for clients that do not request plan details.
+    plan_id: str | None = None
+    plan_status: PlanStatus | None = None
+    plan: "PlanView | None" = None
+    plan_result: "PlanResultView | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanUsageView:
+    """Safe provider-neutral usage metadata for one plan step."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: int = 0
+    provider_calls: int = 0
+    cost_usd: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class PlanStepView:
+    """Bounded public view of one validated plan step."""
+
+    step_id: str
+    capability_id: str
+    operation: str
+    dependencies: tuple[str, ...]
+    state: StepState
+    criticality: StepCriticality
+    reason_code: str = ""
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    usage: PlanUsageView | None = None
+    result_ids: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DisagreementView:
+    """Public, non-resolving view of conflicting specialist findings."""
+
+    disagreement_id: str
+    claim_id: str
+    source_kind: str
+    step_ids: tuple[str, ...]
+    statements: tuple[str, ...]
+    evidence_ids: tuple[str, ...] = ()
+    reason_code: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PlanSynthesisView:
+    """Safe metadata for a retained local-synthesis record."""
+
+    plan_id: str
+    strategy: FinalizationStrategy
+    validation_state: str
+    referenced_result_ids: tuple[str, ...]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PlanView:
+    """Plan identity, status, finalization strategy, and bounded step views."""
+
+    plan_id: str
+    task_id: str
+    revision: int
+    status: PlanStatus
+    finalization: FinalizationStrategy
+    steps: tuple[PlanStepView, ...]
+    parent_plan_id: str | None = None
+    catalog_version: str = ""
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    synthesis: PlanSynthesisView | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanResultView:
+    """Additive result summary that retains plan status and conflicts."""
+
+    plan_id: str
+    task_id: str
+    status: PlanStatus
+    finalization: FinalizationStrategy
+    answer: str = ""
+    eligible_step_ids: tuple[str, ...] = ()
+    failures: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    uncertainties: tuple[str, ...] = ()
+    disagreements: tuple[DisagreementView, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PlanQuery:
+    plan_id: str
+    actor_id: str = "owner"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanTraceQuery:
+    plan_id: str
+    actor_id: str = "owner"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanTraceEventView:
+    event_type: str
+    reason_code: str
+    detail: str
+    at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PlanTraceView:
+    plan_id: str
+    task_id: str
+    events: tuple[PlanTraceEventView, ...]
+    contributing_result_ids: tuple[str, ...] = ()
+    contributing_evidence_ids: tuple[str, ...] = ()
+    authorization_ids: tuple[str, ...] = ()
+    revision: int = 0
+    parent_plan_id: str | None = None
+    lineage_plan_ids: tuple[str, ...] = ()
+    replacement_plan_ids: tuple[str, ...] = ()
+    synthesis_result_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +478,19 @@ class CapabilityStatusView:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalModelRoleView:
+    """Effective non-secret configuration for one local-model role."""
+
+    role: str
+    profile_name: str
+    provider: str
+    model_id: str
+    endpoint_host: str
+    max_output_tokens: int
+    timeout_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeStatusView:
     """Safe provider/model labels used by presentation status views."""
 
@@ -358,6 +500,7 @@ class RuntimeStatusView:
     research_model_id: str
     specialist_provider: str
     specialist_model_id: str
+    local_model_roles: tuple[LocalModelRoleView, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

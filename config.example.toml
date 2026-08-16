@@ -1,20 +1,17 @@
-# Elly — development configuration (M2 real local generalist).
+# Elly — development configuration (V3 local model roles).
 #
 # Copy to `config.local.toml` (gitignored) and adjust locally.
 # Load order (see src/elly/config.py): built-in defaults -> this TOML -> ELLY_* env vars.
 #
 # Do not add API keys here — secrets belong in the OS/environment mechanism only.
 
-# Operational provider, model, and price selection lives only in these three
-# tables. Capability sections below contain behavior/limits, not duplicate model
-# choices. Change these values, restart Elly, and every route uses them.
+# Remote provider, model, and price selection lives in these tables. Local
+# conversation, planning, and synthesis selection is defined in [local_models].
 [providers]
-generalist = "ollama"                 # "ollama" or "fake"
 research = "openai_web_search"       # "openai_web_search" or "fixtures"
 specialists = "openai"               # "openai" or "fake"
 
 [models]
-generalist = "qwen3:8b"
 research = "gpt-5.6-luna"
 specialist_default = "gpt-5.6-luna"
 
@@ -23,6 +20,22 @@ specialist_default = "gpt-5.6-luna"
 [models.specialists]
 # coding = "gpt-5.6-terra"
 # research = "gpt-5.6-luna"
+
+[local_models.profiles.qwen_default]
+provider = "ollama"
+model_id = "qwen3:8b"
+base_url = "http://127.0.0.1:11434"
+timeout_seconds = 120
+
+[local_models.roles]
+conversation = "qwen_default"
+planner = "qwen_default"
+synthesis = "qwen_default"
+
+[local_models.role_limits]
+conversation_max_output_tokens = 512
+planner_max_output_tokens = 1200
+synthesis_max_output_tokens = 1600
 
 [pricing]
 monthly_budget_usd = 10
@@ -58,17 +71,26 @@ specialist_max_output_tokens = 2000
 context_window_messages = 20
 # M3 hard guardrails. These are application-enforced, not model instructions.
 max_steps = 6
-max_provider_calls = 2
+max_provider_calls = 3
 max_retries = 1
 tool_timeout_seconds = 60
-total_timeout_seconds = 120
-max_concurrency = 1
+# Three sequential V3 stages may each reserve the 60-second step ceiling.
+total_timeout_seconds = 180
+max_concurrency = 2
 max_queue_size = 1
 
-[generalist]
-base_url = "http://127.0.0.1:11434"
-timeout_seconds = 120
-max_output_tokens = 512
+[orchestration]
+# V3 validated-plan ceilings. These may narrow the global limits above but may
+# not silently expand them.
+max_plan_steps = 5
+max_specialist_executions = 2
+max_research_executions = 1
+max_synthesis_executions = 1
+max_replans = 1
+max_parallel_steps = 2
+recursive_planning = false
+specialist_delegation = false
+automatic_replanning = true
 
 [specialists]
 manifest_dir = "config/specialists"

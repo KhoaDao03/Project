@@ -52,10 +52,14 @@ class CentralizedConfigIntegrationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             names = (
-                "ELLY_GENERALIST_PROVIDER", "ELLY_GENERALIST_MODEL_ID",
-                "ELLY_RESEARCH_PROVIDER", "ELLY_RESEARCH_MODEL_ID",
-                "ELLY_SPECIALIST_PROVIDER", "ELLY_SPECIALIST_DEFAULT_MODEL_ID",
-                "ELLY_MONTHLY_BUDGET_USD", "ELLY_REMOTE_CALL_RESERVATION_USD",
+                "ELLY_GENERALIST_PROVIDER",
+                "ELLY_GENERALIST_MODEL_ID",
+                "ELLY_RESEARCH_PROVIDER",
+                "ELLY_RESEARCH_MODEL_ID",
+                "ELLY_SPECIALIST_PROVIDER",
+                "ELLY_SPECIALIST_DEFAULT_MODEL_ID",
+                "ELLY_MONTHLY_BUDGET_USD",
+                "ELLY_REMOTE_CALL_RESERVATION_USD",
             )
             saved = {name: os.environ.pop(name, None) for name in names}
             app = None
@@ -66,8 +70,12 @@ class CentralizedConfigIntegrationTests(unittest.TestCase):
                 self.assertIsInstance(app.specialist_workflow.provider, FakeSpecialistProvider)
                 self.assertEqual(app.config.generalist_model_id, "local-central")
                 self.assertEqual(app.config.research_model_id, "research-central")
-                self.assertEqual(app.specialist_registry.get("coding").provider_model, "coding-central")
-                self.assertEqual(app.specialist_registry.get("research").provider_model, "specialist-central")
+                self.assertEqual(
+                    app.specialist_registry.get("coding").provider_model, "coding-central"
+                )
+                self.assertEqual(
+                    app.specialist_registry.get("research").provider_model, "specialist-central"
+                )
                 self.assertIsNotNone(app.capability_registry.get("stock_analysis"))
                 self.assertEqual(app.guardrails.cost.budget_usd, 9)
                 # Fake/local routes cost zero even though the remote reservation

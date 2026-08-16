@@ -82,19 +82,12 @@ class SpecialistManifest:
             not isinstance(operation, OperationIntentContract)
             for operation in self.routing_operations
         ):
-            raise ConfigInvalidError(
-                f"specialist {self.id} routing operations must be typed"
-            )
-        operation_ids = tuple(
-            operation.operation_id for operation in self.routing_operations
-        )
+            raise ConfigInvalidError(f"specialist {self.id} routing operations must be typed")
+        operation_ids = tuple(operation.operation_id for operation in self.routing_operations)
         if len(set(operation_ids)) != len(operation_ids):
-            raise ConfigInvalidError(
-                f"specialist {self.id} routing operation IDs must be unique"
-            )
+            raise ConfigInvalidError(f"specialist {self.id} routing operation IDs must be unique")
         if any(
-            operation.effect is not ActionCategory.NONE
-            for operation in self.routing_operations
+            operation.effect is not ActionCategory.NONE for operation in self.routing_operations
         ):
             raise ConfigInvalidError(
                 f"specialist {self.id} routing operations cannot declare side effects"
@@ -103,6 +96,4 @@ class SpecialistManifest:
             not set(operation.accepted_inputs) <= self.accepted_inputs
             for operation in self.routing_operations
         ):
-            raise ConfigInvalidError(
-                f"specialist {self.id} routing inputs exceed accepted_inputs"
-            )
+            raise ConfigInvalidError(f"specialist {self.id} routing inputs exceed accepted_inputs")

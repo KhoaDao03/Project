@@ -39,7 +39,7 @@ def _request(
         purpose="research",
         consent=consent,
         approval_id=approval_id,
-        max_cost=.25,
+        max_cost=0.25,
         now=UTC,
         capability_available=capability_available,
     )

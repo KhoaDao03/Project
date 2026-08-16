@@ -81,9 +81,12 @@ class V2InterfaceParityTests(unittest.TestCase):
             task_id = accepted.value.task_id
             status = adapter.status(task_id)
             for _ in range(20):
-                if status.is_success and status.value is not None and status.value.status.value in {
-                    "completed", "failed", "blocked", "partial", "cancelled"
-                }:
+                if (
+                    status.is_success
+                    and status.value is not None
+                    and status.value.status.value
+                    in {"completed", "failed", "blocked", "partial", "cancelled"}
+                ):
                     break
                 time.sleep(0.01)
                 status = adapter.status(task_id)
@@ -130,7 +133,11 @@ class V2InterfaceParityTests(unittest.TestCase):
             status = adapter.status(task_id)
             for _ in range(50):
                 if status.value is not None and status.value.status.value in {
-                    "completed", "failed", "blocked", "partial", "cancelled"
+                    "completed",
+                    "failed",
+                    "blocked",
+                    "partial",
+                    "cancelled",
                 }:
                     break
                 time.sleep(0.01)

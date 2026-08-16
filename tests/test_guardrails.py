@@ -27,13 +27,17 @@ class _Clock:
 
 class LimitLedgerTests(unittest.TestCase):
     def test_boundary_at_limit_succeeds_above_limit_fails(self) -> None:
-        ledger = ReservationLedger(LimitPolicy(max_steps=2, max_provider_calls=2, max_concurrency=1))
+        ledger = ReservationLedger(
+            LimitPolicy(max_steps=2, max_provider_calls=2, max_concurrency=1)
+        )
         ledger.reserve(steps=2)
         with self.assertRaises(LimitExceededError):
             ledger.reserve(steps=1)
 
     def test_concurrency_reservation_is_atomic(self) -> None:
-        ledger = ReservationLedger(LimitPolicy(max_steps=10, max_provider_calls=10, max_concurrency=1))
+        ledger = ReservationLedger(
+            LimitPolicy(max_steps=10, max_provider_calls=10, max_concurrency=1)
+        )
         barrier = threading.Barrier(2)
         results: list[str] = []
 
@@ -134,8 +138,10 @@ class RetryCircuitCostTests(unittest.TestCase):
 
         controller = GuardrailController(
             policy=LimitPolicy(max_provider_calls=2, max_retries=1, monthly_budget_usd=1),
-            tool_timeout_seconds=1, total_timeout_seconds=2,
-            provider_call_cost_usd=0.25, sleep=lambda _delay: None,
+            tool_timeout_seconds=1,
+            total_timeout_seconds=2,
+            provider_call_cost_usd=0.25,
+            sleep=lambda _delay: None,
         )
         self.assertEqual("ok", controller.execute(operation))
         self.assertEqual(0.5, controller.request_cost_usd)
@@ -144,7 +150,8 @@ class RetryCircuitCostTests(unittest.TestCase):
     def test_rejected_cost_reservation_does_not_reduce_prior_spend(self) -> None:
         controller = GuardrailController(
             policy=LimitPolicy(monthly_budget_usd=0.25),
-            tool_timeout_seconds=1, total_timeout_seconds=1,
+            tool_timeout_seconds=1,
+            total_timeout_seconds=1,
             provider_call_cost_usd=0.25,
         )
         self.assertEqual("ok", controller.execute(lambda: "ok"))
@@ -190,7 +197,9 @@ class RetryCircuitCostTests(unittest.TestCase):
 
         controller = GuardrailController(
             policy=LimitPolicy(max_provider_calls=2, max_retries=1),
-            tool_timeout_seconds=1, total_timeout_seconds=2, sleep=lambda _delay: None,
+            tool_timeout_seconds=1,
+            total_timeout_seconds=2,
+            sleep=lambda _delay: None,
         )
         with self.assertRaises(ProviderTimeoutError):
             controller.execute(timed_out, cancel=lambda: None)
@@ -245,12 +254,15 @@ class RetryCircuitCostTests(unittest.TestCase):
     def test_nested_research_uses_callers_shared_request_ledger(self) -> None:
         controller = GuardrailController(
             policy=LimitPolicy(max_provider_calls=1),
-            tool_timeout_seconds=1, total_timeout_seconds=1,
+            tool_timeout_seconds=1,
+            total_timeout_seconds=1,
         )
         controller.ledger.reserve(provider_calls=1)
         pipeline = ResearchPipeline(
-            provider=FixtureWebResearchProvider(), clock=_Clock(),
-            max_results=1, timeout_seconds=1,
+            provider=FixtureWebResearchProvider(),
+            clock=_Clock(),
+            max_results=1,
+            timeout_seconds=1,
         )
         with self.assertRaises(LimitExceededError):
             pipeline.execute("latest public result", request_guardrails=controller)

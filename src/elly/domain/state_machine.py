@@ -34,9 +34,7 @@ _ALLOWED: dict[TaskStatus, frozenset[TaskStatus]] = {
         }
     ),
     TaskStatus.AWAITING_CONSENT: frozenset({TaskStatus.RUNNING, TaskStatus.BLOCKED}),
-    TaskStatus.AWAITING_CONFIRMATION: frozenset(
-        {TaskStatus.RUNNING, TaskStatus.BLOCKED}
-    ),
+    TaskStatus.AWAITING_CONFIRMATION: frozenset({TaskStatus.RUNNING, TaskStatus.BLOCKED}),
     # Terminal states have no outgoing transitions.
     TaskStatus.COMPLETED: frozenset(),
     TaskStatus.PARTIAL: frozenset(),
@@ -48,9 +46,7 @@ _ALLOWED: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.INTERRUPTED: frozenset(),
 }
 
-TERMINAL: frozenset[TaskStatus] = frozenset(
-    s for s, nexts in _ALLOWED.items() if not nexts
-)
+TERMINAL: frozenset[TaskStatus] = frozenset(s for s, nexts in _ALLOWED.items() if not nexts)
 
 
 class IllegalTransitionError(EllyError):

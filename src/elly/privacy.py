@@ -38,13 +38,13 @@ class ClassificationDecision:
 
 
 _SECRET = re.compile(r"(?i)(api[_ -]?key|secret|password|token|-----begin .*private key-----)")
-_SECRET_VALUE = re.compile(
-    r"(?i)\b(api[_ -]?key|secret|password|token)\b\s*[:=]\s*([^\s,;]+)"
-)
+_SECRET_VALUE = re.compile(r"(?i)\b(api[_ -]?key|secret|password|token)\b\s*[:=]\s*([^\s,;]+)")
 _PRIVATE_KEY = re.compile(
     r"(?is)-----begin [^-\r\n]*private key-----.*?-----end [^-\r\n]*private key-----"
 )
-_LOCAL = re.compile(r"(?i)\b(my|mine|private|personal|internal|confidential|home|family|employee|client)\b")
+_LOCAL = re.compile(
+    r"(?i)\b(my|mine|private|personal|internal|confidential|home|family|employee|client)\b"
+)
 _PUBLIC = re.compile(
     r"(?i)\b(public|open[ -]?source|published|official|documentation|rfc|"
     r"current|latest|weather|news|stock[ -]?market|market[ -]?index|"
@@ -101,6 +101,9 @@ class ConsentProposal:
     created_at: datetime
     expires_at: datetime
     capability_id: str = ""
+    plan_id: str = ""
+    step_id: str = ""
+    operation: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,23 +126,46 @@ class ConsentWorkflow:
         self._approvals: dict[str, Approval] = {}
         self._decided: set[str] = set()
 
-    def propose(self, *, task_id: str, provider: str, model: str, purpose: str,
-                payload: str, categories: tuple[str, ...], max_cost: float,
-                capability_id: str = "",
-                now: datetime | None = None) -> ConsentProposal:
+    def propose(
+        self,
+        *,
+        task_id: str,
+        provider: str,
+        model: str,
+        purpose: str,
+        payload: str,
+        categories: tuple[str, ...],
+        max_cost: float,
+        capability_id: str = "",
+        plan_id: str = "",
+        step_id: str = "",
+        operation: str = "",
+        now: datetime | None = None,
+    ) -> ConsentProposal:
         stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         proposal = ConsentProposal(
-            proposal_id=f"consent-{secrets.token_hex(8)}", task_id=task_id,
-            provider=provider, model=model, purpose=purpose, categories=categories,
-            redacted_preview=_preview(payload), payload_digest=payload_hash(payload),
-            max_reserved_cost=max_cost, created_at=stamp,
+            proposal_id=f"consent-{secrets.token_hex(8)}",
+            task_id=task_id,
+            provider=provider,
+            model=model,
+            purpose=purpose,
+            categories=categories,
+            redacted_preview=_preview(payload),
+            payload_digest=payload_hash(payload),
+            max_reserved_cost=max_cost,
+            created_at=stamp,
             expires_at=stamp + timedelta(seconds=self._ttl),
             capability_id=capability_id,
+            plan_id=plan_id,
+            step_id=step_id,
+            operation=operation,
         )
         self._proposals[proposal.proposal_id] = proposal
         return proposal
 
-    def approve(self, proposal_id: str, *, interface: str = "cli", now: datetime | None = None) -> Approval:
+    def approve(
+        self, proposal_id: str, *, interface: str = "cli", now: datetime | None = None
+    ) -> Approval:
         proposal = self._proposals.get(proposal_id)
         stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         if proposal is None or stamp >= proposal.expires_at:
@@ -149,7 +175,9 @@ class ConsentWorkflow:
         self._decided.add(proposal_id)
         return approval
 
-    def deny(self, proposal_id: str, *, interface: str = "cli", now: datetime | None = None) -> Approval:
+    def deny(
+        self, proposal_id: str, *, interface: str = "cli", now: datetime | None = None
+    ) -> Approval:
         proposal = self._proposals.get(proposal_id)
         stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         if proposal is None:
@@ -159,11 +187,22 @@ class ConsentWorkflow:
         self._decided.add(proposal_id)
         return approval
 
-    def check(self, *, proposal_id: str | None, payload: str, provider: str | None = None,
-              model: str | None = None, purpose: str | None = None,
-              capability_id: str | None = None,
-              categories: tuple[str, ...] | None = None, max_cost: float | None = None,
-              now: datetime | None = None) -> bool:
+    def check(
+        self,
+        *,
+        proposal_id: str | None,
+        payload: str,
+        provider: str | None = None,
+        model: str | None = None,
+        purpose: str | None = None,
+        capability_id: str | None = None,
+        plan_id: str | None = None,
+        step_id: str | None = None,
+        operation: str | None = None,
+        categories: tuple[str, ...] | None = None,
+        max_cost: float | None = None,
+        now: datetime | None = None,
+    ) -> bool:
         """Consume an exact, unexpired approval bound to all supplied call fields."""
         if not proposal_id:
             return False
@@ -171,7 +210,9 @@ class ConsentWorkflow:
         approval = self._approvals.get(proposal_id)
         stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         valid = bool(
-            proposal and approval and approval.decision == "approved"
+            proposal
+            and approval
+            and approval.decision == "approved"
             and stamp < proposal.expires_at
             and approval.payload_digest == payload_hash(payload)
             and proposal.payload_digest == approval.payload_digest
@@ -179,6 +220,9 @@ class ConsentWorkflow:
             and (model is None or proposal.model == model)
             and (purpose is None or proposal.purpose == purpose)
             and (capability_id is None or proposal.capability_id == capability_id)
+            and (plan_id is None or proposal.plan_id == plan_id)
+            and (step_id is None or proposal.step_id == step_id)
+            and (operation is None or proposal.operation == operation)
             and (categories is None or proposal.categories == categories)
             and (max_cost is None or proposal.max_reserved_cost == max_cost)
         )

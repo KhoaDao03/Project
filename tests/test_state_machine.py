@@ -28,7 +28,12 @@ class StateMachineTests(unittest.TestCase):
             ensure_transition(TaskStatus.COMPLETED, TaskStatus.RUNNING)
 
     def test_terminal_states(self) -> None:
-        for terminal in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED, TaskStatus.CANCELLED):
+        for terminal in (
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.BLOCKED,
+            TaskStatus.CANCELLED,
+        ):
             self.assertTrue(is_terminal(terminal))
         self.assertFalse(is_terminal(TaskStatus.RUNNING))
 

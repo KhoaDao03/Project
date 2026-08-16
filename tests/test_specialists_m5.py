@@ -30,15 +30,29 @@ UTC = datetime(2026, 8, 4, tzinfo=timezone.utc)
 
 def _manifest(role: str = "coding", *, tools=frozenset()) -> SpecialistManifest:
     return SpecialistManifest(
-        id=role, version="1.0", description=role, role=role,
-        capabilities=frozenset({"review"}), accepted_inputs=frozenset({"text"}),
-        requires_current_data=False, preferred_runtime="cloud", risk_level="low",
-        estimated_cost="medium", timeout_seconds=30, allowed_tools=tools,
+        id=role,
+        version="1.0",
+        description=role,
+        role=role,
+        capabilities=frozenset({"review"}),
+        accepted_inputs=frozenset({"text"}),
+        requires_current_data=False,
+        preferred_runtime="cloud",
+        risk_level="low",
+        estimated_cost="medium",
+        timeout_seconds=30,
+        allowed_tools=tools,
     )
 
 
 def _task(context: str = "Review this public function") -> SpecialistTask:
-    return SpecialistTask(task_id="task-1", specialist_id="coding", goal="review", context=context, privacy_class=classify_payload(context).value)
+    return SpecialistTask(
+        task_id="task-1",
+        specialist_id="coding",
+        goal="review",
+        context=context,
+        privacy_class=classify_payload(context).value,
+    )
 
 
 def _policy_request(
@@ -78,67 +92,147 @@ class PrivacyTests(unittest.TestCase):
 class ConsentTests(unittest.TestCase):
     def test_exact_hash_approval_and_mutation_binding(self) -> None:
         workflow = ConsentWorkflow(ttl_seconds=60)
-        proposal = workflow.propose(task_id="t", provider="openai", model="m", purpose="review", payload="my code", categories=("local",), max_cost=.25, now=UTC)
+        proposal = workflow.propose(
+            task_id="t",
+            provider="openai",
+            model="m",
+            purpose="review",
+            payload="my code",
+            categories=("local",),
+            max_cost=0.25,
+            now=UTC,
+        )
         workflow.approve(proposal.proposal_id, now=UTC)
-        self.assertTrue(workflow.check(proposal_id=proposal.proposal_id, payload="my code", now=UTC))
-        self.assertFalse(workflow.check(proposal_id=proposal.proposal_id, payload="my changed code", now=UTC))
+        self.assertTrue(
+            workflow.check(proposal_id=proposal.proposal_id, payload="my code", now=UTC)
+        )
+        self.assertFalse(
+            workflow.check(proposal_id=proposal.proposal_id, payload="my changed code", now=UTC)
+        )
 
     def test_approval_is_one_shot_and_bound_to_provider_metadata(self) -> None:
         workflow = ConsentWorkflow(ttl_seconds=60)
         proposal = workflow.propose(
-            task_id="t", provider="openai", model="approved-model", purpose="review",
-            payload="my code", categories=("local",), max_cost=.25, now=UTC,
+            task_id="t",
+            provider="openai",
+            model="approved-model",
+            purpose="review",
+            payload="my code",
+            categories=("local",),
+            max_cost=0.25,
+            now=UTC,
         )
         workflow.approve(proposal.proposal_id, now=UTC)
-        self.assertFalse(workflow.check(
-            proposal_id=proposal.proposal_id, payload="my code", provider="openai",
-            model="changed-model", purpose="review", categories=("local",), max_cost=.25,
-            now=UTC,
-        ))
-        self.assertTrue(workflow.check(
-            proposal_id=proposal.proposal_id, payload="my code", provider="openai",
-            model="approved-model", purpose="review", categories=("local",), max_cost=.25,
-            now=UTC,
-        ))
-        self.assertFalse(workflow.check(
-            proposal_id=proposal.proposal_id, payload="my code", provider="openai",
-            model="approved-model", purpose="review", categories=("local",), max_cost=.25,
-            now=UTC,
-        ))
+        self.assertFalse(
+            workflow.check(
+                proposal_id=proposal.proposal_id,
+                payload="my code",
+                provider="openai",
+                model="changed-model",
+                purpose="review",
+                categories=("local",),
+                max_cost=0.25,
+                now=UTC,
+            )
+        )
+        self.assertTrue(
+            workflow.check(
+                proposal_id=proposal.proposal_id,
+                payload="my code",
+                provider="openai",
+                model="approved-model",
+                purpose="review",
+                categories=("local",),
+                max_cost=0.25,
+                now=UTC,
+            )
+        )
+        self.assertFalse(
+            workflow.check(
+                proposal_id=proposal.proposal_id,
+                payload="my code",
+                provider="openai",
+                model="approved-model",
+                purpose="review",
+                categories=("local",),
+                max_cost=0.25,
+                now=UTC,
+            )
+        )
 
     def test_approval_cannot_be_reused_for_another_capability(self) -> None:
         workflow = ConsentWorkflow(ttl_seconds=60)
         proposal = workflow.propose(
-            task_id="t", provider="openai", model="m", purpose="same-purpose",
-            capability_id="web_research", payload="my code", categories=("local",),
-            max_cost=.25, now=UTC,
+            task_id="t",
+            provider="openai",
+            model="m",
+            purpose="same-purpose",
+            capability_id="web_research",
+            payload="my code",
+            categories=("local",),
+            max_cost=0.25,
+            now=UTC,
         )
         workflow.approve(proposal.proposal_id, now=UTC)
-        self.assertFalse(workflow.check(
-            proposal_id=proposal.proposal_id, payload="my code", provider="openai",
-            model="m", purpose="same-purpose", capability_id="coding",
-            categories=("local",), max_cost=.25, now=UTC,
-        ))
-        self.assertTrue(workflow.check(
-            proposal_id=proposal.proposal_id, payload="my code", provider="openai",
-            model="m", purpose="same-purpose", capability_id="web_research",
-            categories=("local",), max_cost=.25, now=UTC,
-        ))
+        self.assertFalse(
+            workflow.check(
+                proposal_id=proposal.proposal_id,
+                payload="my code",
+                provider="openai",
+                model="m",
+                purpose="same-purpose",
+                capability_id="coding",
+                categories=("local",),
+                max_cost=0.25,
+                now=UTC,
+            )
+        )
+        self.assertTrue(
+            workflow.check(
+                proposal_id=proposal.proposal_id,
+                payload="my code",
+                provider="openai",
+                model="m",
+                purpose="same-purpose",
+                capability_id="web_research",
+                categories=("local",),
+                max_cost=0.25,
+                now=UTC,
+            )
+        )
 
     def test_consent_preview_redacts_the_secret_value(self) -> None:
         workflow = ConsentWorkflow()
         proposal = workflow.propose(
-            task_id="t", provider="openai", model="m", purpose="review",
-            payload="api_key=CANARY-DO-NOT-SHOW", categories=("restricted",), max_cost=.25,
+            task_id="t",
+            provider="openai",
+            model="m",
+            purpose="review",
+            payload="api_key=CANARY-DO-NOT-SHOW",
+            categories=("restricted",),
+            max_cost=0.25,
             now=UTC,
         )
         self.assertNotIn("CANARY-DO-NOT-SHOW", proposal.redacted_preview)
 
     def test_expired_approval_is_invalid(self) -> None:
         workflow = ConsentWorkflow(ttl_seconds=1)
-        proposal = workflow.propose(task_id="t", provider="openai", model="m", purpose="review", payload="my code", categories=("local",), max_cost=.25, now=UTC)
+        proposal = workflow.propose(
+            task_id="t",
+            provider="openai",
+            model="m",
+            purpose="review",
+            payload="my code",
+            categories=("local",),
+            max_cost=0.25,
+            now=UTC,
+        )
         workflow.approve(proposal.proposal_id, now=UTC)
-        self.assertFalse(workflow.check(proposal_id=proposal.proposal_id, payload="my code", now=UTC + timedelta(seconds=2)))
+        self.assertFalse(
+            workflow.check(
+                proposal_id=proposal.proposal_id, payload="my code", now=UTC + timedelta(seconds=2)
+            )
+        )
 
 
 class SpecialistWorkflowTests(unittest.TestCase):
@@ -159,13 +253,15 @@ class SpecialistWorkflowTests(unittest.TestCase):
     def test_specialist_only_tool_restriction_is_blocked(self) -> None:
         with self.assertRaises(PermissionDeniedError):
             self.workflow.execute(
-                request=_policy_request(
-                    _task(), _manifest(tools=frozenset({"shell"}))
-                )
+                request=_policy_request(_task(), _manifest(tools=frozenset({"shell"})))
             )
 
     def test_high_impact_action_and_malformed_result_are_blocked(self) -> None:
-        action = FakeSpecialistProvider(result=SpecialistResult(status="known", answer="answer", recommended_action="execute this command"))
+        action = FakeSpecialistProvider(
+            result=SpecialistResult(
+                status="known", answer="answer", recommended_action="execute this command"
+            )
+        )
         with self.assertRaises(PermissionDeniedError):
             SpecialistWorkflow(provider=action).execute(request=_policy_request(_task()))
         malformed = FakeSpecialistProvider(fail="malformed")
@@ -182,9 +278,7 @@ class SpecialistWorkflowTests(unittest.TestCase):
         self.assertEqual([], self.provider.calls)
 
     def test_scope_is_not_rejected_only_for_missing_legacy_role_marker(self) -> None:
-        result = self.workflow.execute(
-            request=_policy_request(_task("Plan a public garden party"))
-        )
+        result = self.workflow.execute(request=_policy_request(_task("Plan a public garden party")))
         self.assertEqual("inferred", result.result.status)
         self.assertEqual(1, len(self.provider.calls))
 
@@ -192,9 +286,7 @@ class SpecialistWorkflowTests(unittest.TestCase):
         provider = FakeSpecialistProvider(
             result=SpecialistResult(status="known", answer="one two three four")
         )
-        workflow = SpecialistWorkflow(
-            provider=provider, max_output_tokens=2
-        )
+        workflow = SpecialistWorkflow(provider=provider, max_output_tokens=2)
         result = workflow.execute(
             request=_policy_request(_task()),
         ).result
@@ -206,18 +298,40 @@ class SpecialistWorkflowTests(unittest.TestCase):
 class _Response:
     def __init__(self, value: dict) -> None:
         self.value = value
-    def __enter__(self): return self
-    def __exit__(self, *_): return False
-    def read(self): return json.dumps(self.value).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self):
+        return json.dumps(self.value).encode()
 
 
 class OpenAISpecialistAdapterTests(unittest.TestCase):
     def test_request_is_structured_store_false_and_tool_free(self) -> None:
-        body = {"output_text": json.dumps({"status": "known", "answer": "ok", "assumptions": [], "uncertainties": [], "key_evidence": [], "sources": [], "recommended_action": None})}
+        body = {
+            "output_text": json.dumps(
+                {
+                    "status": "known",
+                    "answer": "ok",
+                    "assumptions": [],
+                    "uncertainties": [],
+                    "key_evidence": [],
+                    "sources": [],
+                    "recommended_action": None,
+                }
+            )
+        }
         provider = OpenAISpecialistProvider(api_key="test-key")
         task = _task()
-        with patch("elly.adapters.openai_specialist.urllib.request.urlopen", return_value=_Response(body)) as mocked:
-            result = provider.execute(task, model="gpt-5.6-luna", prompt_version="v1", output_limit=100)
+        with patch(
+            "elly.adapters.openai_specialist.urllib.request.urlopen", return_value=_Response(body)
+        ) as mocked:
+            result = provider.execute(
+                task, model="gpt-5.6-luna", prompt_version="v1", output_limit=100
+            )
         self.assertEqual(result.status, "known")
         request_body = json.loads(mocked.call_args.args[0].data)
         self.assertFalse(request_body["store"])
@@ -225,23 +339,42 @@ class OpenAISpecialistAdapterTests(unittest.TestCase):
         self.assertEqual(request_body["model"], "gpt-5.6-luna")
 
     def test_wrong_typed_structured_fields_are_rejected_not_coerced(self) -> None:
-        body = {"output_text": json.dumps({
-            "status": "known", "answer": 123, "assumptions": [], "uncertainties": [],
-            "key_evidence": [], "sources": [], "recommended_action": None,
-        })}
+        body = {
+            "output_text": json.dumps(
+                {
+                    "status": "known",
+                    "answer": 123,
+                    "assumptions": [],
+                    "uncertainties": [],
+                    "key_evidence": [],
+                    "sources": [],
+                    "recommended_action": None,
+                }
+            )
+        }
         provider = OpenAISpecialistProvider(api_key="test-key")
-        with patch("elly.adapters.openai_specialist.urllib.request.urlopen", return_value=_Response(body)):
+        with patch(
+            "elly.adapters.openai_specialist.urllib.request.urlopen", return_value=_Response(body)
+        ):
             with self.assertRaises(Exception):
-                provider.execute(_task(), model="gpt-5.6-luna", prompt_version="v1", output_limit=100)
+                provider.execute(
+                    _task(), model="gpt-5.6-luna", prompt_version="v1", output_limit=100
+                )
 
     def test_provider_incomplete_status_is_preserved_as_truncation(self) -> None:
         body = {
             "status": "incomplete",
-            "output_text": json.dumps({
-                "status": "partial", "answer": "bounded partial", "assumptions": [],
-                "uncertainties": ["output ceiling reached"], "key_evidence": [],
-                "sources": [], "recommended_action": None,
-            }),
+            "output_text": json.dumps(
+                {
+                    "status": "partial",
+                    "answer": "bounded partial",
+                    "assumptions": [],
+                    "uncertainties": ["output ceiling reached"],
+                    "key_evidence": [],
+                    "sources": [],
+                    "recommended_action": None,
+                }
+            ),
         }
         provider = OpenAISpecialistProvider(api_key="test-key")
         with patch(
@@ -255,7 +388,9 @@ class OpenAISpecialistAdapterTests(unittest.TestCase):
         self.assertEqual("partial", result.status)
 
     def test_false_action_success_claim_is_rejected(self) -> None:
-        provider = FakeSpecialistProvider(result=SpecialistResult(status="known", answer="I deleted the file."))
+        provider = FakeSpecialistProvider(
+            result=SpecialistResult(status="known", answer="I deleted the file.")
+        )
         with self.assertRaises(ConfigInvalidError):
             SpecialistWorkflow(provider=provider).execute(
                 request=_policy_request(_task()),
@@ -285,8 +420,10 @@ class OpenAISpecialistAdapterTests(unittest.TestCase):
                 ):
                     with self.assertRaises(expected):
                         provider.execute(
-                            _task(), model="gpt-5.6-luna",
-                            prompt_version="v1", output_limit=100,
+                            _task(),
+                            model="gpt-5.6-luna",
+                            prompt_version="v1",
+                            output_limit=100,
                         )
 
 

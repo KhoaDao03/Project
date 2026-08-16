@@ -25,15 +25,14 @@ class SpecialistRegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "bad.toml"
             path.write_text("[specialist]\nid='Bad ID'\n", encoding="utf-8")
-            registry = SpecialistRegistry.from_directory(
-                directory, default_model="central-model"
-            )
+            registry = SpecialistRegistry.from_directory(directory, default_model="central-model")
             self.assertEqual(registry.enabled(), ())
             self.assertEqual(registry.disabled()[0].id, "bad")
 
     def test_central_model_override_wins_for_one_specialist(self) -> None:
         registry = SpecialistRegistry.from_directory(
-            "config/specialists", default_model="default-cloud-model",
+            "config/specialists",
+            default_model="default-cloud-model",
             model_overrides={"coding": "coding-cloud-model"},
         )
         self.assertEqual(registry.get("coding").provider_model, "coding-cloud-model")
@@ -51,18 +50,22 @@ class SpecialistRegistryTests(unittest.TestCase):
                 "provider_model='hidden-model'\n",
                 encoding="utf-8",
             )
-            registry = SpecialistRegistry.from_directory(
-                directory, default_model="central-model"
-            )
+            registry = SpecialistRegistry.from_directory(directory, default_model="central-model")
             self.assertIsNone(registry.get("duplicate"))
             self.assertEqual(registry.disabled()[0].id, "duplicate")
 
     def test_duplicate_registration_is_rejected(self) -> None:
         manifest = SpecialistManifest(
-            id="coding_review", version="1.0", description="Code review",
-            capabilities=frozenset({"code_review"}), accepted_inputs=frozenset({"text"}),
-            requires_current_data=False, preferred_runtime="local", risk_level="low",
-            estimated_cost="none", timeout_seconds=30,
+            id="coding_review",
+            version="1.0",
+            description="Code review",
+            capabilities=frozenset({"code_review"}),
+            accepted_inputs=frozenset({"text"}),
+            requires_current_data=False,
+            preferred_runtime="local",
+            risk_level="low",
+            estimated_cost="none",
+            timeout_seconds=30,
         )
         registry = SpecialistRegistry()
         registry.register(manifest)
@@ -72,10 +75,16 @@ class SpecialistRegistryTests(unittest.TestCase):
     def test_manifest_rejects_unbounded_timeout(self) -> None:
         with self.assertRaises(ConfigInvalidError):
             SpecialistManifest(
-                id="coding_review", version="1.0", description="Code review",
-                capabilities=frozenset({"code_review"}), accepted_inputs=frozenset({"text"}),
-                requires_current_data=False, preferred_runtime="local", risk_level="low",
-                estimated_cost="none", timeout_seconds=301,
+                id="coding_review",
+                version="1.0",
+                description="Code review",
+                capabilities=frozenset({"code_review"}),
+                accepted_inputs=frozenset({"text"}),
+                requires_current_data=False,
+                preferred_runtime="local",
+                risk_level="low",
+                estimated_cost="none",
+                timeout_seconds=301,
             )
 
 

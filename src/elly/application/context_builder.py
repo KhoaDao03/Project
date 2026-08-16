@@ -13,9 +13,7 @@ class ContextBuilder:
         self._context_window = context_window
         self._reserved_output_tokens = reserved_output_tokens
 
-    def build(
-        self, *, current_text: str, history: list[Message]
-    ) -> tuple[str, ContextManifest]:
+    def build(self, *, current_text: str, history: list[Message]) -> tuple[str, ContextManifest]:
         return build_context(
             current_text=current_text,
             history=history,

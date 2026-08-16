@@ -230,8 +230,10 @@ class ReliabilityOutcomeTests(unittest.TestCase):
         self.addCleanup(repo.close)
         provider = _CountingGeneralist()
         orchestrator = ConversationOrchestrator(
-            clock=FixedClock(UTC), repository=repo,
-            audit=_FailingInitialAudit(), context_window=20,
+            clock=FixedClock(UTC),
+            repository=repo,
+            audit=_FailingInitialAudit(),
+            context_window=20,
             local_conversation=LocalConversationUseCase(
                 generalist=provider,
                 model_id="fake-generalist-v1",
@@ -268,6 +270,7 @@ class ReliabilityOutcomeTests(unittest.TestCase):
         self.assertIs(outcome.result.outcome_code, OutcomeCode.PARTIAL)
         self.assertIn("completion audit unavailable", outcome.result.failures)
         self.assertEqual(repo.task_status(outcome.result.task_id), "partial")
+
 
 if __name__ == "__main__":
     unittest.main()

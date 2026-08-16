@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 
-from ..domain.enums import ErrorClass, IntentAmbiguity, OutcomeCode, Route, TaskStatus
+from ..domain.enums import (
+    ErrorClass,
+    IntentAmbiguity,
+    IntentEntitySource,
+    OutcomeCode,
+    Route,
+    RouteReasonCode,
+    TaskStatus,
+)
 from ..domain.errors import CancelledError, ConfigInvalidError, EllyError, StorageFailureError
 from ..domain.models import (
     ActionConfirmationProposal,
@@ -13,6 +22,7 @@ from ..domain.models import (
     CapabilityIntent,
     ContextManifest,
     ConversationOutcome,
+    IntentEntity,
     OperationLease,
     RouteDecision,
     RouteRequest,
@@ -20,6 +30,7 @@ from ..domain.models import (
     TaskResult,
 )
 from ..guardrails.controller import GuardrailController
+from ..planning.contracts import ExecutionPlan, PlanStep, StepKind
 from ..ports.clock import ClockPort
 from ..privacy import ConsentProposal, ConsentWorkflow, PrivacyPolicy
 from .action_authorization import (
@@ -47,6 +58,10 @@ from .response_composer import (
 )
 from .route_compatibility import enrich_task_result, is_local_route
 from .routing_contracts import TaskIntent
+from .step_results import (
+    StepResultEnvelope,
+    normalize_step_result,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +80,13 @@ class CapabilityExecutionCommand:
     request_guardrails: GuardrailController | None = None
     operation_lease: OperationLease | None = None
     started: float = field(default_factory=time.monotonic)
+    objective: str = ""
+    persist_completion: bool = True
+    before_dispatch: Callable[[], None] | None = None
+    plan_id: str = ""
+    step_id: str = ""
+    require_typed_result: bool = False
+    require_action_receipt: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +98,7 @@ class CapabilityExecutionOutcome:
     consent_proposal: ConsentProposal | None = None
     action_confirmation: ActionConfirmationProposal | None = None
     route_decision: RouteDecision | None = None
+    result_envelope: StepResultEnvelope | None = None
 
     def __post_init__(self) -> None:
         if self.route_decision is not None:
@@ -128,10 +151,7 @@ class CapabilityExecutionWorkflow:
             return self._blocked(command, reason, OutcomeCode.UNAVAILABLE)
 
         capability_status = handler.status()
-        if (
-            not command.route_decision.available
-            or not capability_status.available
-        ):
+        if not command.route_decision.available or not capability_status.available:
             reason = (
                 capability_status.reason_code
                 or command.route_decision.diagnostic
@@ -156,6 +176,9 @@ class CapabilityExecutionWorkflow:
             cancellation=command.cancellation,
             operation=capability_intent.operation,
             intent=capability_intent,
+            objective=command.objective,
+            plan_id=command.plan_id,
+            step_id=command.step_id,
         )
         match = handler.can_handle(capability_request)
         if not match.accepted:
@@ -171,8 +194,9 @@ class CapabilityExecutionWorkflow:
             command.route is not Route.REGISTERED_CAPABILITY
             and command.route not in descriptor.routes
         ):
-            self._completion.fail_operation(command.operation_lease)
-            self._completion.finish_task(command.task_id, TaskStatus.FAILED)
+            if command.persist_completion:
+                self._completion.fail_operation(command.operation_lease)
+                self._completion.finish_task(command.task_id, TaskStatus.FAILED)
             return CapabilityExecutionOutcome(
                 result=compose_failed(
                     task_id=command.task_id,
@@ -195,15 +219,16 @@ class CapabilityExecutionWorkflow:
                         fields=preparation.clarification_fields,
                         route=command.route,
                     )
-                    self._completion.complete_clarification(
-                        request=command.request,
-                        task_id=command.task_id,
-                        route=command.route,
-                        route_decision=command.route_decision,
-                        result=clarification,
-                        operation_lease=command.operation_lease,
-                        fields=preparation.clarification_fields,
-                    )
+                    if command.persist_completion:
+                        self._completion.complete_clarification(
+                            request=command.request,
+                            task_id=command.task_id,
+                            route=command.route,
+                            route_decision=command.route_decision,
+                            result=clarification,
+                            operation_lease=command.operation_lease,
+                            fields=preparation.clarification_fields,
+                        )
                     return CapabilityExecutionOutcome(
                         clarification,
                         command.context_manifest,
@@ -228,6 +253,8 @@ class CapabilityExecutionWorkflow:
                 declared_action=descriptor.declared_action,
                 confirmation_id=command.request.action_confirmation_id,
                 now=self._clock.now(),
+                plan_id=command.plan_id,
+                step_id=command.step_id,
             )
             action_assessment = self._action_authorization.assess(
                 action_proposal,
@@ -267,15 +294,16 @@ class CapabilityExecutionWorkflow:
                     proposal=action_decision.confirmation_proposal,
                     route=command.route,
                 )
-                self._completion.complete_action_confirmation(
-                    request=command.request,
-                    task_id=command.task_id,
-                    route=command.route,
-                    route_decision=command.route_decision,
-                    result=result,
-                    proposal=action_decision.confirmation_proposal,
-                    operation_lease=command.operation_lease,
-                )
+                if command.persist_completion:
+                    self._completion.complete_action_confirmation(
+                        request=command.request,
+                        task_id=command.task_id,
+                        route=command.route,
+                        route_decision=command.route_decision,
+                        result=result,
+                        proposal=action_decision.confirmation_proposal,
+                        operation_lease=command.operation_lease,
+                    )
                 return CapabilityExecutionOutcome(
                     result=result,
                     manifest=command.context_manifest,
@@ -299,32 +327,37 @@ class CapabilityExecutionWorkflow:
                     now=self._clock.now(),
                     capability_available=capability_status.available,
                     requires_external_boundary=descriptor.requires_external_boundary,
+                    plan_id=command.plan_id,
+                    step_id=command.step_id,
+                    operation=capability_request.operation,
                 )
             )
             if not authorization.allowed:
                 proposal = authorization.consent_proposal
                 if proposal is not None:
                     awaiting = TaskStatus.AWAITING_CONSENT
-                    self._completion.emit(
-                        request=command.request,
+                    consent_result = compose_consent_required(
                         task_id=command.task_id,
+                        proposal=proposal,
                         route=command.route,
-                        route_decision=command.route_decision,
-                        event_type="consent.requested",
-                        status=awaiting,
-                        error_class=ErrorClass.PERMISSION_DENIED,
-                        detail=self._failure_detail(command, "exact consent required"),
                     )
-                    self._completion.fail_operation(command.operation_lease)
-                    self._completion.finish_task(command.task_id, awaiting)
-                    consent_result = self._completion.persist_result(
-                        compose_consent_required(
+                    if command.persist_completion:
+                        self._completion.emit(
+                            request=command.request,
                             task_id=command.task_id,
-                            proposal=proposal,
                             route=command.route,
-                        ),
-                        command.route_decision,
-                    )
+                            route_decision=command.route_decision,
+                            event_type="consent.requested",
+                            status=awaiting,
+                            error_class=ErrorClass.PERMISSION_DENIED,
+                            detail=self._failure_detail(command, "exact consent required"),
+                        )
+                        self._completion.fail_operation(command.operation_lease)
+                        self._completion.finish_task(command.task_id, awaiting)
+                        consent_result = self._completion.persist_result(
+                            consent_result,
+                            command.route_decision,
+                        )
                     return CapabilityExecutionOutcome(
                         result=consent_result,
                         manifest=command.context_manifest,
@@ -338,21 +371,22 @@ class CapabilityExecutionWorkflow:
                     event_type="capability.authorization_denied",
                 )
 
-            self._completion.emit(
-                request=command.request,
-                task_id=command.task_id,
-                route=command.route,
-                route_decision=command.route_decision,
-                event_type="authorization.approved",
-                status=command.status,
-                detail=(
-                    f"capability={descriptor.capability_id} "
-                    f"destination={descriptor.destination} "
-                    f"classification={classification.classification.value} "
-                    f"payload_digest={authorization.payload_digest[:16]} "
-                    f"reason={authorization.reason_code}"
-                ),
-            )
+            if command.persist_completion:
+                self._completion.emit(
+                    request=command.request,
+                    task_id=command.task_id,
+                    route=command.route,
+                    route_decision=command.route_decision,
+                    event_type="authorization.approved",
+                    status=command.status,
+                    detail=(
+                        f"capability={descriptor.capability_id} "
+                        f"destination={descriptor.destination} "
+                        f"classification={classification.classification.value} "
+                        f"payload_digest={authorization.payload_digest[:16]} "
+                        f"reason={authorization.reason_code}"
+                    ),
+                )
             capability_request = CapabilityRequest(
                 task=capability_request.task,
                 route_request=capability_request.route_request,
@@ -365,6 +399,9 @@ class CapabilityExecutionWorkflow:
                 operation=capability_request.operation,
                 intent=capability_request.intent,
                 classification=classification,
+                objective=capability_request.objective,
+                plan_id=capability_request.plan_id,
+                step_id=capability_request.step_id,
             )
 
             action_decision = self._action_authorization.authorize(action_request)
@@ -380,7 +417,7 @@ class CapabilityExecutionWorkflow:
                         action_decision.reason_code,
                     ),
                 )
-            if action_assessment.confirmation_required:
+            if action_assessment.confirmation_required and command.persist_completion:
                 self._completion.emit(
                     request=command.request,
                     task_id=command.task_id,
@@ -397,40 +434,70 @@ class CapabilityExecutionWorkflow:
                 )
 
             command.cancellation.raise_if_cancelled()
+            if command.before_dispatch is not None:
+                command.before_dispatch()
             execution_started = True
             execution = handler.execute(capability_request)
             if not isinstance(execution, CapabilityExecution):
                 raise ConfigInvalidError("capability returned an invalid execution envelope")
-            result = execution.result
-            if result.task_id != command.task_id:
-                raise ConfigInvalidError("capability returned a mismatched task id")
-            generated_result = result
-            self._completion.complete_capability(
-                request=command.request,
+            candidate_result = execution.result_envelope or execution.result
+            result_envelope = normalize_step_result(
+                candidate_result,
+                plan_id=command.plan_id or "direct-execution",
                 task_id=command.task_id,
-                route=command.route,
-                route_decision=command.route_decision,
-                descriptor=descriptor,
-                result=result,
-                started=command.started,
-                request_guardrails=command.request_guardrails,
-                operation_lease=command.operation_lease,
+                step_id=command.step_id or "direct-step",
+                capability_id=descriptor.capability_id,
+                operation_id=capability_request.operation,
+                supported_schema_versions=frozenset(descriptor.output_schema_versions),
+                expected_action_digest=action_decision.action_digest,
+                require_action_receipt=False,
             )
+            if execution.action_receipt is not None and result_envelope.action_receipt is None:
+                result_envelope = replace(result_envelope, action_receipt=execution.action_receipt)
+            if command.require_action_receipt and action_decision.proposal.is_consequential:
+                result_envelope = normalize_step_result(
+                    result_envelope,
+                    plan_id=command.plan_id or "direct-execution",
+                    task_id=command.task_id,
+                    step_id=command.step_id or "direct-step",
+                    capability_id=descriptor.capability_id,
+                    operation_id=capability_request.operation,
+                    supported_schema_versions=frozenset(descriptor.output_schema_versions),
+                    expected_action_digest=action_decision.action_digest,
+                    require_action_receipt=True,
+                )
+            result = result_envelope.to_task_result()
+            generated_result = result
+            if command.persist_completion:
+                self._completion.complete_capability(
+                    request=command.request,
+                    task_id=command.task_id,
+                    route=command.route,
+                    route_decision=command.route_decision,
+                    descriptor=descriptor,
+                    result=result,
+                    started=command.started,
+                    request_guardrails=command.request_guardrails,
+                    operation_lease=command.operation_lease,
+                )
             return CapabilityExecutionOutcome(
                 result=result,
                 manifest=command.context_manifest,
                 consent_proposal=execution.consent_proposal,
                 route_decision=command.route_decision,
+                result_envelope=(result_envelope if command.require_typed_result else None),
             )
         except StorageFailureError as exc:
-            self._completion.best_effort_fail_operation(
-                command.operation_lease,
-                possible_duplicate=execution_started,
-            )
+            if command.persist_completion:
+                self._completion.best_effort_fail_operation(
+                    command.operation_lease,
+                    possible_duplicate=execution_started,
+                )
             failed_status = (
                 TaskStatus.PARTIAL if generated_result is not None else TaskStatus.FAILED
             )
-            self._completion.best_effort_finish_task(command.task_id, failed_status)
+            if command.persist_completion:
+                self._completion.best_effort_finish_task(command.task_id, failed_status)
             if generated_result is not None:
                 result = compose_partial(
                     task_id=command.task_id,
@@ -451,22 +518,24 @@ class CapabilityExecutionWorkflow:
                 result, command.context_manifest, route_decision=command.route_decision
             )
         except CancelledError as exc:
-            self._completion.fail_operation(
-                command.operation_lease,
-                possible_duplicate=execution_started,
-            )
+            if command.persist_completion:
+                self._completion.fail_operation(
+                    command.operation_lease,
+                    possible_duplicate=execution_started,
+                )
             cancelled = TaskStatus.CANCELLED
-            self._completion.emit(
-                request=command.request,
-                task_id=command.task_id,
-                route=command.route,
-                route_decision=command.route_decision,
-                event_type="capability.cancelled",
-                status=cancelled,
-                error_class=exc.error_class,
-                detail=self._failure_detail(command, exc.summary),
-            )
-            self._completion.finish_task(command.task_id, cancelled)
+            if command.persist_completion:
+                self._completion.emit(
+                    request=command.request,
+                    task_id=command.task_id,
+                    route=command.route,
+                    route_decision=command.route_decision,
+                    event_type="capability.cancelled",
+                    status=cancelled,
+                    error_class=exc.error_class,
+                    detail=self._failure_detail(command, exc.summary),
+                )
+                self._completion.finish_task(command.task_id, cancelled)
             return CapabilityExecutionOutcome(
                 compose_cancelled(
                     task_id=command.task_id,
@@ -477,22 +546,24 @@ class CapabilityExecutionWorkflow:
                 route_decision=command.route_decision,
             )
         except EllyError as exc:
-            self._completion.fail_operation(
-                command.operation_lease,
-                possible_duplicate=execution_started,
-            )
+            if command.persist_completion:
+                self._completion.fail_operation(
+                    command.operation_lease,
+                    possible_duplicate=execution_started,
+                )
             failed = TaskStatus.FAILED
-            self._completion.emit(
-                request=command.request,
-                task_id=command.task_id,
-                route=command.route,
-                route_decision=command.route_decision,
-                event_type="capability.failed",
-                status=failed,
-                error_class=exc.error_class,
-                detail=self._failure_detail(command, exc.summary),
-            )
-            self._completion.finish_task(command.task_id, failed)
+            if command.persist_completion:
+                self._completion.emit(
+                    request=command.request,
+                    task_id=command.task_id,
+                    route=command.route,
+                    route_decision=command.route_decision,
+                    event_type="capability.failed",
+                    status=failed,
+                    error_class=exc.error_class,
+                    detail=self._failure_detail(command, exc.summary),
+                )
+                self._completion.finish_task(command.task_id, failed)
             return CapabilityExecutionOutcome(
                 compose_failed(
                     task_id=command.task_id,
@@ -502,6 +573,137 @@ class CapabilityExecutionWorkflow:
                 command.context_manifest,
                 route_decision=command.route_decision,
             )
+        except Exception:
+            # Provider-native exceptions must stop at this application boundary;
+            # their type and message are not safe result or UI contracts.
+            if command.persist_completion:
+                self._completion.fail_operation(
+                    command.operation_lease,
+                    possible_duplicate=execution_started,
+                )
+                self._completion.emit(
+                    request=command.request,
+                    task_id=command.task_id,
+                    route=command.route,
+                    route_decision=command.route_decision,
+                    event_type="capability.failed",
+                    status=TaskStatus.FAILED,
+                    error_class=ErrorClass.PERMANENT_PROVIDER,
+                    detail=self._failure_detail(command, "capability provider failed"),
+                )
+                self._completion.finish_task(command.task_id, TaskStatus.FAILED)
+            return CapabilityExecutionOutcome(
+                compose_failed(
+                    task_id=command.task_id,
+                    reason="capability provider failed",
+                    route=command.route,
+                ),
+                command.context_manifest,
+                route_decision=command.route_decision,
+            )
+
+    def execute_plan_step(
+        self,
+        *,
+        plan: ExecutionPlan,
+        step: PlanStep,
+        request: TaskRequest,
+        context_text: str,
+        context_manifest: ContextManifest,
+        cancellation: CancellationToken,
+        request_guardrails: GuardrailController | None = None,
+        operation_lease: OperationLease | None = None,
+        before_dispatch: Callable[[], None] | None = None,
+        started: float | None = None,
+    ) -> CapabilityExecutionOutcome:
+        """Execute one validated capability step through the existing policy.
+
+        The plan path deliberately creates a synthetic, application-owned route
+        decision from the already validated ``PlanStep``.  It does not accept a
+        provider or handler from planner output.  ``persist_completion=False``
+        leaves plan-level result/state persistence to ``PlanExecutor`` while all
+        existing capability, privacy, consent, and action checks remain shared.
+        """
+        if not isinstance(plan, ExecutionPlan) or not isinstance(step, PlanStep):
+            raise ConfigInvalidError("plan step execution requires validated plan contracts")
+        if step.kind is not StepKind.CAPABILITY:
+            raise ConfigInvalidError("capability workflow cannot execute an internal plan step")
+        validated_step = next(
+            (candidate for candidate in plan.steps if candidate.step_id == step.step_id),
+            None,
+        )
+        if validated_step is None or any(
+            getattr(validated_step, field) != getattr(step, field)
+            for field in (
+                "step_id",
+                "kind",
+                "capability_id",
+                "operation_id",
+                "objective",
+                "objective_class",
+                "perspective",
+                "inputs",
+                "dependencies",
+                "output_type",
+                "criticality",
+                "verification",
+                "timeout_seconds",
+                "requires_external_access",
+                "effect",
+                "requires_consent",
+            )
+        ):
+            raise ConfigInvalidError("plan step does not belong to the validated plan")
+        subject = step.objective
+        intent = CapabilityIntent(
+            proposed_capability_id=step.capability_id,
+            operation=step.operation_id,
+            entities=(
+                IntentEntity(
+                    kind="subject",
+                    value=subject,
+                    source=IntentEntitySource.INFERRED,
+                ),
+            ),
+            arguments={"subject": subject},
+            confidence=1.0,
+            ambiguity=IntentAmbiguity.CLEAR,
+            rationale_code="VALIDATED_PLAN_STEP",
+        )
+        decision = RouteDecision(
+            route=Route.REGISTERED_CAPABILITY,
+            reason_code=RouteReasonCode.PROPOSAL_ACCEPTED,
+            capability_id=step.capability_id,
+            operation=step.operation_id,
+            intent=intent,
+        )
+        command = CapabilityExecutionCommand(
+            request=request,
+            task_id=plan.task_id,
+            status=TaskStatus.RUNNING,
+            route=Route.REGISTERED_CAPABILITY,
+            route_request=RouteRequest(
+                request_id=request.request_id,
+                text=request.text,
+                contextual_text=context_text,
+                cloud_mode=request.cloud_mode,
+            ),
+            route_decision=decision,
+            context_text=context_text,
+            context_manifest=context_manifest,
+            cancellation=cancellation,
+            request_guardrails=request_guardrails,
+            operation_lease=operation_lease,
+            started=started if started is not None else time.monotonic(),
+            objective=step.objective,
+            persist_completion=False,
+            before_dispatch=before_dispatch,
+            plan_id=plan.plan_id,
+            step_id=step.step_id,
+            require_typed_result=True,
+            require_action_receipt=True,
+        )
+        return self.execute(command)
 
     @staticmethod
     def _execution_intent(
@@ -559,27 +761,29 @@ class CapabilityExecutionWorkflow:
         detail: str | None = None,
     ) -> CapabilityExecutionOutcome:
         blocked = TaskStatus.BLOCKED
-        self._completion.emit(
-            request=command.request,
+        blocked_result = compose_blocked(
             task_id=command.task_id,
+            reason=reason,
             route=command.route,
-            route_decision=command.route_decision,
-            event_type=event_type,
-            status=blocked,
-            error_class=error_class,
-            detail=detail or self._failure_detail(command, reason),
+            outcome_code=outcome_code,
         )
-        self._completion.fail_operation(command.operation_lease)
-        self._completion.finish_task(command.task_id, blocked)
-        blocked_result = self._completion.persist_result(
-            compose_blocked(
+        if command.persist_completion:
+            self._completion.emit(
+                request=command.request,
                 task_id=command.task_id,
-                reason=reason,
                 route=command.route,
-                outcome_code=outcome_code,
-            ),
-            command.route_decision,
-        )
+                route_decision=command.route_decision,
+                event_type=event_type,
+                status=blocked,
+                error_class=error_class,
+                detail=detail or self._failure_detail(command, reason),
+            )
+            self._completion.fail_operation(command.operation_lease)
+            self._completion.finish_task(command.task_id, blocked)
+            blocked_result = self._completion.persist_result(
+                blocked_result,
+                command.route_decision,
+            )
         return CapabilityExecutionOutcome(
             blocked_result,
             command.context_manifest,
@@ -593,9 +797,7 @@ class CapabilityExecutionWorkflow:
         )
 
     @staticmethod
-    def _action_detail(
-        proposal: ActionProposal, digest: str, reason: str
-    ) -> str:
+    def _action_detail(proposal: ActionProposal, digest: str, reason: str) -> str:
         return (
             f"category={proposal.category.value} "
             f"target={safe_action_target_reference(proposal.target)} "

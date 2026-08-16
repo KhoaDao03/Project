@@ -146,11 +146,25 @@ class Phase2CatalogSelectionTests(unittest.TestCase):
     def test_exact_operation_beats_broader_operation_regardless_of_registration_order(self) -> None:
         exact = _SyntheticCapability(
             "specific",
-            (_operation("valuation.analyze", "Analyze company valuation", domains=("finance",), specificity=60),),
+            (
+                _operation(
+                    "valuation.analyze",
+                    "Analyze company valuation",
+                    domains=("finance",),
+                    specificity=60,
+                ),
+            ),
         )
         broad = _SyntheticCapability(
             "broad",
-            (_operation("analysis.analyze", "Analyze a general request", domains=("finance",), specificity=100),),
+            (
+                _operation(
+                    "analysis.analyze",
+                    "Analyze a general request",
+                    domains=("finance",),
+                    specificity=100,
+                ),
+            ),
         )
         decisions = []
         for handlers in ((broad, exact), (exact, broad)):
@@ -160,10 +174,14 @@ class Phase2CatalogSelectionTests(unittest.TestCase):
                 )
             )
         self.assertEqual(("specific", "specific"), tuple(item.capability_id for item in decisions))
-        self.assertEqual(("valuation.analyze", "valuation.analyze"), tuple(item.operation for item in decisions))
+        self.assertEqual(
+            ("valuation.analyze", "valuation.analyze"), tuple(item.operation for item in decisions)
+        )
 
     def test_semantic_tie_requests_clarification_instead_of_using_capability_id(self) -> None:
-        operation = _operation("lookup.find", "Find a matching record", domains=("records",), specificity=70)
+        operation = _operation(
+            "lookup.find", "Find a matching record", domains=("records",), specificity=70
+        )
         first = _SyntheticCapability("first", (operation,))
         second = _SyntheticCapability("second", (operation,))
         decision = RoutingPolicy(capabilities=CapabilityRegistry((second, first))).decide(
@@ -177,27 +195,53 @@ class Phase2CatalogSelectionTests(unittest.TestCase):
     def test_domain_specificity_precedes_declared_priority(self) -> None:
         specific = _SyntheticCapability(
             "specific_domain",
-            (_operation("records.lookup", "Find a matching record", domains=("records",), specificity=90),),
+            (
+                _operation(
+                    "records.lookup", "Find a matching record", domains=("records",), specificity=90
+                ),
+            ),
             priority=10,
         )
         broad = _SyntheticCapability(
             "high_priority_broad",
-            (_operation("records.lookup", "Find a matching record", domains=("records",), specificity=40),),
+            (
+                _operation(
+                    "records.lookup", "Find a matching record", domains=("records",), specificity=40
+                ),
+            ),
             priority=100,
         )
-        decision = RoutingPolicy(
-            capabilities=CapabilityRegistry((broad, specific))
-        ).decide(_request("Find a matching record"))
+        decision = RoutingPolicy(capabilities=CapabilityRegistry((broad, specific))).decide(
+            _request("Find a matching record")
+        )
         self.assertEqual("specific_domain", decision.capability_id)
 
     def test_live_requirement_excludes_static_only_candidates(self) -> None:
         live = _SyntheticCapability(
             "live_provider",
-            (_operation("market.quote", "Provide a live market quote", domains=("market",), required_entities=("ticker",), freshness=FreshnessSupport.LIVE, specificity=50),),
+            (
+                _operation(
+                    "market.quote",
+                    "Provide a live market quote",
+                    domains=("market",),
+                    required_entities=("ticker",),
+                    freshness=FreshnessSupport.LIVE,
+                    specificity=50,
+                ),
+            ),
         )
         static = _SyntheticCapability(
             "static_provider",
-            (_operation("market.quote", "Provide a market quote from stored data", domains=("market",), required_entities=("ticker",), freshness=FreshnessSupport.STATIC, specificity=100),),
+            (
+                _operation(
+                    "market.quote",
+                    "Provide a market quote from stored data",
+                    domains=("market",),
+                    required_entities=("ticker",),
+                    freshness=FreshnessSupport.STATIC,
+                    specificity=100,
+                ),
+            ),
         )
         intent = TaskIntent(
             requested_operation="market.quote",
@@ -209,9 +253,9 @@ class Phase2CatalogSelectionTests(unittest.TestCase):
             ambiguity=IntentAmbiguity.CLEAR,
             rationale_code="TEST_LIVE_REQUEST",
         )
-        decision = RoutingPolicy(
-            capabilities=CapabilityRegistry((static, live))
-        ).decide(_request("quote AAPL"), task_intent=intent)
+        decision = RoutingPolicy(capabilities=CapabilityRegistry((static, live))).decide(
+            _request("quote AAPL"), task_intent=intent
+        )
         self.assertEqual("live_provider", decision.capability_id)
         self.assertEqual("market.quote", decision.operation)
         self.assertEqual(RouteReasonCode.CATALOG_SINGLE_MATCH, decision.reason_code)
@@ -219,7 +263,14 @@ class Phase2CatalogSelectionTests(unittest.TestCase):
     def test_unavailable_candidate_is_visible_but_not_executable(self) -> None:
         capability = _SyntheticCapability(
             "disabled_finance",
-            (_operation("valuation.analyze", "Analyze company valuation", domains=("finance",), required_entities=("ticker_or_company",)),),
+            (
+                _operation(
+                    "valuation.analyze",
+                    "Analyze company valuation",
+                    domains=("finance",),
+                    required_entities=("ticker_or_company",),
+                ),
+            ),
             available=False,
         )
         decision = RoutingPolicy(capabilities=CapabilityRegistry((capability,))).decide(
@@ -232,7 +283,14 @@ class Phase2CatalogSelectionTests(unittest.TestCase):
     def test_invented_selection_is_rejected_against_the_live_catalog(self) -> None:
         capability = _SyntheticCapability(
             "finance_capability",
-            (_operation("valuation.analyze", "Analyze company valuation", domains=("finance",), required_entities=("ticker_or_company",)),),
+            (
+                _operation(
+                    "valuation.analyze",
+                    "Analyze company valuation",
+                    domains=("finance",),
+                    required_entities=("ticker_or_company",),
+                ),
+            ),
         )
         from elly.application.routing_contracts import CapabilitySelectionProposal
 
@@ -254,7 +312,14 @@ class Phase2CatalogSelectionTests(unittest.TestCase):
     def test_low_confidence_selection_does_not_execute(self) -> None:
         capability = _SyntheticCapability(
             "finance_capability",
-            (_operation("valuation.analyze", "Analyze company valuation", domains=("finance",), required_entities=("ticker_or_company",)),),
+            (
+                _operation(
+                    "valuation.analyze",
+                    "Analyze company valuation",
+                    domains=("finance",),
+                    required_entities=("ticker_or_company",),
+                ),
+            ),
         )
         from elly.application.routing_contracts import CapabilitySelectionProposal
 
