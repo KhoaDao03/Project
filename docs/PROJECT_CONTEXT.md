@@ -4,8 +4,8 @@
 **Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
 **Generated:** 2026-08-17
 **Branch:** `main`
-**Commit represented:** `794e30dd57908e74eea6b466245e936cd4ab984a` plus the uncommitted Revised Phase 7 execution decomposition
-**Working tree:** contains the Revised Phase 7 execution-module changes and documentation; inspect `git status` before handoff.
+**Commit represented:** `60c9285dcf3b9182c9ced0008873399f06d11f3c` plus the uncommitted Revised Phase 8 SQLite persistence decomposition and documentation
+**Working tree:** contains the Revised Phase 8 SQLite implementation, characterization test, and documentation; inspect `git status` before handoff.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -146,7 +146,7 @@ legacy synthesis role and persisted finalization values remain readable only
 through documented migration behavior. See
 [`docs/v3.5/IMPLEMENTATION.md`](v3.5/IMPLEMENTATION.md).
 
-**Architecture consolidation status:** Phases 0–6 and Revised Phase 7 are
+**Architecture consolidation status:** Phases 0–6, Revised Phase 7, and Revised Phase 8 are
 implemented. The canonical
 request path is Public API → `AssistantRuntime` → `PlanningService` → validated
 `ExecutionPlan` → `TaskExecutionService` → application-owned `CapabilityRegistry`
@@ -173,8 +173,21 @@ compatibility, while synthesis-named repository methods remain the intentional
 stored-record/response-composition persistence boundary. Current planning uses
 post-aggregation response composition.
 
-SQLite internal modularization was intentionally not implemented in Revised
-Phase 7 and is deferred to the next architectural review / expected Phase 8.
+Revised Phase 8 decomposes the SQLite implementation behind the stable
+`elly.adapters.sqlite_repository.SqliteSessionRepository` import path. The
+façade owns exactly one `sqlite3.Connection`, one serialized wrapper, and one
+lock; private `connection`, `schema`, `codecs`, `sessions`, `plans`, `profile`,
+and `metadata` modules share that authority and expose no per-table repository
+family. Schema version 7 and V1–V7 SQL remain unchanged. Transaction ownership,
+NO_STORE redaction, profile quarantine, synthesis-named compatibility,
+operation leases/idempotency, and cross-concern purge/transition atomicity are
+preserved.
+
+**Revised Phase 8 verification:** 497 tests passed in the final deterministic
+run; Ruff, strict MyPy across 142 source files, compilation, and
+`git diff --check` passed. The localhost Ollama test server was run outside
+the restricted sandbox as part of that gate; no Phase 9 routing/configuration
+cleanup was performed.
 
 Consent/action continuation across process restart is not supported: task and plan
 records are durable, but authorization-ID mappings and retained request context are
@@ -344,7 +357,7 @@ Authoritative defaults are `config.example.toml`, `.env.example`, and [config.py
 
 ## 13. Persistence, State, and Data Lifecycle
 
-SQLite stores sessions, messages, task state, confirmed profile items, redacted audit events, and validated source metadata. Normal sessions retain bodies for configured retention; `/new --no-store` stores an empty/redacted body and cannot reconstruct message content. Only explicitly confirmed profile items persist; inferred profile facts do not.
+SQLite stores sessions, messages, task state, confirmed profile items, redacted audit events, and validated source metadata. Normal sessions retain bodies for configured retention; `/new --no-store` stores an empty/redacted body and cannot reconstruct message content. Only explicitly confirmed profile items persist; inferred profile facts do not. Revised Phase 8 keeps one repository-owned connection and lock across the private SQLite modules, one schema/migration owner at version 7, and method-level transaction authority for plan/CAS/recovery, result/envelope, session purge, profile quarantine, audit/provenance, and operation-lease writes.
 
 Session, source, and audit retention are independent. Startup maintenance purges expired data, marks abandoned tasks interrupted without replay, and can perform a daily backup check when `ELLY_BACKUP_KEY` is configured. Backup/restore authenticates and integrity-checks a prototype envelope, but vetted AEAD key management and recovery acceptance remain unresolved.
 
@@ -485,6 +498,7 @@ src/elly/application/runtime.py outer request/task lifecycle coordinator
 src/elly/domain/              contracts, enums, state, errors
 src/elly/ports/               provider/storage/audit/clock contracts
 src/elly/adapters/            Ollama/OpenAI/SQLite/audit/clock implementations
+src/elly/adapters/sqlite/     private SQLite connection/schema/concern modules
 src/elly/guardrails/           limits/retry/circuit/timeout/cost
 src/elly/research/             freshness/selection/citation policy/fake
 src/elly/specialists/          manifests/registry/contracts/fake

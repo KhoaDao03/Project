@@ -495,8 +495,9 @@ and `PlanRunResult` remains an alias of `PlanExecutionResult` while established
 callers migrate. Legacy `LOCAL_SYNTHESIS` execution and synthesis-named
 persistence are retained only at the compatibility/persistence boundary for
 old plans, stored records, and tests; normal new plans use post-aggregation
-response composition. SQLite modularization is deferred until after Revised
-Phase 7.
+response composition. Revised Phase 8 now applies the SQLite decomposition
+described in section 4.9 without changing the schema, repository contracts, or
+transaction authority.
 
 ---
 
@@ -658,22 +659,39 @@ The existing monolithic SQLite adapter may be split internally by concern withou
 - distributed persistence;
 - repository interfaces for every table.
 
-Suggested implementation organization:
+Revised Phase 8 implements the split with one public façade and private
+responsibility modules:
 
 ```text
 adapters/sqlite/
-    store.py
-    schema.py
-    sessions.py
-    tasks.py
-    plans.py
-    profile.py
-    audit.py
+    __init__.py       private package marker; no table repositories
+    connection.py     one serialized connection wrapper and close lifecycle
+    schema.py         V1–V7 SQL and the single migration implementation
+    codecs.py         TaskResult and timestamp serialization
+    sessions.py       sessions, messages, tasks, and task results
+    plans.py          plans, transitions, events, step results, synthesis
+    profile.py        confirmed profile, tombstones, expiry, quarantine
+    metadata.py       audit, sources, provenance, retention, leases, health
+
+adapters/sqlite_repository.py
+    public SqliteSessionRepository façade and stable import path
 ```
 
-Exact module names are flexible.
+`SqliteSessionRepository` is the only constructed repository object. Its
+constructor creates exactly one `sqlite3.Connection`, wraps it in one
+`_SerializedConnection` with one `RLock`, and supplies that same wrapper to
+every private mixin through the façade's `self._conn`. Internal modules do not
+open connections, construct store objects, or expose per-table repository
+classes. `:memory:`, WAL, foreign keys, close behavior, and the
+`SessionRepositoryPort`/`PlanRepositoryPort` contracts remain unchanged.
 
-Preserve one DB ownership model.
+The façade/mixin method is the transaction boundary for cross-concern writes:
+plan graph plus event, compare-and-set transitions plus events, session mode
+plus audit, task result plus route metadata, session deletion/purge, step
+result plus event, synthesis record plus event, profile tombstones, and
+operation leases remain atomic. Schema setup has one migration owner in
+`schema.py`; V1–V7 and schema version 7 are unchanged, with each additive
+version applied in its own explicit transaction and rolled back on failure.
 
 ---
 

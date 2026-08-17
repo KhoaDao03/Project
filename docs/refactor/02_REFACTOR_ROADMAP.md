@@ -531,18 +531,50 @@ next architectural review / expected Phase 8.
 
 ---
 
-# 12. Phase 8 — Split SQLite implementation internally (deferred)
+# 12. Revised Phase 8 — SQLite Persistence Decomposition with Single Connection and Transaction Authority
 
 ## Objective
 
-Reduce SQLite adapter file-level complexity without changing persistence
-architecture. Begin only after a separate post-Revised-Phase-7 review.
+Reduce SQLite adapter file-level complexity by cohesive responsibility without
+changing persistence behavior, schema, repository contracts, or transaction
+authority.
 
-## Work
+**Status: COMPLETE.** Revised Phase 8 was implemented from the clean `main`
+baseline at commit `60c9285dcf3b9182c9ced0008873399f06d11f3c`. The public
+`elly.adapters.sqlite_repository.SqliteSessionRepository` façade remains the
+only constructed repository and the only public SQLite repository type.
+The final deterministic gate runs 497 tests with Ruff, strict MyPy, compileall,
+and `git diff --check` passing.
 
-Split the large adapter by cohesive storage concern while preserving one
-database, one schema/versioning authority, current transactions, WAL/configuration
-behavior, and repository contracts.
+## Implemented structure
+
+```text
+adapters/sqlite_repository.py
+  public façade, one connection, PRAGMAs, migration compatibility exports
+
+adapters/sqlite/
+  connection.py  serialized connection/lock and close lifecycle
+  schema.py      V1–V7 SQL, schema version 7, one migration implementation
+  codecs.py      timestamp and TaskResult serialization
+  sessions.py    sessions, messages, tasks, task results, session lifecycle
+  plans.py       plans, CAS transitions, events, step results, synthesis
+  profile.py     confirmed profile, tombstones, expiry, quarantine
+  metadata.py    audit, sources, provenance, retention, health, leases
+```
+
+The façade constructor creates exactly one `sqlite3.Connection` with
+`check_same_thread=False`, one `_SerializedConnection`, and one `RLock`.
+Every internal responsibility operates on that same wrapper; no internal
+module opens a connection or constructs a per-table repository. `:memory:`
+behavior, WAL, foreign keys, close behavior, and the stable public import path
+remain intact.
+
+Transaction ownership remains at the façade method/mixin method boundary.
+Cross-concern writes remain atomic, including plan graph plus event, plan/step
+CAS plus events, session mode plus audit, task result plus route metadata,
+session deletion/purge, step result plus event, synthesis record plus event,
+profile tombstones, and operation leases. Schema setup has one owner in
+`schema.py`; V1–V7 SQL and rollback behavior are unchanged.
 
 ## Do not
 
@@ -553,11 +585,13 @@ behavior, and repository contracts.
 
 ## Acceptance criteria
 
-- Schema/migration code has one obvious owner.
-- Transaction boundaries remain correct.
-- Persistence tests pass.
-- Existing stored databases remain readable/upgradable.
-- Full suite passes.
+- AC-01–AC-34: façade, one-connection/one-lock ownership, schema/migration,
+  transaction, privacy, idempotency, compatibility, and decomposition checks
+  pass.
+- AC-35–AC-40: full deterministic suite, Ruff, strict MyPy, compilation, and
+  whitespace checks pass.
+- Existing stored databases remain readable/upgradable through schema version
+  7; no ORM/framework, second database, or schema version 8 was introduced.
 
 ---
 
