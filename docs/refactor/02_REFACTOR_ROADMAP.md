@@ -464,36 +464,85 @@ authorization/task-lifecycle ownership collision between the API façade and
 
 ---
 
-# 11. Phase 7 — Split SQLite implementation internally
+# 11. Revised Phase 7 — Task Execution Decomposition and Legacy Execution Compatibility Isolation
 
 ## Objective
 
-Reduce file-level complexity without changing persistence architecture.
+Physically separate the validated-plan execution implementation by cohesive
+responsibility without rewriting the scheduler or changing runtime behavior.
+`TaskExecutionService` remains the single public execution authority.
+
+**Status: COMPLETE.** The full deterministic suite (494 tests), Ruff, strict
+MyPy, compilation, and whitespace checks pass.
+
+## Implemented structure
+
+```text
+application/task_execution/
+  __init__.py       public execution exports and compatibility alias
+  contracts.py      PlanExecutionRequest/Result contracts
+  service.py        TaskExecutionService façade and active-run lifecycle
+  plan_runner.py    DAG scheduling, bounds, transitions, cancellation
+  step_runner.py    input resolution, registry dispatch, leases, persistence
+  finalizer.py      aggregation-to-response-composition finalization
+  legacy.py         isolated persisted LOCAL_SYNTHESIS compatibility
+
+application/plan_executor.py
+  documented compatibility re-export boundary only
+```
+
+The extraction moved the existing implementations without changing scheduling
+ordering, worker bounds, timeout handling, cancellation propagation,
+authorization pauses, compare-and-set transitions, operation leases, recovery,
+or response-composition persistence. `AssistantRuntime` remains the normal
+outer task-lifecycle owner.
+
+## Legacy execution compatibility
+
+- `PlanExecutor` and `PlanRunResult` remain documented aliases in the small
+  `plan_executor.py` compatibility module because established tests and import
+  paths still use them.
+- `PlanOrchestrator` remains a compatibility façade and owns no execution
+  state.
+- `manage_task_lifecycle` remains available for direct/legacy callers; the
+  canonical runtime path passes `False` and retains lifecycle ownership in
+  `AssistantRuntime`.
+- `LOCAL_SYNTHESIS` execution remains only for persisted/legacy plan and test
+  compatibility; current planning uses post-aggregation response composition.
+- Synthesis-named repository methods remain unchanged because they are the
+  persistence compatibility boundary for stored records and response-
+  composition observations.
+
+## Explicit deferral
+
+SQLite internal modularization is **not part of Revised Phase 7**. The SQLite
+adapter, schema, migrations, transaction boundaries, and repository contracts
+were intentionally left unchanged. SQLite modularization is deferred to the
+next architectural review / expected Phase 8.
+
+## Acceptance criteria
+
+- Execution responsibilities are navigable through the small module set above.
+- There is one scheduler and one canonical execution façade.
+- Existing execution, authorization, recovery, persistence, and compatibility
+  behavior remains covered by the deterministic suite.
+- Required legacy persisted synthesis/result compatibility remains readable.
+- No SQLite architecture or schema redesign is introduced.
+
+---
+
+# 12. Phase 8 — Split SQLite implementation internally (deferred)
+
+## Objective
+
+Reduce SQLite adapter file-level complexity without changing persistence
+architecture. Begin only after a separate post-Revised-Phase-7 review.
 
 ## Work
 
-Split the large adapter by cohesive storage concern while preserving:
-
-- one SQLite database;
-- one schema/versioning authority;
-- current transactions;
-- WAL/configuration behavior;
-- current repository contracts.
-
-Possible organization:
-
-```text
-adapters/sqlite/
-  store.py
-  schema.py
-  sessions.py
-  tasks.py
-  plans.py
-  profile.py
-  audit.py
-```
-
-The implementation agent may choose better names based on actual code.
+Split the large adapter by cohesive storage concern while preserving one
+database, one schema/versioning authority, current transactions, WAL/configuration
+behavior, and repository contracts.
 
 ## Do not
 
@@ -512,7 +561,7 @@ The implementation agent may choose better names based on actual code.
 
 ---
 
-# 12. Phase 8 — Consolidate routing and contract vocabulary
+# 13. Phase 9 — Consolidate routing and contract vocabulary
 
 ## Objective
 
@@ -554,7 +603,7 @@ Renaming contracts early creates large diffs with little immediate architectural
 
 ---
 
-# 13. Phase 9 — Configuration and compatibility cleanup
+# 14. Phase 10 — Configuration and compatibility cleanup
 
 ## Objective
 
@@ -586,7 +635,7 @@ For every alias:
 
 ---
 
-# 14. Phase 10 — Test-suite consolidation and repository cleanup
+# 15. Phase 11 — Test-suite consolidation and repository cleanup
 
 ## Objective
 
@@ -610,7 +659,7 @@ Keep behavior safety while reducing milestone-era architectural fossilization.
 
 ---
 
-# 15. Required architecture tests after consolidation
+# 16. Required architecture tests after consolidation
 
 The repository should explicitly test:
 
@@ -636,7 +685,7 @@ The repository should explicitly test:
 
 ---
 
-# 16. Stop conditions
+# 17. Stop conditions
 
 The agent must stop the current phase and report instead of continuing if:
 
@@ -658,7 +707,7 @@ A stopped phase should include:
 
 ---
 
-# 17. Definition of done
+# 18. Definition of done
 
 The architectural cleanup is complete when an engineer can explain Elly's core runtime with approximately these concepts:
 

@@ -4,8 +4,8 @@
 **Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
 **Generated:** 2026-08-17
 **Branch:** `main`
-**Commit represented:** `6ba01384335a3d80d6b4f1fbce216476098b7083` plus the uncommitted Architecture Consolidation Phase 5 implementation
-**Working tree:** contains the Phase 5 runtime-ownership changes; inspect `git status` before handoff.
+**Commit represented:** `794e30dd57908e74eea6b466245e936cd4ab984a` plus the uncommitted Revised Phase 7 execution decomposition
+**Working tree:** contains the Revised Phase 7 execution-module changes and documentation; inspect `git status` before handoff.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -146,7 +146,8 @@ legacy synthesis role and persisted finalization values remain readable only
 through documented migration behavior. See
 [`docs/v3.5/IMPLEMENTATION.md`](v3.5/IMPLEMENTATION.md).
 
-**Architecture consolidation status:** Phases 0–6 are implemented. The canonical
+**Architecture consolidation status:** Phases 0–6 and Revised Phase 7 are
+implemented. The canonical
 request path is Public API → `AssistantRuntime` → `PlanningService` → validated
 `ExecutionPlan` → `TaskExecutionService` → application-owned `CapabilityRegistry`
 → `ResponseCompositionService` → `TaskResult`. `AssistantRuntime` owns outer
@@ -159,6 +160,21 @@ authority. Compatibility delegates in `composition.Application`,
 name remain non-authoritative. The API retains only interface async maps for future
 publication; it no longer stores pending authorization/request maps or performs
 task lifecycle writes.
+
+Revised Phase 7 physically decomposes execution into
+`application/task_execution/{contracts,service,plan_runner,step_runner,finalizer,legacy}.py`.
+`application/plan_executor.py` is now a documented compatibility re-export
+boundary; `PlanExecutor` and `PlanRunResult` remain aliases for established
+callers. `PlanOrchestrator` remains a non-authoritative façade, and
+`manage_task_lifecycle` remains only for direct/legacy callers because the
+canonical runtime path preserves `AssistantRuntime` as the normal lifecycle
+owner. `LOCAL_SYNTHESIS` execution is retained for persisted-plan/test
+compatibility, while synthesis-named repository methods remain the intentional
+stored-record/response-composition persistence boundary. Current planning uses
+post-aggregation response composition.
+
+SQLite internal modularization was intentionally not implemented in Revised
+Phase 7 and is deferred to the next architectural review / expected Phase 8.
 
 Consent/action continuation across process restart is not supported: task and plan
 records are durable, but authorization-ID mappings and retained request context are

@@ -303,10 +303,11 @@ Phase 3  conversation becomes capability/unified path
 Phase 4  PlanExecutor -> TaskExecutionService responsibilities
 Phase 5  thin composition root + AssistantRuntime
 Phase 6  public API boundary + authorization lifecycle consolidation
-Phase 7  split SQLite implementation internally
-Phase 8  consolidate routing/contracts
-Phase 9  config compatibility cleanup
-Phase 10 test/repository cleanup
+Phase 7  execution decomposition and legacy compatibility isolation
+Phase 8  split SQLite implementation internally
+Phase 9  consolidate routing/contracts
+Phase 10 config compatibility cleanup
+Phase 11 test/repository cleanup
 ```
 
 You may make a small prerequisite adjustment if the code proves this exact order impossible, but you must explain why and preserve the dependency logic of the roadmap.

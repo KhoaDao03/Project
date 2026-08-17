@@ -427,7 +427,7 @@ It should be the single owner of task/plan execution lifecycle.
 - provider registration;
 - database schema migration definitions.
 
-## Suggested internal decomposition
+## Implemented internal decomposition
 
 Do **not** replace one giant executor with fifteen tiny classes.
 
@@ -476,6 +476,27 @@ Owns:
 - deterministic fallback behavior if composition fails.
 
 If the existing code can achieve these boundaries with fewer public classes, prefer fewer.
+
+The execution implementation is now physically organized as:
+
+```text
+src/elly/application/task_execution/
+  contracts.py    PlanExecutionRequest, PlanExecutionResult, PlanRunResult
+  service.py      TaskExecutionService and active-run lifecycle
+  plan_runner.py  DAG scheduler, bounds, transitions, cancellation
+  step_runner.py  input resolution, live registry dispatch, leases, persistence
+  finalizer.py    aggregation and response-composition handoff
+  legacy.py       isolated persisted LOCAL_SYNTHESIS compatibility
+```
+
+`src/elly/application/plan_executor.py` is intentionally a small compatibility
+re-export boundary. `PlanExecutor` remains an alias of `TaskExecutionService`
+and `PlanRunResult` remains an alias of `PlanExecutionResult` while established
+callers migrate. Legacy `LOCAL_SYNTHESIS` execution and synthesis-named
+persistence are retained only at the compatibility/persistence boundary for
+old plans, stored records, and tests; normal new plans use post-aggregation
+response composition. SQLite modularization is deferred until after Revised
+Phase 7.
 
 ---
 
