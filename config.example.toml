@@ -6,7 +6,8 @@
 # Do not add API keys here — secrets belong in the OS/environment mechanism only.
 
 # Remote provider, model, and price selection lives in these tables. Local
-# conversation, planning, and synthesis selection is defined in [local_models].
+# conversation, planning, and response-composer selection is defined in
+# [local_models].  The old `synthesis` spelling remains a temporary alias only.
 [providers]
 research = "openai_web_search"       # "openai_web_search" or "fixtures"
 specialists = "openai"               # "openai" or "fake"
@@ -30,12 +31,12 @@ timeout_seconds = 120
 [local_models.roles]
 conversation = "qwen_default"
 planner = "qwen_default"
-synthesis = "qwen_default"
+response_composer = "qwen_default"
 
 [local_models.role_limits]
 conversation_max_output_tokens = 512
 planner_max_output_tokens = 1200
-synthesis_max_output_tokens = 1600
+response_composer_max_output_tokens = 1600
 
 [pricing]
 monthly_budget_usd = 10
@@ -85,6 +86,8 @@ max_queue_size = 1
 max_plan_steps = 5
 max_specialist_executions = 2
 max_research_executions = 1
+# Retained for persisted V3 plan compatibility; V3.5 composition is a
+# post-aggregation stage and is not planner-controlled.
 max_synthesis_executions = 1
 max_replans = 1
 max_parallel_steps = 2

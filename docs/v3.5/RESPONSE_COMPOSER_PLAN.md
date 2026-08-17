@@ -1,6 +1,6 @@
 # Elly V3.5 — Mandatory Local Response Composer Plan
 
-**Status:** Proposed; not implemented  
+**Status:** Implemented; see [IMPLEMENTATION.md](IMPLEMENTATION.md)
 **Baseline:** Elly V3  
 **Scope:** Requirements, design direction, implementation plan, and acceptance criteria  
 **Explicit deferral:** Personality and memory are placeholders only in V3.5

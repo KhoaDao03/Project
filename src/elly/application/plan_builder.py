@@ -76,6 +76,7 @@ class PlanBuilder:
         default_timeout_seconds: float = 60.0,
         synthesis_timeout_seconds: float | None = None,
         redundancy_policy: RedundancyPolicy | None = None,
+        legacy_synthesis_enabled: bool = True,
     ) -> None:
         if not isinstance(catalog, tuple):
             raise InputInvalidError("plan builder catalog must be an immutable tuple")
@@ -96,6 +97,8 @@ class PlanBuilder:
                 raise InputInvalidError(f"{name} must be numeric")
             if not math.isfinite(float(value)) or value <= 0:
                 raise InputInvalidError(f"{name} must be positive and finite")
+        if not isinstance(legacy_synthesis_enabled, bool):
+            raise InputInvalidError("legacy_synthesis_enabled must be a bool")
         self._catalog = tuple(sorted(catalog, key=lambda item: item.capability_id))
         self._catalog_by_id = {item.capability_id: item for item in self._catalog}
         self._catalog_version = build_planner_catalog(self._catalog).version
@@ -107,6 +110,7 @@ class PlanBuilder:
             else default_timeout_seconds
         )
         self._redundancy_policy = redundancy_policy or RedundancyPolicy()
+        self._legacy_synthesis_enabled = legacy_synthesis_enabled
 
     @property
     def catalog_version(self) -> str:
@@ -238,16 +242,27 @@ class PlanBuilder:
             self._to_plan_step(by_id[step_id], self._prepared_for(prepared, step_id))
             for step_id in ordered_ids
         )
-        if proposal.finalization is FinalizationStrategy.LOCAL_SYNTHESIS:
+        effective_finalization = proposal.finalization
+        if (
+            not self._legacy_synthesis_enabled
+            and effective_finalization is FinalizationStrategy.LOCAL_SYNTHESIS
+        ):
+            # V3.5 composition is a mandatory post-aggregation application
+            # phase.  Retain the legacy enum only for persisted/read-compatible
+            # plans; new production plans cannot acquire a model-controlled
+            # synthesis node or presentation mode from planner output.
+            effective_finalization = FinalizationStrategy.TEMPLATE
+
+        if effective_finalization is FinalizationStrategy.LOCAL_SYNTHESIS:
             if any(step.proposal_step_id == "synthesis" for step in proposal_steps):
                 return self._reject("PLAN_SYNTHESIS_STEP_ID_RESERVED")
             plan_steps += (self._synthesis_step(plan_steps),)
 
-        limit_failure = self._validate_limits(plan_steps, prepared, proposal.finalization)
+        limit_failure = self._validate_limits(plan_steps, prepared, effective_finalization)
         if limit_failure is not None:
             return limit_failure
         finalization_failure = self._validate_finalization(
-            proposal.finalization, plan_steps, proposal_steps
+            effective_finalization, plan_steps, proposal_steps
         )
         if finalization_failure is not None:
             return finalization_failure
@@ -263,7 +278,7 @@ class PlanBuilder:
                 revision=revision,
                 parent_plan_id=parent_plan_id,
                 steps=plan_steps,
-                finalization=proposal.finalization,
+                finalization=effective_finalization,
                 limits=self._limits,
                 catalog_version=self._catalog_version,
                 status=PlanStatus.PENDING,

@@ -287,7 +287,7 @@ class V3Phase1LocalModelRoleTests(unittest.TestCase):
         roles = result.value.runtime.local_model_roles
         self.assertEqual(
             tuple(role.role for role in roles),
-            ("conversation", "planner", "synthesis"),
+            ("conversation", "planner", "response_composer"),
         )
         self.assertEqual(roles[1].profile_name, "planner")
         self.assertEqual(roles[1].model_id, "planner")

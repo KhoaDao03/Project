@@ -75,6 +75,19 @@ class RouteReasonCode(str, Enum):
     SELECTION_PROPOSAL_REJECTED = "SELECTION_PROPOSAL_REJECTED"
 
 
+class PresentationMode(str, Enum):
+    """Application-owned policy for presenting validated workflow output.
+
+    This is deliberately separate from the legacy V3 ``FinalizationStrategy``.
+    A planner may propose work, but it cannot select or bypass the final
+    conversational presentation policy.
+    """
+
+    COMPOSED = "composed"
+    EXACT_WITH_COMPOSED_CONTEXT = "exact_with_composed_context"
+    DETERMINISTIC_ONLY = "deterministic_only"
+
+
 class IntentAmbiguity(str, Enum):
     """Deterministic interpretation state for an untrusted capability proposal."""
 

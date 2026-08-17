@@ -33,6 +33,12 @@ milestones, or verification status changes.
 
 ## Project status
 
+**V3.5 response composition is implemented on top of the V3 baseline.** Normal
+answer-bearing workflows now pass through the application-owned local
+`response_composer` stage, with deterministic mode selection, reference-bound
+assembly, exact-record protection, bounded telemetry, and deterministic
+fallback. See [the V3.5 implementation record](docs/v3.5/IMPLEMENTATION.md).
+
 **V3 completed and closed by owner request.** As of **2026-08-16**, all 13 V3
 requirements and Phases 0–9 are implemented and deterministically verified. The
 public submission path now performs local typed planning, deterministic DAG
@@ -92,7 +98,7 @@ See the [V1.5 closure record](docs/v1.5/V1_5_CLOSURE.md),
 | Persistence | SQLite sessions, confirmed profile items, redacted audit events, task traces, source metadata, independent retention periods, and no-store sessions |
 | Operations | Health/status reporting, bounded queue/concurrency, retry/circuit/timeout controls, cost reservations, authenticated backup/restore, and startup maintenance |
 | Configuration | Provider, model, and pricing choices are centralized in one TOML file, with environment variables as the final override layer |
-| V3 orchestration | Local capability-first planning produces a validated persisted DAG; bounded steps may run in parallel, pause for exact authorization, aggregate partial/disagreement states, and use validated local synthesis or deterministic fallback |
+| V3 orchestration | Local capability-first planning produces a validated persisted DAG; bounded steps may run in parallel, pause for exact authorization, aggregate partial/disagreement states, and use the application-owned response composer or deterministic fallback |
 
 Elly never treats model output as authorization. Specialists cannot execute tools,
 write files, or truthfully claim that they performed external actions.
@@ -201,7 +207,7 @@ empty **Verified facts** section rather than pretending the links prove the text
 
 Copy [config.example.toml](config.example.toml) to the gitignored
 `config.local.toml`. Remote provider, model, and pricing changes live together;
-local conversation, planning, and synthesis use named reusable profiles:
+local conversation, planning, and response composition use named reusable profiles:
 
 ```toml
 [providers]
@@ -221,12 +227,12 @@ timeout_seconds = 120
 [local_models.roles]
 conversation = "qwen_default"
 planner = "qwen_default"
-synthesis = "qwen_default"
+response_composer = "qwen_default"
 
 [local_models.role_limits]
 conversation_max_output_tokens = 512
 planner_max_output_tokens = 1200
-synthesis_max_output_tokens = 1600
+response_composer_max_output_tokens = 1600
 
 [models.specialists]
 # coding = "gpt-5.6-terra"
@@ -248,6 +254,8 @@ precedence when both forms are present.
   specialist output ceilings.
 - `[local_models]`: reusable local profiles, role bindings, and role-specific
   output ceilings.
+- `synthesis` remains a temporary compatibility alias for
+  `response_composer`; configuring both spellings is rejected.
 - `[research]`: maximum sources, 2,048-token default output allowance, and timeout.
 - `[storage]`: session/evidence/audit retention and backup directory.
 - `[specialists]`: capability-manifest directory.

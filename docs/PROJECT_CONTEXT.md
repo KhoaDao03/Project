@@ -138,6 +138,14 @@ and [docs/v3/PHASE_6_AGGREGATION_FINALIZATION.md](v3/PHASE_6_AGGREGATION_FINALIZ
 and [docs/v3/PHASE_7_SYNTHESIS.md](v3/PHASE_7_SYNTHESIS.md), and
 [docs/v3/PHASE_8_REPLANNING_RECOVERY.md](v3/PHASE_8_REPLANNING_RECOVERY.md).
 
+**V3.5 status:** the mandatory local response-composer stage is implemented on
+top of the V3 baseline. Normal local, specialist, multi-step, partial, blocked,
+and failed answer-bearing results converge on the common post-aggregation
+pipeline; consent/confirmation protocol output remains deterministic-only. The
+legacy synthesis role and persisted finalization values remain readable only
+through documented migration behavior. See
+[`docs/v3.5/IMPLEMENTATION.md`](v3.5/IMPLEMENTATION.md).
+
 ## 5. Users, Actors, and Use Cases
 
 | Actor | Responsibility | Boundary |
@@ -247,7 +255,8 @@ Ports/manifests for future providers/page readers do not make those capabilities
 
 Local model roles use reusable named profiles: `[local_models.profiles.*]`
 defines the provider, model, endpoint, and timeout, while
-`[local_models.roles]` binds conversation, planning, and synthesis independently.
+`[local_models.roles]` binds conversation, planning, and `response_composer`
+independently. The old `synthesis` spelling is a temporary compatibility alias.
 The normal default is real Ollama with `qwen3:8b`; `qwen3:14b` is opt-in via a
 14B profile. There is no silent upgrade.
 
@@ -269,7 +278,7 @@ Authoritative defaults are `config.example.toml`, `.env.example`, and [config.py
 
 | Setting | Purpose/default | Security/consumer |
 |---|---|---|
-| `[local_models.profiles.*]`, `[local_models.roles]`, `[local_models.role_limits]` | qwen_default shared by conversation/planner/synthesis; 512/1200/1600 token role ceilings | local role composition; localhost validation |
+| `[local_models.profiles.*]`, `[local_models.roles]`, `[local_models.role_limits]` | qwen_default shared by conversation/planner/response_composer; 512/1200/1600 token role ceilings | local role composition; localhost validation |
 | `[providers]` research/specialists and `[models]` research/specialist_default plus overrides | openai_web_search/openai; fake/fixtures alternatives | remote capability/provider choice |
 | `[pricing]` budget/reservation/consent max | 10 / 0.01 / 0.25 USD | reservation; price assurance open |
 | `[app]` db_path | data/elly.db; :memory: in tests | local state |
@@ -278,7 +287,7 @@ Authoritative defaults are `config.example.toml`, `.env.example`, and [config.py
 | `[generalist]` migration keys, `[research]`, `[specialists]`, `[log]` | legacy endpoint/time/output, research limits, manifests, redacted level | compatibility and logging boundaries |
 | `OPENAI_API_KEY` | only for authorized hosted calls | secret; never log/commit |
 | `ELLY_DB_PATH`, `ELLY_LOG_LEVEL` | deployment overrides | local path/log |
-| `ELLY_LOCAL_CONVERSATION_PROFILE`, `ELLY_LOCAL_PLANNER_PROFILE`, `ELLY_LOCAL_SYNTHESIS_PROFILE`, `ELLY_LOCAL_MODELS_<PROFILE>_{PROVIDER,MODEL_ID,BASE_URL,TIMEOUT_SECONDS}`, and role output-limit overrides | independent local role/profile overrides; TOML precedence is lower | exact localhost validation; legacy generalist env keys remain migration-compatible |
+| `ELLY_LOCAL_CONVERSATION_PROFILE`, `ELLY_LOCAL_PLANNER_PROFILE`, `ELLY_LOCAL_RESPONSE_COMPOSER_PROFILE`, plus temporary `ELLY_LOCAL_SYNTHESIS_PROFILE`, `ELLY_LOCAL_MODELS_<PROFILE>_{PROVIDER,MODEL_ID,BASE_URL,TIMEOUT_SECONDS}`, and role output-limit overrides | independent local role/profile overrides; TOML precedence is lower | exact localhost validation; legacy generalist env keys remain migration-compatible |
 | `ELLY_SPECIALIST_PROVIDER`, `ELLY_SPECIALIST_DEFAULT_MODEL_ID`, `ELLY_SPECIALIST_MANIFEST_DIR` | specialist overrides | manifests grant no tools |
 | `ELLY_RESEARCH_PROVIDER`, `ELLY_RESEARCH_MODEL_ID`, `ELLY_RESEARCH_MAX_RESULTS`, `ELLY_RESEARCH_MAX_OUTPUT_TOKENS`, `ELLY_RESEARCH_TIMEOUT_SECONDS` | research overrides | hosted boundary |
 | `ELLY_MAX_INPUT_CHARS`, `ELLY_CONTEXT_WINDOW_MESSAGES`, `ELLY_MAX_STEPS`, `ELLY_MAX_PROVIDER_CALLS`, `ELLY_MAX_RETRIES`, `ELLY_TOOL_TIMEOUT_SECONDS`, `ELLY_TOTAL_TIMEOUT_SECONDS`, `ELLY_MAX_CONCURRENCY`, `ELLY_MAX_QUEUE_SIZE` | guardrail overrides | do not weaken silently |

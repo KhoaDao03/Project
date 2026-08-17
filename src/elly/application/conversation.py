@@ -23,6 +23,7 @@ Related: UC-01, BUS-001, AI-002/006/010, FR-002/006, DATA-001/004, OPS-001, UX-0
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from threading import Lock
 
 from ..domain.context import resolve_conversation_context
@@ -59,6 +60,7 @@ from .response_composer import (
     compose_possible_duplicate,
     compose_success,
 )
+from .response_pipeline import ResponseCompositionService
 from .route_compatibility import enrich_task_result, is_local_route
 from .routing import RoutingPolicy
 
@@ -85,6 +87,7 @@ class ConversationOrchestrator:
         profile_service: ProfileService | None = None,
         routing_policy: RoutingPolicy | None = None,
         context_builder: ContextBuilder | None = None,
+        response_pipeline: ResponseCompositionService | None = None,
     ) -> None:
         self._clock = clock
         self._repository = repository
@@ -98,6 +101,11 @@ class ConversationOrchestrator:
             audit=audit,
         )
         self._capability_workflow = capability_workflow
+        if response_pipeline is not None and not isinstance(
+            response_pipeline, ResponseCompositionService
+        ):
+            raise ConfigInvalidError("response pipeline is invalid")
+        self._response_pipeline = response_pipeline
         self._active_lock = Lock()
         self._active_cancellation: CancellationToken | None = None
         self._active_cancellations: dict[str, CancellationToken] = {}
@@ -292,6 +300,51 @@ class ConversationOrchestrator:
         def decorate(result: TaskResult) -> TaskResult:
             return enrich_task_result(result, route_decision)
 
+        def compose_response(
+            result: TaskResult,
+            *,
+            approved_context: str | None = None,
+        ) -> TaskResult:
+            """Run the common presentation policy for a direct conversational turn."""
+            if self._response_pipeline is None:
+                return result
+            composed = self._response_pipeline.compose_task_result(
+                result,
+                request=request,
+                approved_context=prompt if approved_context is None else approved_context,
+                cancellation=cancellation,
+            )
+            observation = composed.observation
+            if observation is not None:
+                try:
+                    self._emit(
+                        request=request,
+                        task_id=task_id,
+                        route=route,
+                        route_decision=route_decision,
+                        event_type=f"response_composer.{observation.outcome}",
+                        status=composed.result.task_status,
+                        detail=(
+                            f"mode={observation.mode.value} attempted={int(observation.attempted)} "
+                            f"outcome={observation.outcome} profile={observation.profile[:64]} "
+                            f"model={observation.model_version[:128]} "
+                            f"reason={observation.reason_code[:128]} "
+                            f"result_refs={','.join(observation.result_refs)} "
+                            f"claim_refs={','.join(observation.claim_refs)} "
+                            f"citation_refs={','.join(observation.citation_refs)} "
+                            f"warning_refs={','.join(observation.warning_refs)} "
+                            f"disagreement_refs={','.join(observation.disagreement_refs)} "
+                            f"record_refs={','.join(observation.immutable_record_refs)} "
+                            f"duration_ms={observation.duration_ms} "
+                            f"output_tokens={observation.output_tokens}"
+                        )[:512],
+                    )
+                except StorageFailureError:
+                    # Presentation telemetry must not turn a safe result into a
+                    # second execution or a storage-driven provider retry.
+                    pass
+            return composed.result
+
         # Lifecycle transitions go through the state machine so the application —
         # not ad-hoc code — owns valid task states (AI-002, FR-006).
         status = ensure_transition(TaskStatus.QUEUED, TaskStatus.RUNNING)
@@ -361,6 +414,8 @@ class ConversationOrchestrator:
                 detail=(f"operation={operation_lease.operation_id} provider_dispatch=not_started"),
             )
             return ConversationOutcome(
+                # This is an exact idempotency protocol response, not a new
+                # substantive answer. Never re-enter the composer for a replay.
                 result=decorate(compose_possible_duplicate(task_id=task_id, route=route)),
                 manifest=context_manifest,
             )
@@ -379,7 +434,9 @@ class ConversationOrchestrator:
             self._completion.best_effort_fail_operation(operation_lease)
             self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
             return ConversationOutcome(
-                result=decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route)),
+                result=compose_response(
+                    decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route))
+                ),
                 manifest=context_manifest,
             )
 
@@ -396,18 +453,20 @@ class ConversationOrchestrator:
                 self._completion.best_effort_fail_operation(operation_lease)
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=decorate(
-                        compose_failed(task_id=task_id, reason=exc.summary, route=route)
+                    result=compose_response(
+                        decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route))
                     ),
                     manifest=context_manifest,
                 )
 
         if route_decision.reason_code is RouteReasonCode.ACTION_UNSUPPORTED:
-            blocked_result = decorate(
-                compose_blocked(
-                    task_id=task_id,
-                    reason="the requested consequential action is not supported",
-                    route=route,
+            blocked_result = compose_response(
+                decorate(
+                    compose_blocked(
+                        task_id=task_id,
+                        reason="the requested consequential action is not supported",
+                        route=route,
+                    )
                 )
             )
             try:
@@ -429,8 +488,8 @@ class ConversationOrchestrator:
                 self._completion.best_effort_fail_operation(operation_lease)
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=decorate(
-                        compose_failed(task_id=task_id, reason=exc.summary, route=route)
+                    result=compose_response(
+                        decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route))
                     ),
                     manifest=context_manifest,
                 )
@@ -442,7 +501,7 @@ class ConversationOrchestrator:
                 fields=route_decision.clarification_fields,
                 route=route,
             )
-            clarification = decorate(clarification)
+            clarification = compose_response(decorate(clarification))
             try:
                 self._completion.complete_clarification(
                     request=request,
@@ -459,8 +518,8 @@ class ConversationOrchestrator:
                 )
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=decorate(
-                        compose_failed(task_id=task_id, reason=exc.summary, route=route)
+                    result=compose_response(
+                        decorate(compose_failed(task_id=task_id, reason=exc.summary, route=route))
                     ),
                     manifest=context_manifest,
                 )
@@ -472,7 +531,9 @@ class ConversationOrchestrator:
                 self._completion.best_effort_fail_operation(operation_lease)
                 self._completion.best_effort_finish_task(task_id, TaskStatus.FAILED)
                 return ConversationOutcome(
-                    result=decorate(compose_failed(task_id=task_id, reason=reason, route=route)),
+                    result=compose_response(
+                        decorate(compose_failed(task_id=task_id, reason=reason, route=route))
+                    ),
                     manifest=context_manifest,
                 )
             capability_outcome = self._capability_workflow.execute(
@@ -491,11 +552,43 @@ class ConversationOrchestrator:
                     started=started,
                 )
             )
+            # The capability workflow composes successful direct results while
+            # preserving typed plan-step results for PlanExecutor.  Complete
+            # the same common presentation pipeline for direct failures and
+            # blocked explanations that return before provider execution.  The
+            # protocol statuses remain deterministic-only by policy.
+            if (
+                self._response_pipeline is not None
+                and not capability_outcome.response_composed
+                and capability_outcome.result.task_status
+                not in {TaskStatus.AWAITING_CONSENT, TaskStatus.AWAITING_CONFIRMATION}
+            ):
+                composed_result = compose_response(
+                    capability_outcome.result,
+                    approved_context=capability_context,
+                )
+                # Early capability failures are normally persisted by the
+                # workflow before control returns here.  Replace that raw
+                # presentation artifact with the common composed result when
+                # storage is still available; a telemetry/persistence error
+                # must not trigger a second provider call or hide the safe
+                # result already prepared for the caller.
+                try:
+                    if capability_outcome.result.task_status is not TaskStatus.CANCELLED:
+                        self._completion.persist_result(composed_result, route_decision)
+                except StorageFailureError:
+                    pass
+                capability_outcome = replace(
+                    capability_outcome,
+                    result=composed_result,
+                    response_composed=True,
+                )
             return capability_outcome.as_conversation_outcome()
 
         # (4)+(5) Call the model and validate its untrusted output. Any typed
         # EllyError (provider failure OR validation rejection) maps to BLOCKED.
         text = ""
+        assistant_message: Message | None = None
         try:
             local_execution = self._local_conversation.execute(
                 prompt,
@@ -504,25 +597,28 @@ class ConversationOrchestrator:
             )
             generalist_response = local_execution.response
             text = local_execution.text
-            assistant_message = Message(
-                role="assistant", content=text, created_at=self._clock.now()
-            )
-            self._repository.append_message(request.session_id, assistant_message)
+            if self._response_pipeline is None:
+                assistant_message = Message(
+                    role="assistant", content=text, created_at=self._clock.now()
+                )
+                self._repository.append_message(request.session_id, assistant_message)
         except StorageFailureError as exc:
             self._completion.best_effort_fail_operation(operation_lease, possible_duplicate=True)
             self._completion.best_effort_finish_task(task_id, TaskStatus.PARTIAL)
             return ConversationOutcome(
-                result=decorate(
-                    compose_partial(
-                        task_id=task_id,
-                        reason=exc.summary,
-                        route=route,
-                        answer=text,
-                        partial_work=(
-                            "local response was generated but durable completion was incomplete",
+                result=compose_response(
+                    decorate(
+                        compose_partial(
+                            task_id=task_id,
+                            reason=exc.summary,
+                            route=route,
+                            answer=text,
+                            partial_work=(
+                                "local response was generated but durable completion was incomplete",
+                            )
+                            if text
+                            else (),
                         )
-                        if text
-                        else (),
                     )
                 ),
                 manifest=context_manifest,
@@ -543,8 +639,14 @@ class ConversationOrchestrator:
             )
             self._completion.finish_task(task_id, cancelled)
             return ConversationOutcome(
-                result=decorate(
-                    compose_cancelled(task_id=task_id, partial_work=exc.partial_work, route=route)
+                result=compose_response(
+                    decorate(
+                        compose_cancelled(
+                            task_id=task_id,
+                            partial_work=exc.partial_work,
+                            route=route,
+                        )
+                    )
                 ),
                 manifest=context_manifest,
                 assistant_message=None,
@@ -564,7 +666,9 @@ class ConversationOrchestrator:
             )
             self._completion.finish_task(task_id, blocked)
             return ConversationOutcome(
-                result=decorate(compose_blocked(task_id=task_id, reason=exc.summary, route=route)),
+                result=compose_response(
+                    decorate(compose_blocked(task_id=task_id, reason=exc.summary, route=route))
+                ),
                 manifest=context_manifest,
                 assistant_message=None,
             )
@@ -582,6 +686,12 @@ class ConversationOrchestrator:
                 + profile_provenance,
             )
             result = decorate(result)
+            result = compose_response(result)
+            if self._response_pipeline is not None:
+                assistant_message = Message(
+                    role="assistant", content=result.answer, created_at=self._clock.now()
+                )
+                self._repository.append_message(request.session_id, assistant_message)
             ensure_transition(status, result.task_status)
             self._completion.complete_local(
                 request=request,

@@ -10,12 +10,12 @@ timeout_seconds = 120
 [local_models.roles]
 conversation = "qwen_default"
 planner = "qwen_default"
-synthesis = "qwen_default"
+response_composer = "qwen_default"
 
 [local_models.role_limits]
 conversation_max_output_tokens = 512
 planner_max_output_tokens = 1200
-synthesis_max_output_tokens = 1600
+response_composer_max_output_tokens = 1600
 
 [orchestration]
 max_plan_steps = 5

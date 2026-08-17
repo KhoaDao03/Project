@@ -22,6 +22,7 @@ from ..domain.enums import (
     ErrorClass,
     OutcomeCode,
     PersistenceMode,
+    PresentationMode,
     Route,
     TaskStatus,
 )
@@ -51,6 +52,7 @@ from ..planning.contracts import (
     StepState,
 )
 from ..ports.clock import ClockPort
+from ..ports.local_response_composer import LocalResponseComposerPort
 from ..ports.local_synthesis import (
     LocalSynthesisPort,
     SynthesisDraft,
@@ -66,6 +68,7 @@ from .plan_results import (
     DisagreementRecord,
     PlanAggregation,
     PlanStatusPolicy,
+    TemplateFinalizer,
     aggregate_plan_results,
     derive_plan_status,
     finalize_plan,
@@ -73,6 +76,7 @@ from .plan_results import (
 from .plan_state import STEP_ELIGIBLE_STATES, STEP_TERMINAL_STATES
 from .recovery import PlanRecovery
 from .response_composer import compose_blocked, compose_cancelled, compose_failed
+from .response_pipeline import ResponseCompositionService, ResponsePipelineResult
 from .step_results import (
     RESULT_SCHEMA_VERSION,
     StepResultEnvelope,
@@ -256,6 +260,10 @@ class PlanExecutor:
         synthesis_port: LocalSynthesisPort | None = None,
         synthesis_max_output_tokens: int = 1600,
         synthesis_timeout_seconds: float = 120.0,
+        response_composer_port: LocalResponseComposerPort | None = None,
+        response_composer_max_output_tokens: int = 1600,
+        response_composer_timeout_seconds: float = 120.0,
+        response_pipeline: ResponseCompositionService | None = None,
     ) -> None:
         if not isinstance(capability_registry, CapabilityRegistry):
             raise ConfigInvalidError("plan executor requires a capability registry")
@@ -269,6 +277,14 @@ class PlanExecutor:
             raise ConfigInvalidError("plan executor max_workers must be positive")
         if synthesis_port is not None and not isinstance(synthesis_port, LocalSynthesisPort):
             raise ConfigInvalidError("plan executor synthesis port is invalid")
+        if response_composer_port is not None and not isinstance(
+            response_composer_port, LocalResponseComposerPort
+        ):
+            raise ConfigInvalidError("plan executor response composer port is invalid")
+        if response_pipeline is not None and not isinstance(
+            response_pipeline, ResponseCompositionService
+        ):
+            raise ConfigInvalidError("plan executor response pipeline is invalid")
         if (
             isinstance(synthesis_max_output_tokens, bool)
             or not isinstance(synthesis_max_output_tokens, int)
@@ -281,6 +297,18 @@ class PlanExecutor:
             or synthesis_timeout_seconds <= 0
         ):
             raise ConfigInvalidError("plan executor synthesis timeout must be positive")
+        if (
+            isinstance(response_composer_max_output_tokens, bool)
+            or not isinstance(response_composer_max_output_tokens, int)
+            or response_composer_max_output_tokens <= 0
+        ):
+            raise ConfigInvalidError("plan executor response composer output limit must be positive")
+        if (
+            isinstance(response_composer_timeout_seconds, bool)
+            or not isinstance(response_composer_timeout_seconds, (int, float))
+            or response_composer_timeout_seconds <= 0
+        ):
+            raise ConfigInvalidError("plan executor response composer timeout must be positive")
         self._repository = repository
         self._capability_registry = capability_registry
         self._capability_workflow = capability_workflow
@@ -290,6 +318,15 @@ class PlanExecutor:
         self._synthesis_port = synthesis_port
         self._synthesis_max_output_tokens = synthesis_max_output_tokens
         self._synthesis_timeout_seconds = float(synthesis_timeout_seconds)
+        self._response_pipeline = response_pipeline or (
+            ResponseCompositionService(
+                composer=response_composer_port,
+                max_output_tokens=response_composer_max_output_tokens,
+                timeout_seconds=response_composer_timeout_seconds,
+            )
+            if response_composer_port is not None
+            else None
+        )
         self._run_lock = RLock()
         self._last_plan: ExecutionPlan | None = None
 
@@ -377,10 +414,7 @@ class PlanExecutor:
                 states=states,
                 cancellation_accepted=working_plan.status is PlanStatus.CANCELLED,
             )
-            final_result = finalize_plan(
-                aggregation,
-                synthesized_result=self._synthesis_result(working_plan, results),
-            )
+            final_result = self._finalize_aggregation(aggregation, execution, cancellation)
             return PlanExecutionResult(
                 working_plan,
                 results,
@@ -980,10 +1014,7 @@ class PlanExecutor:
                 states=states,
                 cancellation_accepted=plan_cancelled,
             )
-        final_result = finalize_plan(
-            aggregation,
-            synthesized_result=self._synthesis_result(working_plan, results),
-        )
+        final_result = self._finalize_aggregation(aggregation, execution, cancellation)
         return PlanExecutionResult(
             working_plan,
             results,
@@ -992,6 +1023,158 @@ class PlanExecutor:
             aggregation,
             final_result,
         )
+
+    def _finalize_aggregation(
+        self,
+        aggregation: PlanAggregation,
+        execution: PlanExecutionRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> TaskResult:
+        """Apply one common V3.5 presentation decision after aggregation."""
+
+        if self._response_pipeline is None:
+            return finalize_plan(
+                aggregation,
+                synthesized_result=self._synthesis_result(aggregation.plan, aggregation.step_results),
+            )
+
+        stored = self._stored_response_result(aggregation)
+        if stored is not None:
+            self._record_response_composition(
+                aggregation.plan,
+                ResponsePipelineResult(
+                    result=stored,
+                    mode=PresentationMode.COMPOSED,
+                    observation=None,
+                ),
+            )
+            return stored
+
+        # Persist an application-owned attempt reservation before invoking the
+        # local model. If the process stops after dispatch but before the final
+        # draft is stored, recovery deterministically finalizes the canonical
+        # aggregation instead of issuing a second composition request.
+        self._reserve_response_composition(aggregation.plan)
+        composed = self._response_pipeline.compose_aggregation(
+            aggregation,
+            request=execution.request,
+            approved_context=execution.context_text,
+            cancellation=cancellation,
+        )
+        self._record_response_composition(aggregation.plan, composed)
+        self._save_response_composition(
+            aggregation.plan,
+            composed,
+            retain_output=(
+                execution.request.persistence_mode is PersistenceMode.STORE_WITH_RETENTION
+            ),
+        )
+        return composed.result
+
+    def _reserve_response_composition(self, plan: ExecutionPlan) -> None:
+        save = getattr(self._repository, "save_synthesis_result", None)
+        if not callable(save):
+            return
+        save(
+            plan.plan_id,
+            plan.finalization,
+            "response_composition:attempting",
+            (),
+            {"mode": "", "outcome": "attempting", "answer": "", "answer_retained": False},
+            at=self._clock.now(),
+        )
+        append_event = getattr(self._repository, "append_plan_event", None)
+        if callable(append_event):
+            append_event(
+                plan.plan_id,
+                "response_composer.attempted",
+                "RESPONSE_COMPOSITION_RESERVED",
+                "attempted=1 outcome=attempting",
+                at=self._clock.now(),
+            )
+
+    def _record_response_composition(
+        self,
+        plan: ExecutionPlan,
+        composed: ResponsePipelineResult,
+    ) -> None:
+        observation = composed.observation
+        if observation is None:
+            return
+        append_event = getattr(self._repository, "append_plan_event", None)
+        if not callable(append_event):
+            return
+        outcome = observation.outcome or "unknown"
+        reason = observation.reason_code[:128]
+        detail = (
+            f"mode={observation.mode.value} attempted={int(observation.attempted)} "
+            f"outcome={outcome} profile={observation.profile[:64]} "
+            f"model={observation.model_version[:128]} "
+            f"result_refs={','.join(observation.result_refs)} "
+            f"claim_refs={','.join(observation.claim_refs)} "
+            f"citation_refs={','.join(observation.citation_refs)} "
+            f"warning_refs={','.join(observation.warning_refs)} "
+            f"disagreement_refs={','.join(observation.disagreement_refs)} "
+            f"record_refs={','.join(observation.immutable_record_refs)} "
+            f"duration_ms={observation.duration_ms} output_tokens={observation.output_tokens}"
+        )
+        append_event(
+            plan.plan_id,
+            f"response_composer.{outcome}",
+            reason or "RESPONSE_COMPOSITION_RECORDED",
+            detail[:512],
+            at=self._clock.now(),
+        )
+
+    def _save_response_composition(
+        self,
+        plan: ExecutionPlan,
+        composed: ResponsePipelineResult,
+        *,
+        retain_output: bool,
+    ) -> None:
+        observation = composed.observation
+        save = getattr(self._repository, "save_synthesis_result", None)
+        if observation is None or not callable(save):
+            return
+        output: dict[str, object] = {
+            "mode": observation.mode.value,
+            "outcome": observation.outcome,
+            "reason_code": observation.reason_code,
+            "profile": observation.profile,
+            "model_version": observation.model_version,
+            "result_refs": list(observation.result_refs),
+            "claim_refs": list(observation.claim_refs),
+            "citation_refs": list(observation.citation_refs),
+            "warning_refs": list(observation.warning_refs),
+            "disagreement_refs": list(observation.disagreement_refs),
+            "immutable_record_refs": list(observation.immutable_record_refs),
+            "duration_ms": observation.duration_ms,
+            "output_tokens": observation.output_tokens,
+            "answer": composed.result.answer if retain_output else "",
+            "answer_retained": bool(retain_output and composed.result.answer_retained),
+        }
+        save(
+            plan.plan_id,
+            plan.finalization,
+            f"response_composition:{observation.outcome}",
+            observation.result_refs,
+            output,
+            at=self._clock.now(),
+        )
+
+    def _stored_response_result(self, aggregation: PlanAggregation) -> TaskResult | None:
+        get = getattr(self._repository, "get_synthesis_result", None)
+        if not callable(get):
+            return None
+        record = get(aggregation.plan_id)
+        if record is None or not record.validation_state.startswith("response_composition:"):
+            return None
+        canonical = TemplateFinalizer().finalize(aggregation)
+        answer = record.output.get("answer") if isinstance(record.output, Mapping) else None
+        if not isinstance(answer, str) or not answer.strip():
+            return canonical
+        return replace(canonical, answer=answer, answer_retained=True)
 
     def _call_step(
         self,
@@ -1008,6 +1191,18 @@ class PlanExecutor:
         cancellation.raise_if_cancelled()
         if step.kind is StepKind.LOCAL_SYNTHESIS:
             before_dispatch()
+            if self._response_pipeline is not None:
+                # A persisted V3 plan may still contain the old terminal
+                # synthesis node.  Treat it as a deterministic migration shim;
+                # V3.5's single response composer runs only after the complete
+                # aggregation below.
+                source_result = source_aggregation(
+                    plan,
+                    results,
+                    envelopes,
+                    {item.step_id: item.state for item in plan.steps},
+                )
+                return _StepCallResult(TemplateFinalizer().finalize(source_result))
             if self._synthesis_executor is not None:
                 result = self._synthesis_executor(plan, step, results, cancellation)
                 if not isinstance(result, TaskResult):

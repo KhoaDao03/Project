@@ -23,10 +23,12 @@ if TYPE_CHECKING:
 from .adapters.audit_log import StructuredAuditLog
 from .adapters.fake_generalist import FakeGeneralist
 from .adapters.fake_planner import FakePlanner, PlannerFailureMode
+from .adapters.fake_response_composer import FakeResponseComposer
 from .adapters.fake_synthesis import FakeSynthesis
 from .adapters.http_document_retriever import HttpDocumentRetriever
 from .adapters.ollama_generalist import OllamaGeneralist
 from .adapters.ollama_planner import OllamaPlanner
+from .adapters.ollama_response_composer import OllamaResponseComposer
 from .adapters.ollama_synthesis import OllamaSynthesis
 from .adapters.openai_specialist import OpenAISpecialistProvider
 from .adapters.openai_web_research import OpenAIHostedWebSearch
@@ -57,6 +59,7 @@ from .application.replan import (
     ReplanTrigger,
 )
 from .application.research import ResearchPipeline
+from .application.response_pipeline import ResponseCompositionService
 from .application.routing import RoutingPolicy
 from .application.specialist_policy import SpecialistExecutionPolicy
 from .application.specialists import SpecialistWorkflow
@@ -81,6 +84,7 @@ from .ports.audit import AuditPort
 from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
 from .ports.local_planner import LocalPlannerPort
+from .ports.local_response_composer import LocalResponseComposerPort
 from .ports.local_synthesis import LocalSynthesisPort
 from .ports.plan_repository import PlanRepositoryPort
 from .ports.repository import SessionRepositoryPort
@@ -163,6 +167,7 @@ class Application:
         action_authorization: ActionAuthorizationService | None = None,
         planner: LocalPlannerPort | None = None,
         synthesis: LocalSynthesisPort | None = None,
+        response_composer: LocalResponseComposerPort | None = None,
         plan_builder: PlanBuilder | None = None,
         plan_executor: PlanExecutor | None = None,
         plan_orchestrator: PlanOrchestrator | None = None,
@@ -205,7 +210,8 @@ class Application:
             self.capability_registry.routing_catalog(),
             config.execution_plan_limits(),
             default_timeout_seconds=config.tool_timeout_seconds,
-            synthesis_timeout_seconds=config.synthesis_role.timeout_seconds,
+            synthesis_timeout_seconds=config.response_composer_role.timeout_seconds,
+            legacy_synthesis_enabled=response_composer is None,
         )
         self.replan_service = replan_service or ReplanService(
             repository=self.plan_repository,
@@ -222,6 +228,20 @@ class Application:
         # callers that construct the application without the composition root.
         self.planner = planner if planner is not None else FakePlanner()
         self.synthesis = synthesis if synthesis is not None else FakeSynthesis()
+        # ``synthesis`` remains the V3 compatibility injection.  New callers
+        # should provide the independently role-bound response composer.
+        self.response_composer = response_composer
+        self.response_pipeline = (
+            ResponseCompositionService(
+                composer=response_composer,
+                max_output_tokens=config.response_composer_role.max_output_tokens,
+                timeout_seconds=config.response_composer_role.timeout_seconds,
+                profile=config.response_composer_role.profile_name,
+                model_version=config.response_composer_role.model_id,
+            )
+            if response_composer is not None
+            else None
+        )
         self.plan_interpreter = PlanInterpreter(
             planner=self.planner,
             capabilities=self.capability_registry,
@@ -245,6 +265,7 @@ class Application:
             privacy_policy=self.privacy_policy,
             cloud_authorization_policy=self.cloud_authorization_policy,
             action_authorization=self.action_authorization,
+            response_pipeline=self.response_pipeline,
         )
         self.plan_executor = plan_executor or PlanExecutor(
             repository=self.plan_repository,
@@ -253,8 +274,12 @@ class Application:
             clock=clock,
             max_workers=config.max_parallel_steps,
             synthesis_port=self.synthesis,
-            synthesis_max_output_tokens=config.synthesis_role.max_output_tokens,
-            synthesis_timeout_seconds=config.synthesis_role.timeout_seconds,
+            synthesis_max_output_tokens=config.response_composer_role.max_output_tokens,
+            synthesis_timeout_seconds=config.response_composer_role.timeout_seconds,
+            response_composer_port=response_composer,
+            response_composer_max_output_tokens=config.response_composer_role.max_output_tokens,
+            response_composer_timeout_seconds=config.response_composer_role.timeout_seconds,
+            response_pipeline=self.response_pipeline,
         )
         self.plan_orchestrator = plan_orchestrator or PlanOrchestrator(
             repository=self.plan_repository,
@@ -282,6 +307,7 @@ class Application:
             profile_service=self.profile,
             routing_policy=self.routing_policy,
             context_builder=self.context_builder,
+            response_pipeline=self.response_pipeline,
         )
 
     # -- session lifecycle -------------------------------------------------
@@ -328,7 +354,8 @@ class Application:
             self.capability_registry.routing_catalog(),
             self.config.execution_plan_limits(),
             default_timeout_seconds=self.config.tool_timeout_seconds,
-            synthesis_timeout_seconds=self.config.synthesis_role.timeout_seconds,
+            synthesis_timeout_seconds=self.config.response_composer_role.timeout_seconds,
+            legacy_synthesis_enabled=self.response_pipeline is None,
         )
         plan = builder.build(
             proposal,
@@ -456,7 +483,11 @@ class Application:
     def health(self) -> list[HealthReport]:
         """Report each dependency's health for `/status`. Never exposes secrets."""
         reports = [self.generalist.health()]
-        reports.append(self.synthesis.health())
+        reports.append(
+            self.response_composer.health()
+            if self.response_composer is not None
+            else self.synthesis.health()
+        )
         if self.research is not None:
             reports.append(self.research.provider.health())
         if self.specialist_workflow is not None:
@@ -640,7 +671,7 @@ def build(toml_path: str | None = None) -> Application:
             max_output_tokens=max(
                 config.conversation_role.max_output_tokens,
                 config.planner_role.max_output_tokens,
-                config.synthesis_role.max_output_tokens,
+                config.response_composer_role.max_output_tokens,
                 config.specialist_max_output_tokens,
                 config.research_max_output_tokens,
             ),
@@ -744,8 +775,13 @@ def build(toml_path: str | None = None) -> Application:
         ),
         synthesis=(
             FakeSynthesis()
-            if config.synthesis_role.provider == "fake"
-            else OllamaSynthesis(role=config.synthesis_role)
+            if config.response_composer_role.provider == "fake"
+            else OllamaSynthesis(role=config.response_composer_role)
+        ),
+        response_composer=(
+            FakeResponseComposer()
+            if config.response_composer_role.provider == "fake"
+            else OllamaResponseComposer(role=config.response_composer_role)
         ),
     )
     if os.environ.get("ELLY_BACKUP_KEY"):

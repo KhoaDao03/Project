@@ -27,7 +27,8 @@ from .domain.errors import ConfigInvalidError
 if TYPE_CHECKING:
     from .planning.contracts import PlanLimitsSnapshot
 
-_LOCAL_MODEL_ROLES = ("conversation", "planner", "synthesis")
+_LOCAL_MODEL_ROLES = ("conversation", "planner", "response_composer")
+_LOCAL_MODEL_ROLE_ALIASES = {"synthesis": "response_composer"}
 _LOCAL_MODEL_PROFILE_FIELDS = frozenset({"provider", "model_id", "base_url", "timeout_seconds"})
 _PROFILE_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 
@@ -97,6 +98,10 @@ class LocalModelRoleConfig:
     max_output_tokens: int
 
     def __post_init__(self) -> None:
+        if self.role == "synthesis":
+            # Constructor-level compatibility for V3 adapters/tests.  Loaded
+            # configuration is always exposed under the canonical role name.
+            object.__setattr__(self, "role", "response_composer")
         if self.role not in _LOCAL_MODEL_ROLES:
             raise ConfigInvalidError("local model role is unsupported")
         if not isinstance(self.profile, LocalModelProfile):
@@ -142,7 +147,7 @@ class Config:
     local_model_profiles: tuple[LocalModelProfile, ...]
     conversation_role: LocalModelRoleConfig
     planner_role: LocalModelRoleConfig
-    synthesis_role: LocalModelRoleConfig
+    response_composer_role: LocalModelRoleConfig
     max_input_chars: int
     context_window_messages: int
     specialist_max_output_tokens: int
@@ -186,9 +191,11 @@ class Config:
         names = tuple(profile.name for profile in self.local_model_profiles)
         if len(set(names)) != len(names):
             raise ConfigInvalidError("local model profile names must be unique")
-        roles = (self.conversation_role, self.planner_role, self.synthesis_role)
+        roles = (self.conversation_role, self.planner_role, self.response_composer_role)
         if tuple(role.role for role in roles) != _LOCAL_MODEL_ROLES:
-            raise ConfigInvalidError("local model roles must be conversation, planner, synthesis")
+            raise ConfigInvalidError(
+                "local model roles must be conversation, planner, response_composer"
+            )
         for role in roles:
             if role.profile_name not in names:
                 raise ConfigInvalidError(
@@ -215,15 +222,21 @@ class Config:
 
     def local_model_role(self, role: str) -> LocalModelRoleConfig:
         """Return the resolved immutable configuration for one logical role."""
+        role = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
         roles = {
             "conversation": self.conversation_role,
             "planner": self.planner_role,
-            "synthesis": self.synthesis_role,
+            "response_composer": self.response_composer_role,
         }
         try:
             return roles[role]
         except KeyError as exc:
             raise ConfigInvalidError(f"unknown local model role: {role}") from exc
+
+    @property
+    def synthesis_role(self) -> LocalModelRoleConfig:
+        """Temporary V3 compatibility alias for ``response_composer_role``."""
+        return self.response_composer_role
 
     def execution_plan_limits(self) -> PlanLimitsSnapshot:
         """Return the immutable V3 ceilings captured by a validated plan."""
@@ -331,7 +344,7 @@ _DEFAULT_LOCAL_PROFILE: dict[str, object] = {
 _DEFAULT_LOCAL_ROLE_LIMITS: dict[str, int] = {
     "conversation": 512,
     "planner": 1200,
-    "synthesis": 1600,
+    "response_composer": 1600,
 }
 
 
@@ -611,7 +624,10 @@ def _from_env() -> dict[str, object]:
 
     role_bindings: list[tuple[str, object]] = []
     role_limits: list[tuple[str, object]] = []
-    for role in _LOCAL_MODEL_ROLES:
+    # ``synthesis`` is retained only as an explicit migration alias.  Read
+    # both spellings so old deployments can move without source changes.
+    env_roles = _LOCAL_MODEL_ROLES + ("synthesis",)
+    for role in env_roles:
         upper_role = role.upper()
         binding_names = (
             f"ELLY_LOCAL_{upper_role}_PROFILE",
@@ -714,11 +730,12 @@ def _apply_role_bindings(
     bindings: dict[str, str], entries: tuple[tuple[str, object], ...], source: str
 ) -> None:
     for role, profile_name in entries:
-        if role not in _LOCAL_MODEL_ROLES:
+        canonical_role = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
+        if canonical_role not in _LOCAL_MODEL_ROLES:
             raise ConfigInvalidError(f"{source} contains an unsupported local model role: {role}")
         if not isinstance(profile_name, str) or not profile_name.strip():
             raise ConfigInvalidError(f"{source} binding for {role} must name a profile")
-        bindings[role] = profile_name
+        bindings[canonical_role] = profile_name
 
 
 def _apply_role_limits(
@@ -726,9 +743,65 @@ def _apply_role_limits(
 ) -> None:
     for key, value in entries:
         role = key.removesuffix("_max_output_tokens")
+        role = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
         if role not in _LOCAL_MODEL_ROLES:
             raise ConfigInvalidError(f"{source} contains an unsupported role limit: {key}")
         limits[role] = value
+
+
+def _reject_role_alias_conflicts(
+    *entry_sets: object,
+) -> None:
+    """Reject simultaneous legacy and canonical composer bindings.
+
+    The default binding is not considered an explicit binding.  This lets an
+    old configuration containing only ``synthesis`` migrate safely, while a
+    file/environment pair that names both forms fails closed instead of
+    silently selecting one.
+    """
+
+    seen: dict[str, set[str]] = {}
+    for entries in entry_sets:
+        for role, _value in _pairs(entries, "local model role entries"):
+            if role == "synthesis":
+                logging.getLogger("elly.config").warning(
+                    "local model role 'synthesis' is deprecated; use 'response_composer'"
+                )
+            canonical = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
+            spellings = seen.setdefault(canonical, set())
+            if spellings and role not in spellings:
+                raise ConfigInvalidError(
+                    "conflicting local model role bindings for response_composer: "
+                    "configure only response_composer or its deprecated synthesis alias"
+                )
+            # The same spelling may be layered by environment over TOML using
+            # the normal configuration precedence rules.  Only mixed legacy
+            # and canonical spellings are unsafe and rejected above.
+            spellings.add(role)
+
+
+def _reject_role_limit_alias_conflicts(
+    *entry_sets: object,
+) -> None:
+    """Apply the same explicit conflict rule to role output-limit aliases."""
+
+    seen: dict[str, set[str]] = {}
+    for entries in entry_sets:
+        for key, _value in _pairs(entries, "local model role limit entries"):
+            role = key.removesuffix("_max_output_tokens")
+            if role == "synthesis":
+                logging.getLogger("elly.config").warning(
+                    "role limit 'synthesis_max_output_tokens' is deprecated; use "
+                    "'response_composer_max_output_tokens'"
+                )
+            canonical = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
+            spellings = seen.setdefault(canonical, set())
+            if spellings and role not in spellings:
+                raise ConfigInvalidError(
+                    "conflicting local model role limits for response_composer: "
+                    "configure only response_composer or its deprecated synthesis alias"
+                )
+            spellings.add(role)
 
 
 def _build_local_roles(
@@ -783,6 +856,10 @@ def _build_local_roles(
     _apply_profile_overrides(profiles, env_profile_overrides, source="local model environment")
 
     if not (legacy and not new_configuration):
+        _reject_role_alias_conflicts(
+            toml_values.get("_local_model_roles"),
+            env_values.get("_local_model_role_env"),
+        )
         _apply_role_bindings(
             role_bindings,
             _pairs(toml_values.get("_local_model_roles"), "local_models.roles"),
@@ -798,6 +875,10 @@ def _build_local_roles(
     if legacy and not new_configuration:
         role_limits["conversation"] = merged["generalist_max_output_tokens"]
     else:
+        _reject_role_limit_alias_conflicts(
+            toml_values.get("_local_model_role_limits"),
+            env_values.get("_local_model_role_limit_env"),
+        )
         _apply_role_limits(
             role_limits,
             _pairs(
@@ -838,7 +919,8 @@ def _build_local_roles(
             else (_raise_unknown_profile(profile_name)),
             max_output_tokens=_as_positive_int(role_limits[role], f"{role}_max_output_tokens"),
         )
-        for role, profile_name in role_bindings.items()
+        for role in _LOCAL_MODEL_ROLES
+        for profile_name in (role_bindings[role],)
     )
     return resolved_profiles, role_configs
 
@@ -955,7 +1037,7 @@ def load_config(toml_path: str | None = None) -> Config:
         local_model_profiles=local_profiles,
         conversation_role=role_by_name["conversation"],
         planner_role=role_by_name["planner"],
-        synthesis_role=role_by_name["synthesis"],
+        response_composer_role=role_by_name["response_composer"],
         max_input_chars=_as_positive_int(merged["max_input_chars"], "max_input_chars"),
         context_window_messages=_as_positive_int(
             merged["context_window_messages"], "context_window_messages"

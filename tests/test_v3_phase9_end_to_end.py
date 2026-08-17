@@ -10,6 +10,7 @@ from threading import Barrier
 from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_generalist import FakeGeneralist
 from elly.adapters.fake_planner import FakePlanner
+from elly.adapters.fake_response_composer import FakeResponseComposer
 from elly.adapters.fake_synthesis import FakeSynthesis
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
@@ -212,6 +213,7 @@ class ComposedWorkflowTests(unittest.TestCase):
         *,
         proposal: ExecutionProposal | None = None,
         additional_capabilities: tuple[_Capability, ...] = (),
+        response_composer: FakeResponseComposer | None = None,
     ) -> Application:
         repository = SqliteSessionRepository(":memory:")
         repository.apply_migrations()
@@ -226,6 +228,7 @@ class ComposedWorkflowTests(unittest.TestCase):
             consent=ConsentWorkflow(),
             planner=FakePlanner(selected_proposal),
             synthesis=FakeSynthesis(),
+            response_composer=response_composer,
             executor=BoundedTaskExecutor(workers=2, queue_size=4),
         )
 
@@ -393,6 +396,44 @@ class ComposedWorkflowTests(unittest.TestCase):
         self.assertIn("completed:phase9.specialist_two", result.value.answer)
         assert result.value.plan is not None
         self.assertEqual(4, len(result.value.plan.steps))
+
+    def test_v35_multi_result_plan_uses_one_post_aggregation_composer(self) -> None:
+        research = _Capability("phase9.v35_research", kind=CapabilityKind.RESEARCH)
+        first = _Capability("phase9.v35_specialist_one")
+        second = _Capability("phase9.v35_specialist_two")
+        proposal = _research_synthesis_proposal(
+            research.descriptor.capability_id,
+            (first.descriptor.capability_id, second.descriptor.capability_id),
+        )
+        composer = FakeResponseComposer()
+        application = self._application(
+            research,
+            proposal=proposal,
+            additional_capabilities=(first, second),
+            response_composer=composer,
+        )
+        api = EllyApplication(application)
+        self.addCleanup(api.close)
+        session = api.create_session(CreateSessionRequest())
+        assert session.value is not None
+
+        result = api.submit_and_wait(
+            SubmitRequest(
+                "phase9-v35-multi",
+                session.value.session_id,
+                "research and compare two analyses of the current public topic",
+            )
+        )
+
+        self.assertTrue(result.is_success)
+        assert result.value is not None
+        self.assertEqual(TaskStatus.COMPLETED, result.value.status)
+        self.assertEqual(1, len(composer.requests))
+        assert result.value.plan is not None
+        self.assertEqual(3, len(result.value.plan.steps))
+        self.assertNotIn("synthesis", {step.step_id for step in result.value.plan.steps})
+        self.assertIn("completed:phase9.v35_specialist_one", result.value.answer)
+        self.assertIn("completed:phase9.v35_specialist_two", result.value.answer)
 
 
 if __name__ == "__main__":

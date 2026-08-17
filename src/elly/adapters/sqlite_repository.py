@@ -1372,7 +1372,11 @@ class SqliteSessionRepository:
                 )
                 self._insert_plan_event(
                     plan_id,
-                    "synthesis.result",
+                    (
+                        "response_composer.result"
+                        if validation_state.startswith("response_composition:")
+                        else "synthesis.result"
+                    ),
                     validation_event_code,
                     (
                         f"strategy={strategy.value} refs={len(referenced_result_ids)} "

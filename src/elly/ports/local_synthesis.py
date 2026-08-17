@@ -770,6 +770,24 @@ decode_draft = decode_synthesis_draft
 encode_draft = encode_synthesis_draft
 draft_json_schema = synthesis_json_schema
 
+# V3.5 canonical response-composer contracts are re-exported here as a small
+# migration aid for integrations that imported the former synthesis port.
+from .local_response_composer import (  # noqa: E402
+    LocalResponseComposerPort,
+    MemoryContextPlaceholder,
+    PersonalityContextPlaceholder,
+    ResponseCitationSummary,
+    ResponseClaimSummary,
+    ResponseCompositionDraft,
+    ResponseCompositionInput,
+    ResponseCompositionRequest,
+    ResponseDisagreementSummary,
+    ResponseResultSummary,
+    ResponseSection,
+    ResponseWarningSummary,
+    decode_response_composition_draft,
+    response_composer_json_schema,
+)
 
 __all__ = [
     "LocalSynthesisPort",
@@ -793,4 +811,18 @@ __all__ = [
     "encode_draft",
     "encode_synthesis_draft",
     "synthesis_json_schema",
+    "LocalResponseComposerPort",
+    "MemoryContextPlaceholder",
+    "PersonalityContextPlaceholder",
+    "ResponseClaimSummary",
+    "ResponseCitationSummary",
+    "ResponseCompositionDraft",
+    "ResponseCompositionInput",
+    "ResponseCompositionRequest",
+    "ResponseDisagreementSummary",
+    "ResponseResultSummary",
+    "ResponseSection",
+    "ResponseWarningSummary",
+    "decode_response_composition_draft",
+    "response_composer_json_schema",
 ]

@@ -101,8 +101,13 @@ def render_plan_view(plan: PlanView) -> str:
             f"reason={step.reason_code or '-'} evidence={evidence}{usage}"
         )
     if plan.synthesis is not None:
+        label = (
+            "Response composer"
+            if plan.synthesis.validation_state.startswith("response_composition:")
+            else "Synthesis"
+        )
         lines.append(
-            f"Synthesis: strategy={plan.synthesis.strategy.value} "
+            f"{label}: strategy={plan.synthesis.strategy.value} "
             f"validation={plan.synthesis.validation_state} "
             f"references={','.join(plan.synthesis.referenced_result_ids) or 'none'}"
         )

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_generalist import FakeGeneralist
+from elly.adapters.fake_response_composer import FakeResponseComposer
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.application.capabilities import (
@@ -23,6 +24,7 @@ from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.conversation import ConversationOrchestrator
 from elly.application.local_conversation import LocalConversationUseCase
+from elly.application.response_pipeline import ResponseCompositionService
 from elly.application.routing import RoutingPolicy
 from elly.domain.enums import (
     CloudMode,
@@ -183,6 +185,65 @@ class CapabilityRegistryTests(unittest.TestCase):
         )
         self.assertEqual(outcome.result.answer, "handled")
         self.assertEqual(outcome.result.task_id, "task-capability-request")
+
+    def test_direct_blocked_capability_uses_the_common_composer_once(self) -> None:
+        repo = SqliteSessionRepository(":memory:")
+        repo.apply_migrations()
+        repo.create_session(
+            SessionRecord(
+                "session-capability",
+                PersistenceMode.STORE_WITH_RETENTION,
+                CloudMode.LOCAL_ONLY,
+                UTC,
+            )
+        )
+        self.addCleanup(repo.close)
+        registry = CapabilityRegistry((_Capability(available=False),))
+        audit = StructuredAuditLog()
+        clock = FixedClock(UTC)
+        completion = CompletionService(clock=clock, repository=repo, audit=audit)
+        composer = FakeResponseComposer()
+        pipeline = ResponseCompositionService(composer=composer)
+        orchestrator = ConversationOrchestrator(
+            clock=clock,
+            repository=repo,
+            audit=audit,
+            context_window=20,
+            local_conversation=LocalConversationUseCase(
+                generalist=FakeGeneralist(),
+                model_id="unused-local-model",
+                max_output_tokens=32,
+            ),
+            completion=completion,
+            capability_workflow=CapabilityExecutionWorkflow(
+                clock=clock,
+                capability_registry=registry,
+                completion=completion,
+                response_pipeline=pipeline,
+            ),
+            routing_policy=RoutingPolicy(capabilities=registry),
+            response_pipeline=pipeline,
+        )
+        outcome = orchestrator.handle(
+            TaskRequest(
+                request_id="blocked-capability-request",
+                session_id="session-capability",
+                text="test",
+                cloud_mode=CloudMode.LOCAL_ONLY,
+                persistence_mode=PersistenceMode.STORE_WITH_RETENTION,
+                submitted_at=UTC,
+                route_proposal=RouteProposal(
+                    route=Route.REGISTERED_CAPABILITY,
+                    capability_id="test-capability",
+                    request_schema="test-task-v1",
+                ),
+            )
+        )
+        self.assertEqual(TaskStatus.BLOCKED, outcome.result.task_status)
+        self.assertEqual(1, len(composer.requests))
+        persisted = repo.get_task_result("task-blocked-capability-request")
+        self.assertIsNotNone(persisted)
+        self.assertEqual(outcome.result.answer, persisted.answer)  # type: ignore[union-attr]
 
 
 if __name__ == "__main__":

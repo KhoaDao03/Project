@@ -875,7 +875,7 @@ class EllyApplication:
                             for role in (
                                 config.conversation_role,
                                 config.planner_role,
-                                config.synthesis_role,
+                                config.response_composer_role,
                             )
                         ),
                     ),

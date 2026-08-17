@@ -56,6 +56,7 @@ from .response_composer import (
     compose_failed,
     compose_partial,
 )
+from .response_pipeline import ResponseCompositionService
 from .route_compatibility import enrich_task_result, is_local_route
 from .routing_contracts import TaskIntent
 from .step_results import (
@@ -99,8 +100,11 @@ class CapabilityExecutionOutcome:
     action_confirmation: ActionConfirmationProposal | None = None
     route_decision: RouteDecision | None = None
     result_envelope: StepResultEnvelope | None = None
+    response_composed: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.response_composed, bool):
+            raise ConfigInvalidError("capability response_composed marker is invalid")
         if self.route_decision is not None:
             object.__setattr__(
                 self,
@@ -130,6 +134,7 @@ class CapabilityExecutionWorkflow:
         privacy_policy: PrivacyPolicy | None = None,
         cloud_authorization_policy: CloudAuthorizationPolicy | None = None,
         action_authorization: ActionAuthorizationService | None = None,
+        response_pipeline: ResponseCompositionService | None = None,
     ) -> None:
         self._clock = clock
         self._capability_registry = capability_registry
@@ -138,6 +143,11 @@ class CapabilityExecutionWorkflow:
         self._privacy_policy = privacy_policy or PrivacyPolicy()
         self._cloud_authorization_policy = cloud_authorization_policy or CloudAuthorizationPolicy()
         self._action_authorization = action_authorization or ActionAuthorizationService()
+        if response_pipeline is not None and not isinstance(
+            response_pipeline, ResponseCompositionService
+        ):
+            raise ConfigInvalidError("response pipeline is invalid")
+        self._response_pipeline = response_pipeline
 
     def execute(self, command: CapabilityExecutionCommand) -> CapabilityExecutionOutcome:
         """Execute one selected optional capability without invoking the orchestrator."""
@@ -467,6 +477,28 @@ class CapabilityExecutionWorkflow:
                     require_action_receipt=True,
                 )
             result = result_envelope.to_task_result()
+            if self._response_pipeline is not None and not command.plan_id and not command.step_id:
+                immutable_records: dict[str, str] = {}
+                receipt = result_envelope.action_receipt
+                if receipt is not None:
+                    record_ref = f"record-{receipt.receipt_id}"
+                    provider_reference = (
+                        f"; provider_reference={receipt.provider_reference}"
+                        if receipt.provider_reference
+                        else ""
+                    )
+                    immutable_records[record_ref] = (
+                        f"{receipt.receipt_id}: succeeded; capability={receipt.capability_id}; "
+                        f"operation={receipt.operation_id}; digest={receipt.action_digest}"
+                        f"{provider_reference}"
+                    )
+                result = self._response_pipeline.compose_task_result(
+                    result,
+                    request=command.request,
+                    approved_context=command.context_text,
+                    immutable_records=immutable_records,
+                    cancellation=command.cancellation,
+                ).result
             generated_result = result
             if command.persist_completion:
                 self._completion.complete_capability(
@@ -486,6 +518,11 @@ class CapabilityExecutionWorkflow:
                 consent_proposal=execution.consent_proposal,
                 route_decision=command.route_decision,
                 result_envelope=(result_envelope if command.require_typed_result else None),
+                response_composed=(
+                    self._response_pipeline is not None
+                    and not command.plan_id
+                    and not command.step_id
+                ),
             )
         except StorageFailureError as exc:
             if command.persist_completion:
