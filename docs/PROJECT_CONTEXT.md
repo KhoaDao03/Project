@@ -2,10 +2,10 @@
 
 **Project:** Elly Research Assistant (local-first personal AI assistant prototype)
 **Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
-**Generated:** 2026-08-15
+**Generated:** 2026-08-17
 **Branch:** `main`
-**Commit represented:** `2e97406fbaad8d8fd005cc27800dee5133b64403`
-**Working tree:** contains the uncommitted V2.5 implementation changes; inspect `git status` before handoff.
+**Commit represented:** `6ba01384335a3d80d6b4f1fbce216476098b7083` plus the uncommitted Architecture Consolidation Phase 5 implementation
+**Working tree:** contains the Phase 5 runtime-ownership changes; inspect `git status` before handoff.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -146,6 +146,22 @@ legacy synthesis role and persisted finalization values remain readable only
 through documented migration behavior. See
 [`docs/v3.5/IMPLEMENTATION.md`](v3.5/IMPLEMENTATION.md).
 
+**Architecture consolidation status:** Phases 0–5 are implemented. The canonical
+request path is Public API → `AssistantRuntime` → `PlanningService` → validated
+`ExecutionPlan` → `TaskExecutionService` → application-owned `CapabilityRegistry`
+→ `ResponseCompositionService` → `TaskResult`. `AssistantRuntime` owns outer
+request/context/plan/task/result/message lifecycle coordination and process-local
+authorization continuation. `composition.py` is the dependency/startup/operational
+wiring boundary. `PlanningService` remains the planning authority and
+`TaskExecutionService` remains the validated DAG execution authority. Compatibility
+delegates in `composition.Application`, `_ConversationCompatibilityFacade`,
+`PlanOrchestrator`, the `plan_executor` name, and API future/pending maps are
+non-authoritative and temporary pending Phase 6/later cleanup.
+
+Consent/action continuation across process restart is not supported: task and plan
+records are durable, but authorization-ID mappings and retained request context are
+process-local. Phase 5 preserves this existing boundary and adds no SQLite schema.
+
 ## 5. Users, Actors, and Use Cases
 
 | Actor | Responsibility | Boundary |
@@ -195,7 +211,10 @@ flowchart LR
 | Component | Responsibility | Inputs | Outputs | Dependencies | Status | Source |
 |---|---|---|---|---|---|---|
 | presentation | CLI, validation, rendering | text/commands | result text | application/config | Implemented | [cli.py](../src/elly/presentation/cli.py) |
-| application | routing and workflows | validated requests | outcomes/consent | ports, guardrails, domain | Implemented; evidence partial | [conversation.py](../src/elly/application/conversation.py) |
+| application runtime | outer request/context/plan/task/result/message lifecycle | validated requests | outcomes/consent | planning, execution, ports, guardrails | Implemented/Tested | [runtime.py](../src/elly/application/runtime.py) |
+| composition | adapters, registries, services, startup/operations/shutdown wiring | config | composed application/runtime | adapters and application services | Implemented/Tested | [composition.py](../src/elly/composition.py) |
+| planning | deterministic/LLM strategies and validated plans | route request/catalog | execution plan | live capability registry | Implemented/Tested | [planning_service.py](../src/elly/application/planning_service.py) |
+| execution | validated DAG scheduling, step state, cancellation/recovery | execution plan | plan execution result | capability registry/repository | Implemented/Tested | [plan_executor.py](../src/elly/application/plan_executor.py) |
 | domain | models, enums, transitions, errors | value objects | typed contracts | stdlib | Implemented/Tested | [models.py](../src/elly/domain/models.py) |
 | ports | replaceable boundaries | DTOs | protocol results | domain | Implemented | [CONTRACTS.md](v1/CONTRACTS.md) |
 | adapters | Ollama/OpenAI/SQLite/audit/clock | port DTOs | normalized results | network/filesystem | Implemented; smoke/partial verification | [adapters](../src/elly/adapters/) |
@@ -210,11 +229,18 @@ Trust boundaries are CLI input, model/provider output, hosted cloud, citation UR
 1. `src/elly/__main__.py:main` parses `--config`, loads configuration, calls `composition.build`, and starts `Cli.run`.
 2. `Cli.dispatch` handles commands or sends text to `_submit`; `validators.normalize_and_validate` performs NFC, empty, and size checks.
 3. A `TaskRequest` carries IDs, session cloud/persistence modes, text, and UTC timestamp.
-4. `ConversationOrchestrator.handle` records task state, loads recent messages/profile context, and selects a route using context-aware freshness/routing logic.
-5. The selected port is invoked through `GuardrailController`: Ollama, hosted research, or specialist workflow.
-6. Research validates citations and maps evidence status; specialists apply manifest scope, privacy/consent, strict schema, and execution-claim checks.
-7. Results are persisted only within retention/no-store rules; audit records are metadata-only and redacted.
-8. Typed `EllyError` failures map to structured statuses; `ConversationOutcome` reaches `render_result` and stdout.
+4. `EllyApplication` translates the public DTO and delegates to `AssistantRuntime`.
+5. `AssistantRuntime` loads bounded context, calls `PlanningService`, persists the
+   validated plan, and invokes `TaskExecutionService`.
+6. `TaskExecutionService` schedules only registry-validated capability IDs, with
+   dependency ordering, bounded concurrency, cancellation, authorization, recovery,
+   guardrails, privacy, and evidence behavior unchanged.
+7. `ResponseCompositionService` composes presentation over validated step material;
+   it does not alter application truth.
+8. `AssistantRuntime`, through `CompletionService` and repository ports, is the
+   single normal owner of final task completion, final result persistence, and
+   assistant-message persistence. The public API callback retains only temporary
+   Phase 6 future/authorization presentation state.
 
 ## 9. Important Contracts, Interfaces, and Data Models
 
@@ -434,6 +460,7 @@ Unittest covers deterministic unit/contract/integration/security behavior; it do
 src/elly/__main__.py          entry point
 src/elly/presentation/        CLI, validation, rendering
 src/elly/application/         conversation/research/specialist workflows
+src/elly/application/runtime.py outer request/task lifecycle coordinator
 src/elly/domain/              contracts, enums, state, errors
 src/elly/ports/               provider/storage/audit/clock contracts
 src/elly/adapters/            Ollama/OpenAI/SQLite/audit/clock implementations

@@ -201,9 +201,14 @@ It should provide a small, coherent use-case surface such as:
 
 ### Should own
 
-- orchestration entry points;
-- lifecycle coordination;
-- references to the major services.
+- request handling and bounded submission;
+- request-scoped context construction and planning invocation;
+- persistence of validated plans before execution;
+- invocation of `TaskExecutionService`;
+- normal final task completion and `TaskResult`/assistant-message persistence;
+- process-local authorization continuation identity and request context;
+- cancellation delegation between planning and execution;
+- session creation and references to the major services.
 
 ### Should not own
 
@@ -215,6 +220,27 @@ It should provide a small, coherent use-case surface such as:
 - duplicated task state already owned by the execution subsystem.
 
 There should be one runtime authority, not one runtime in `composition.Application` and a second runtime in the API façade.
+
+### Implemented Phase 5 boundary
+
+`application.runtime.AssistantRuntime` is the canonical outer lifecycle owner.
+`composition.Application` constructs it and retains narrow compatibility delegates;
+the detailed request path no longer lives in the composition root. Composition
+continues to own startup migration/recovery wiring, health, maintenance scheduling,
+backup/profile operational wiring, and shutdown because these are process-level
+composition concerns rather than request execution.
+
+Normal final task completion and final `TaskResult` persistence occur once in
+`AssistantRuntime` through `CompletionService`. The API callback only publishes
+temporary API compatibility state. API-owned future/pending maps and explicit
+consent/action denial completion remain bounded Phase 6 cleanup.
+
+Authorization continuation currently survives only within the running process:
+the runtime retains authorization ID to plan/step identity plus the request context
+needed for exact resume. Persisted task and plan records survive restart, but this
+continuation context does not, so a pending consent/action request cannot currently
+be resumed after restart. No restart-safe continuation contract or schema is added
+by Phase 5.
 
 ---
 
@@ -777,7 +803,12 @@ The finished architecture should have clear answers to these questions.
 | Who executes one step? | StepRunner / capability |
 | Who provides available operations? | CapabilityRegistry |
 | Who grants authorization? | Application-owned authorization/policy |
-| Who persists task/plan state? | Persistence adapter |
+| Who requests validated-plan persistence? | AssistantRuntime |
+| Who owns normal final task completion/result persistence? | AssistantRuntime via CompletionService |
+| Who persists task/plan state physically? | Persistence adapter behind repository ports |
+| Who persists assistant messages? | AssistantRuntime through SessionRepositoryPort |
+| Who retains authorization continuation? | AssistantRuntime (process-local) |
+| Who coordinates planning/execution cancellation? | AssistantRuntime delegates to each canonical service |
 | Who recovers interrupted work? | TaskExecutionService |
 | Who performs bounded replan/recovery? | Planning/execution recovery boundary |
 | Who writes the final answer? | ResponseCompositionService |

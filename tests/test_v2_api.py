@@ -221,31 +221,45 @@ class V2ApplicationApiTests(unittest.TestCase):
         self.assertEqual(TaskStatus.COMPLETED, decided.value.status)
         self.assertEqual((), self.api.list_consents().value)
 
-    def test_repeated_consent_resume_has_no_callback_persistence_race(self) -> None:
-        with patch("elly.api.application.logging.getLogger") as get_logger:
-            for index in range(30):
-                created = self.api.create_session(
-                    CreateSessionRequest(cloud_mode=CloudMode.CLOUD_PERMITTED)
+    def test_api_callback_does_not_duplicate_runtime_result_persistence(self) -> None:
+        created = self.api.create_session()
+        assert created.value is not None
+        repository = self.api._scope.repository
+        save_result = repository.save_task_result
+        with patch.object(repository, "save_task_result", wraps=save_result) as save:
+            completed = self.api.submit_and_wait(
+                SubmitRequest(
+                    "api-runtime-persistence",
+                    created.value.session_id,
+                    "hello",
                 )
-                assert created.value is not None
-                pending = self.api.submit_and_wait(
-                    SubmitRequest(
-                        f"api-consent-stress-{index}",
-                        created.value.session_id,
-                        "Research the latest news about my family",
-                    )
+            )
+        self.assertTrue(completed.is_success, completed.failure)
+        save.assert_called_once()
+
+    def test_repeated_consent_resume_uses_runtime_persistence_owner(self) -> None:
+        for index in range(30):
+            created = self.api.create_session(
+                CreateSessionRequest(cloud_mode=CloudMode.CLOUD_PERMITTED)
+            )
+            assert created.value is not None
+            pending = self.api.submit_and_wait(
+                SubmitRequest(
+                    f"api-consent-stress-{index}",
+                    created.value.session_id,
+                    "Research the latest news about my family",
                 )
-                self.assertTrue(pending.is_success)
-                proposals = self.api.list_consents().value
-                assert proposals is not None
-                proposal = next(
-                    item for item in proposals if item.task_id == f"task-api-consent-stress-{index}"
-                )
-                decided = self.api.decide_consent(
-                    ConsentDecisionRequest(proposal.proposal_id, approve=True)
-                )
-                self.assertTrue(decided.is_success, decided.failure)
-            get_logger.return_value.error.assert_not_called()
+            )
+            self.assertTrue(pending.is_success)
+            proposals = self.api.list_consents().value
+            assert proposals is not None
+            proposal = next(
+                item for item in proposals if item.task_id == f"task-api-consent-stress-{index}"
+            )
+            decided = self.api.decide_consent(
+                ConsentDecisionRequest(proposal.proposal_id, approve=True)
+            )
+            self.assertTrue(decided.is_success, decided.failure)
 
 
 if __name__ == "__main__":

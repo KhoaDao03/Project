@@ -8,7 +8,6 @@ crossing the interface boundary.
 
 from __future__ import annotations
 
-import logging
 import threading
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
@@ -942,15 +941,9 @@ class EllyApplication:
             except BaseException as exc:
                 self._future_errors[task_id] = exc
                 return
-            # Persist before publishing resumable consent/action state. Keep
-            # the façade lock until publication so submit_and_wait/get_task
-            # cannot observe a processed-but-not-yet-published callback.
-            try:
-                self._scope.repository.save_task_result(outcome.result, self._scope.clock.now())
-            except StorageFailureError:
-                logging.getLogger("elly.api").error(
-                    "task result persistence failed task_id=%s", task_id
-                )
+            # AssistantRuntime is authoritative for normal final result/task
+            # persistence. This callback only publishes API compatibility state.
+            # Consent/action denial remains API-owned until Phase 6.
             self._outcomes[task_id] = outcome
             if outcome.consent_proposal is not None:
                 self._pending_submissions[outcome.consent_proposal.proposal_id] = (

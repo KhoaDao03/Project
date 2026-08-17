@@ -343,19 +343,29 @@ Bounded replan should preserve:
 
 ---
 
-# 9. Phase 5 — Restore a true composition root and thin AssistantRuntime
+# 9. Phase 5 — Runtime ownership consolidation (completed)
 
 ## Objective
 
-Stop the composition root from also being a large runtime/state manager.
+Establish one genuine application runtime boundary so composition builds the
+system while the runtime coordinates the outer request lifecycle.
 
 ## Work
 
-- Separate dependency construction from runtime behavior.
-- Create/clarify a thin `AssistantRuntime` use-case façade.
-- Move execution state to `TaskExecutionService`.
-- Keep initialization/wiring in the composition layer.
-- Isolate maintenance scheduling if needed rather than mixing it with request execution.
+- Introduce `application.runtime.AssistantRuntime` as the owner of request handling
+  and bounded submission.
+- Move context construction, `PlanningService` invocation, validated-plan
+  persistence, `TaskExecutionService` invocation, normal final task/result/message
+  completion, and in-process authorization continuation into that runtime.
+- Make cancellation coordination explicit: planning cancellation remains in
+  `PlanningService`; execution cancellation remains in `TaskExecutionService`;
+  `AssistantRuntime` delegates to both.
+- Keep dependency construction, startup migration/recovery, health, maintenance,
+  backup/profile operational wiring, and shutdown in composition.
+- Remove normal final-result persistence from the public API future callback so
+  there is one authoritative application-layer persistence owner.
+- Preserve API consent/action state and denial completion as bounded compatibility
+  until Phase 6; do not redesign public DTOs or future tracking here.
 
 ## Composition root should primarily
 
@@ -366,21 +376,49 @@ Stop the composition root from also being a large runtime/state manager.
 - connect dependencies;
 - return the runtime/application façade.
 
-## AssistantRuntime should primarily
+## AssistantRuntime owns after Phase 5
 
-- submit;
-- query/wait;
-- cancel;
-- resume authorization/consent;
-- manage session-level application operations;
-- shutdown.
+- request handling and bounded submission;
+- request-scoped context and planning coordination;
+- validated-plan persistence and execution invocation;
+- normal final task/result/message completion;
+- in-process authorization/consent/action continuation identity and context;
+- planning/execution cancellation delegation;
+- session creation and execution/replan/recovery entry points.
+
+It does not own planner strategies, DAG scheduling, capability execution,
+response-composition policy, repository implementation, or operational maintenance.
+
+## Compatibility boundary
+
+`composition.Application`, `_ConversationCompatibilityFacade`, `PlanOrchestrator`,
+and the `plan_executor` attribute remain compatibility surfaces. They delegate to
+the canonical services and own no competing request/execution lifecycle. Their
+retirement condition is migration of API/CLI and legacy callers in Phase 6 or the
+later compatibility-removal phase.
+
+Consent/action continuation is currently process-local. Plans and tasks survive a
+restart, but authorization-ID mappings and the request context required to resume
+do not. Restart-safe authorization continuation was not an established supported
+contract, so this phase does not introduce a speculative schema or persistence
+subsystem.
 
 ## Acceptance criteria
 
-- Dependency wiring is understandable without reading runtime logic.
-- Runtime does not duplicate executor state.
-- Composition root no longer owns authorization/execution maps that belong lower in the architecture unless there is a documented reason.
-- Full suite passes.
+- **Passed:** a clear runtime/use-case boundary owns the outer request lifecycle.
+- **Passed:** `composition.py` contains wiring and operational lifecycle, not the
+  detailed request implementation.
+- **Passed:** planning, execution, registry-backed capability resolution, DAG
+  behavior, authorization, evidence, and response composition retain their
+  existing canonical owners.
+- **Passed:** normal final `TaskResult` persistence and task completion have one
+  authoritative owner (`AssistantRuntime`, via `CompletionService`).
+- **Passed:** no SQLite schema change or speculative manager abstraction was added.
+- **Passed:** public behavior and bounded compatibility surfaces remain intact.
+- **Passed:** targeted tests, 491-test deterministic suite, Ruff, strict MyPy,
+  compilation, whitespace, concurrency, cancellation, and recovery gates pass.
+
+Later phases are preserved below but remain subject to post-Phase-5 review.
 
 ---
 

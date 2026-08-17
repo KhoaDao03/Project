@@ -14,6 +14,7 @@ import threading
 import unittest
 
 from elly.adapters.fake_generalist import FailureMode
+from elly.application.runtime import AssistantRuntime
 from elly.composition import Application, build
 from elly.domain.enums import CloudMode, HealthState, PersistenceMode
 from elly.domain.models import GeneralistRequest, Message, TaskRequest
@@ -36,6 +37,7 @@ class CompositionTests(unittest.TestCase):
 
     def test_app_is_wired(self) -> None:
         self.assertIsNotNone(self.app.orchestrator)
+        self.assertIsInstance(self.app.runtime, AssistantRuntime)
         components = {r.component for r in self.app.health()}
         self.assertTrue(any(c.startswith("generalist") for c in components))
         self.assertIn("storage(sqlite)", components)

@@ -13,8 +13,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
-import uuid
 from concurrent.futures import Future
 from typing import TYPE_CHECKING, cast
 
@@ -62,41 +60,29 @@ from .application.replan import (
     ReplanTrigger,
 )
 from .application.research import ResearchPipeline
-from .application.response_composer import (
-    compose_blocked,
-    compose_clarification,
-    compose_possible_duplicate,
-)
 from .application.response_pipeline import ResponseCompositionService
-from .application.route_compatibility import enrich_task_result
 from .application.routing import RoutingPolicy
+from .application.runtime import AssistantRuntime
 from .application.specialist_policy import SpecialistExecutionPolicy
 from .application.specialists import SpecialistWorkflow
 from .config import Config, load_config
-from .domain.context import resolve_conversation_context
 from .domain.enums import (
     CloudMode,
-    ErrorClass,
     HealthState,
     PersistenceMode,
-    RouteReasonCode,
-    TaskStatus,
 )
 from .domain.errors import ConfigInvalidError
 from .domain.models import (
     ContextManifest,
     ConversationOutcome,
     HealthReport,
-    Message,
-    RouteDecision,
-    RouteRequest,
     SessionRecord,
     TaskRequest,
 )
 from .guardrails import BoundedTaskExecutor, GuardrailController, LimitPolicy
 from .memory import ProfileService
 from .operations import BackupService
-from .planning.contracts import ExecutionPlan, ExecutionProposal, ProposalDisposition
+from .planning.contracts import ExecutionPlan, ExecutionProposal
 from .ports.audit import AuditPort
 from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
@@ -176,16 +162,12 @@ class Application:
     """
 
     def cancel_active(self) -> bool:
-        """Cancel the active local or hosted operation through its provider port."""
-        planning = self.planning_service.cancel()
-        execution = self.task_execution_service.cancel_active()
-        return planning or execution
+        """Compatibility delegate to the application runtime."""
+        return self.runtime.cancel_active()
 
     def cancel_task(self, task_id: str) -> bool:
         """Cancel one identified in-flight operation through its provider port."""
-        planning = self.planning_service.cancel(task_id)
-        execution = self.task_execution_service.cancel_task(task_id)
-        return planning or execution
+        return self.runtime.cancel_task(task_id)
 
     def __init__(
         self,
@@ -235,11 +217,6 @@ class Application:
         self.research = research
         self.specialist_workflow = specialist_workflow
         self.consent = consent
-        self._v3_authorization_lock = threading.RLock()
-        self._v3_authorization_steps: dict[str, tuple[str, str]] = {}
-        self._v3_execution_context: dict[
-            str, tuple[str, str, ContextManifest, RouteDecision]
-        ] = {}
         self.local_conversation = local_conversation or LocalConversationUseCase(
             generalist=generalist,
             model_id=config.conversation_role.model_id,
@@ -350,6 +327,20 @@ class Application:
             context_window=config.context_window_messages,
             reserved_output_tokens=config.conversation_role.max_output_tokens,
         )
+        self.runtime = AssistantRuntime(
+            clock=clock,
+            repository=repository,
+            plan_repository=self.plan_repository,
+            planning_service=self.planning_service,
+            task_execution_service=self.task_execution_service,
+            context_builder=self.context_builder,
+            completion=self.completion,
+            response_pipeline=self.response_pipeline,
+            local_conversation=self.local_conversation,
+            context_window=config.context_window_messages,
+            guardrails=guardrails,
+            executor=executor,
+        )
         self.profile = ProfileService(repository, clock)
         self.backup: BackupService | None = None
         self._maintenance_stop = threading.Event()
@@ -364,15 +355,11 @@ class Application:
         persistence_mode: PersistenceMode = PersistenceMode.STORE_WITH_RETENTION,
         cloud_mode: CloudMode = CloudMode.LOCAL_ONLY,  # CloudMode.CLOUD_PERMITTED
     ) -> SessionRecord:
-        """Create and persist a fresh session; returns the record."""
-        record = SessionRecord(
-            session_id=f"session-{uuid.uuid4().hex[:12]}",
+        """Compatibility delegate for runtime-owned session creation."""
+        return self.runtime.new_session(
             persistence_mode=persistence_mode,
             cloud_mode=cloud_mode,
-            created_at=self.clock.now(),
         )
-        self.repository.create_session(record)
-        return record
 
     # -- health (OPS-002 initial) -----------------------------------------
 
@@ -402,16 +389,9 @@ class Application:
         same_contract: bool = True,
         cancellation: CancellationToken | None = None,
     ) -> ReplanResult:
-        """Create one policy-approved revision without dispatching it."""
-        if isinstance(source_plan, str):
-            loaded = self.plan_repository.get_plan(source_plan)
-            if loaded is None:
-                raise ConfigInvalidError("execution plan was not found")
-            resolved = loaded
-        else:
-            resolved = source_plan
-        return self.task_execution_service.replan(
-            resolved,
+        """Compatibility delegate for runtime-owned replanning coordination."""
+        return self.runtime.replan_plan(
+            source_plan,
             proposal,
             request=request,
             trigger=trigger,
@@ -428,7 +408,7 @@ class Application:
 
     def reconcile_plans(self) -> tuple[RecoveryReport, ...]:
         """Reconcile persisted nonterminal plans without starting providers."""
-        return self.task_execution_service.reconcile_startup()
+        return self.runtime.reconcile_plans()
 
     def execute_plan(
         self,
@@ -442,24 +422,21 @@ class Application:
         request_guardrails: GuardrailController | None = None,
         manage_task_lifecycle: bool = True,
     ) -> PlanExecutionResult:
-        """Execute a persisted V3 plan through the independent scheduler."""
-        effective_guardrails = request_guardrails
-        if effective_guardrails is None and self.guardrails is not None:
-            effective_guardrails = self.guardrails.for_request()
-        return self.task_execution_service.execute(
+        """Compatibility delegate for runtime-owned execution coordination."""
+        return self.runtime.execute_plan(
             plan,
             request=request,
             context_text=context_text,
             context_manifest=context_manifest,
             local_context_text=local_context_text,
             cancellation=cancellation,
-            request_guardrails=effective_guardrails,
+            request_guardrails=request_guardrails,
             manage_task_lifecycle=manage_task_lifecycle,
         )
 
     def cancel_plan(self, plan_id: str) -> bool:
         """Request cancellation of one active V3 plan."""
-        return self.task_execution_service.cancel(plan_id)
+        return self.runtime.cancel_plan(plan_id)
 
     def maintain_storage(self) -> None:
         """Apply configured retention and create a daily backup when enabled."""
@@ -537,272 +514,13 @@ class Application:
         )
         return reports
 
-    def _authorization_resume_target(self, request: TaskRequest) -> tuple[str, str] | None:
-        authorization_id = request.approval_id or request.action_confirmation_id
-        if authorization_id is None:
-            return None
-        with self._v3_authorization_lock:
-            return self._v3_authorization_steps.get(authorization_id)
-
-    def _handle_direct_planning_result(
-        self,
-        request: TaskRequest,
-        route_decision: RouteDecision,
-        prompt: str,
-        context_manifest: ContextManifest,
-    ) -> ConversationOutcome:
-        """Complete a non-executing planner decision without another orchestrator."""
-
-        task_id = f"task-{request.request_id}"
-        task_created = self.repository.start_task(
-            task_id,
-            request.session_id,
-            self.clock.now(),
-        )
-        if task_created:
-            self.repository.append_message(
-                request.session_id,
-                Message("user", request.text, self.clock.now()),
-            )
-        if route_decision.clarification_required:
-            result = compose_clarification(
-                task_id=task_id,
-                fields=route_decision.clarification_fields,
-                route=route_decision.generic_route,
-            )
-            event_type = "intent.clarification_required"
-            error_class = ErrorClass.INPUT_INVALID
-            detail = f"fields={','.join(route_decision.clarification_fields)}"
-        else:
-            unsupported_action = (
-                route_decision.reason_code is RouteReasonCode.ACTION_UNSUPPORTED
-            )
-            reason = (
-                "the requested consequential action is not supported"
-                if unsupported_action
-                else "the request could not be converted into an executable plan"
-            )
-            result = compose_blocked(
-                task_id=task_id,
-                reason=reason,
-                route=route_decision.generic_route,
-            )
-            event_type = (
-                "action.authorization_denied" if unsupported_action else "planning.unable"
-            )
-            error_class = ErrorClass.PERMISSION_DENIED
-            detail = (
-                "reason=ACTION_UNSUPPORTED provider_dispatch=not_started"
-                if unsupported_action
-                else "provider_dispatch=not_started"
-            )
-        if self.response_pipeline is not None:
-            result = self.response_pipeline.compose_task_result(
-                result,
-                request=request,
-                approved_context=prompt,
-            ).result
-        result = enrich_task_result(result, route_decision)
-        self.completion.emit(
-            request=request,
-            task_id=task_id,
-            route=route_decision.generic_route,
-            route_decision=route_decision,
-            event_type=event_type,
-            status=TaskStatus.BLOCKED,
-            error_class=error_class,
-            detail=detail,
-        )
-        self.completion.persist_result(result)
-        self.completion.finish_task(task_id, TaskStatus.BLOCKED)
-        return ConversationOutcome(result=result, manifest=context_manifest)
-
-    def _handle_planned(self, request: TaskRequest) -> ConversationOutcome:
-        """Run the V3 planner-to-DAG workflow behind the shared submission API."""
-        task_id = f"task-{request.request_id}"
-        resume_target = self._authorization_resume_target(request)
-        if resume_target is not None:
-            plan_id, step_id = resume_target
-            plan = self.task_execution_service.resume_authorized_step(plan_id, step_id)
-            with self._v3_authorization_lock:
-                context_text, local_context_text, context_manifest, route_decision = (
-                    self._v3_execution_context[plan_id]
-                )
-        else:
-            history = self.repository.recent_messages(
-                request.session_id, self.config.context_window_messages
-            )
-            conversation_context = resolve_conversation_context(
-                current_text=request.text,
-                history=history,
-            )
-            prompt, context_manifest = self.context_builder.build(
-                current_text=request.text,
-                history=history,
-            )
-            planning = self.planning_service.plan(
-                RouteRequest(
-                    request_id=request.request_id,
-                    text=request.text,
-                    contextual_text=conversation_context.routing_text,
-                    cloud_mode=request.cloud_mode,
-                ),
-                task_id,
-                approved_context=prompt,
-            )
-            decision = planning.decision
-            route_decision = decision.route_decision
-            if decision.proposal.disposition is not ProposalDisposition.CAPABILITY_PLAN:
-                return self._handle_direct_planning_result(
-                    request,
-                    route_decision,
-                    prompt,
-                    context_manifest,
-                )
-            planned = planning.plan
-            if planned is None:
-                raise ConfigInvalidError("planning returned no execution plan")
-            plan = planned
-            if self.repository.get_task_result(task_id) is not None:
-                duplicate = enrich_task_result(
-                    compose_possible_duplicate(
-                        task_id=task_id,
-                        route=route_decision.generic_route,
-                    ),
-                    route_decision,
-                )
-                return ConversationOutcome(result=duplicate, manifest=context_manifest)
-            self.plan_repository.save_plan(plan, at=self.clock.now())
-            context_text = conversation_context.remote_text
-            local_context_text = prompt
-            task_created = self.repository.start_task(task_id, request.session_id, self.clock.now())
-            if task_created:
-                self.repository.append_message(
-                    request.session_id,
-                    Message("user", request.text, self.clock.now()),
-                )
-            self.plan_repository.append_plan_event(
-                plan.plan_id,
-                "plan.interpreted",
-                decision.proposal.reason_code,
-                (
-                    f"catalog={decision.catalog_version} "
-                    f"fallback={str(decision.fallback_used).lower()} "
-                    f"strategy={planning.strategy.value}"
-                ),
-                at=self.clock.now(),
-            )
-            with self._v3_authorization_lock:
-                self._v3_execution_context[plan.plan_id] = (
-                    context_text,
-                    local_context_text,
-                    context_manifest,
-                    route_decision,
-                )
-
-        started = time.monotonic()
-        request_guardrails = (
-            self.guardrails.for_request() if self.guardrails is not None else None
-        )
-        execution = self.execute_plan(
-            plan,
-            request=request,
-            context_text=context_text,
-            context_manifest=context_manifest,
-            local_context_text=local_context_text,
-            request_guardrails=request_guardrails,
-            manage_task_lifecycle=False,
-        )
-        final_result = execution.final_result
-        if final_result is None:
-            raise ConfigInvalidError("plan execution returned no final result")
-        final_result = enrich_task_result(final_result, route_decision)
-        self.completion.record_sources(plan.task_id, final_result.citations)
-        self.completion.record_provenance(plan.task_id, final_result.provenance)
-        self.completion.persist_result(final_result)
-        self.completion.finish_task(plan.task_id, final_result.task_status)
-        if len(plan.steps) == 1:
-            local_step = plan.steps[0].capability_id == LOCAL_CONVERSATION_CAPABILITY_ID
-            event_type = (
-                "task.completed"
-                if local_step and final_result.task_status.value == "completed"
-                else "task.cancelled"
-                if local_step and final_result.task_status.value == "cancelled"
-                else "generalist.failed"
-                if local_step
-                else "capability.completed"
-            )
-            detail = (
-                f"capability={plan.steps[0].capability_id} "
-                f"operation={plan.steps[0].operation_id} unified_plan=true"
-            )
-            if local_step:
-                envelope = execution.step_envelopes.get(plan.steps[0].step_id)
-                usage = envelope.usage if envelope is not None else None
-                detail = (
-                    f"provider={type(self.local_conversation.generalist).__name__} "
-                    f"model={self.local_conversation.model_id} "
-                    "prompt=local-generalist-v1 tools=none "
-                    f"duration_ms={int((time.monotonic() - started) * 1000)} "
-                    f"output_tokens={usage.output_tokens if usage is not None else 0} "
-                    f"latency_ms={usage.latency_ms if usage is not None else 0} "
-                    f"{self.completion.guardrail_detail(request_guardrails)} "
-                    "unified_plan=true"
-                )
-            self.completion.emit(
-                request=request,
-                task_id=plan.task_id,
-                route=route_decision.generic_route,
-                route_decision=route_decision,
-                event_type=event_type,
-                status=final_result.task_status,
-                detail=detail,
-            )
-        assistant_message: Message | None = None
-        if (
-            final_result.answer_retained
-            and final_result.answer
-            and final_result.task_status.value not in {"awaiting_consent", "awaiting_confirmation"}
-        ):
-            assistant_message = Message("assistant", final_result.answer, self.clock.now())
-            self.repository.append_message(request.session_id, assistant_message)
-
-        with self._v3_authorization_lock:
-            if execution.consent_proposal is not None:
-                consent_proposal = execution.consent_proposal
-                self._v3_authorization_steps[consent_proposal.proposal_id] = (
-                    consent_proposal.plan_id,
-                    consent_proposal.step_id,
-                )
-            if execution.action_confirmation is not None:
-                action_confirmation = execution.action_confirmation
-                self._v3_authorization_steps[action_confirmation.confirmation_id] = (
-                    action_confirmation.plan_id,
-                    action_confirmation.step_id,
-                )
-            if execution.consent_proposal is None and execution.action_confirmation is None:
-                self._v3_execution_context.pop(plan.plan_id, None)
-                authorization_id = request.approval_id or request.action_confirmation_id
-                if authorization_id is not None:
-                    self._v3_authorization_steps.pop(authorization_id, None)
-        return ConversationOutcome(
-            result=final_result,
-            manifest=context_manifest,
-            assistant_message=assistant_message,
-            consent_proposal=execution.consent_proposal,
-            action_confirmation=execution.action_confirmation,
-        )
-
     def handle(self, request: TaskRequest) -> ConversationOutcome:
-        """Plan and handle one request synchronously through the canonical boundary."""
-
-        return self._handle_planned(request)
+        """Compatibility delegate to the canonical runtime boundary."""
+        return self.runtime.handle(request)
 
     def submit(self, request: TaskRequest) -> Future[ConversationOutcome]:
-        """Submit a conversation through bounded local admission."""
-        if self.executor is None:
-            raise RuntimeError("task executor is not configured")
-        return self.executor.submit(lambda: self.handle(request))
+        """Compatibility delegate to bounded runtime submission."""
+        return self.runtime.submit(request)
 
 
 def build(toml_path: str | None = None) -> Application:
