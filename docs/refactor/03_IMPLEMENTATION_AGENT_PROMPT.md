@@ -302,7 +302,7 @@ Phase 2  canonical PlanningService
 Phase 3  conversation becomes capability/unified path
 Phase 4  PlanExecutor -> TaskExecutionService responsibilities
 Phase 5  thin composition root + AssistantRuntime
-Phase 6  thin public API façade
+Phase 6  public API boundary + authorization lifecycle consolidation
 Phase 7  split SQLite implementation internally
 Phase 8  consolidate routing/contracts
 Phase 9  config compatibility cleanup

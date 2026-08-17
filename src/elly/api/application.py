@@ -10,24 +10,18 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import Future
-from dataclasses import dataclass, replace
 from typing import cast
 
 from ..application.action_authorization import safe_action_target_reference
 from ..application.plan_results import aggregate_plan_results
-from ..application.response_composer import compose_cancelled
-from ..application.route_compatibility import inherit_route_metadata
 from ..composition import Application
 from ..domain.enums import (
     CloudMode,
-    EpistemicStatus,
     ErrorClass,
     IntentAmbiguity,
     IntentEntitySource,
-    OutcomeCode,
     Route,
     TaskStatus,
-    ValidationStatus,
 )
 from ..domain.errors import (
     CancelledError,
@@ -42,7 +36,6 @@ from ..domain.models import (
     ActionConfirmationProposal,
     AuditEvent,
     CapabilityIntent,
-    ContextManifest,
     ConversationOutcome,
     IntentEntity,
     RouteProposal,
@@ -107,31 +100,17 @@ from .contracts import (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _PendingSubmission:
-    request: TaskRequest
-    proposal: ConsentProposal
-
-
-@dataclass(frozen=True, slots=True)
-class _PendingAction:
-    request: TaskRequest
-    proposal: ActionConfirmationProposal
-
-
 class EllyApplication:
     """Stable public application boundary for all interface adapters."""
 
     def __init__(self, scope: Application) -> None:
         self._scope = scope
         self._lock = threading.RLock()
+        # These maps are interface-only async publication state. Runtime and
+        # repositories remain authoritative for task lifecycle and results.
         self._futures: dict[str, Future[ConversationOutcome]] = {}
-        self._requests: dict[str, TaskRequest] = {}
         self._accepted_tasks: dict[str, str] = {}
         self._outcomes: dict[str, ConversationOutcome] = {}
-        self._future_errors: dict[str, BaseException] = {}
-        self._pending_submissions: dict[str, _PendingSubmission] = {}
-        self._pending_actions: dict[str, _PendingAction] = {}
         self._processed_futures: set[Future[ConversationOutcome]] = set()
 
     def close(self) -> None:
@@ -290,41 +269,39 @@ class EllyApplication:
                 raise StorageFailureError("stored task status is invalid") from exc
             with self._lock:
                 outcome = self._outcomes.get(task_id)
-            if outcome is None:
-                result = self._scope.repository.get_task_result(task_id)
-                if result is None and status in {
-                    TaskStatus.AWAITING_CONSENT,
-                    TaskStatus.AWAITING_CONFIRMATION,
-                    TaskStatus.COMPLETED,
-                    TaskStatus.PARTIAL,
-                    TaskStatus.CANCELLED,
-                    TaskStatus.FAILED,
-                    TaskStatus.BLOCKED,
-                }:
-                    # The orchestrator records its terminal row immediately
-                    # before the executor publishes the Future result. Give
-                    # that handoff a bounded opportunity to complete instead
-                    # of returning a terminal view with missing fields.
-                    self._wait_for_future(task_id)
-                    self._harvest_future(task_id)
-                    with self._lock:
-                        outcome = self._outcomes.get(task_id)
-                    result = (
-                        outcome.result
-                        if outcome is not None
-                        else self._scope.repository.get_task_result(task_id)
-                    )
-            else:
+            # Runtime persistence is authoritative. The retained outcome is
+            # only a bounded async-publication fallback while that write settles.
+            result = self._scope.repository.get_task_result(task_id)
+            if result is None and outcome is not None:
                 result = outcome.result
-            with self._lock:
-                action_confirmation = next(
-                    (
-                        pending.proposal
-                        for pending in self._pending_actions.values()
-                        if pending.proposal.task_id == task_id
-                    ),
-                    None,
+            if result is None and status in {
+                TaskStatus.AWAITING_CONSENT,
+                TaskStatus.AWAITING_CONFIRMATION,
+                TaskStatus.COMPLETED,
+                TaskStatus.PARTIAL,
+                TaskStatus.CANCELLED,
+                TaskStatus.FAILED,
+                TaskStatus.BLOCKED,
+            }:
+                # The runtime records its task row immediately before the
+                # executor publishes the Future result. Give that handoff a
+                # bounded opportunity to complete instead of returning a
+                # terminal view with missing fields.
+                self._wait_for_future(task_id)
+                self._harvest_future(task_id)
+                with self._lock:
+                    outcome = self._outcomes.get(task_id)
+                result = (
+                    self._scope.repository.get_task_result(task_id)
+                    or (outcome.result if outcome is not None else None)
                 )
+            runtime = getattr(self._scope, "runtime", None)
+            action_confirmation = (
+                runtime.pending_action_for_task(task_id)
+                if runtime is not None
+                and callable(getattr(runtime, "pending_action_for_task", None))
+                else None
+            )
             fallback_route = None
             if result is None:
                 fallback_route = next(
@@ -435,11 +412,12 @@ class EllyApplication:
 
     def _cancel_queued_task(self, task_id: str, session_id: str) -> ApiResult[TaskView]:
         """Materialize cancellation for work removed before orchestration starts."""
-        now = self._scope.clock.now()
-        result = compose_cancelled(task_id=task_id)
-        self._scope.repository.start_task(task_id, session_id, now)
-        self._scope.repository.finish_task(task_id, TaskStatus.CANCELLED.value, now)
-        self._scope.repository.save_task_result(result, now)
+        runtime = getattr(self._scope, "runtime", None)
+        if runtime is None or not callable(getattr(runtime, "cancel_queued_task", None)):
+            return ApiResult.failed(
+                _failure_unavailable("task runtime is unavailable", task_id)
+            )
+        runtime.cancel_queued_task(task_id, session_id)
         return self.get_task(task_id)
 
     # ---- approved query/command operations -----------------------------
@@ -637,69 +615,27 @@ class EllyApplication:
                 raise InputInvalidError("consent decision is invalid")
             _require_id(request.proposal_id, "proposal_id")
             _require_id(request.actor_id, "actor_id")
-            if self._scope.consent is None:
+            runtime = getattr(self._scope, "runtime", None)
+            if runtime is None or not callable(getattr(runtime, "decide_consent", None)):
                 return ApiResult.failed(
                     _failure_unavailable("consent workflow is unavailable", correlation_id)
                 )
-            with self._lock:
-                pending = self._pending_submissions.get(request.proposal_id)
-            if pending is None:
+            task_id = runtime.authorization_task_id(request.proposal_id)
+            if task_id is None:
                 return ApiResult.failed(_failure_not_found("consent proposal", request.proposal_id))
-            if not request.approve:
-                self._scope.consent.deny(
-                    request.proposal_id, interface=request.actor_id, now=self._scope.clock.now()
-                )
-                with self._lock:
-                    existing = self._outcomes.get(pending.proposal.task_id)
-                blocked = _blocked_after_consent_denial(
-                    pending.proposal,
-                    existing.result.route_summary
-                    if existing is not None
-                    else Route.REGISTERED_CAPABILITY,
-                )
-                if existing is not None:
-                    blocked = inherit_route_metadata(blocked, existing.result)
-                self._scope.repository.finish_task(
-                    pending.proposal.task_id, TaskStatus.BLOCKED.value, self._scope.clock.now()
-                )
-                self._scope.repository.save_task_result(blocked, self._scope.clock.now())
-                self._scope.audit.append(
-                    AuditEvent(
-                        task_id=pending.proposal.task_id,
-                        session_id=pending.request.session_id,
-                        event_type="consent.denied",
-                        at=self._scope.clock.now(),
-                        task_status=TaskStatus.BLOCKED,
-                        detail=f"proposal={request.proposal_id} actor={request.actor_id}",
-                    )
-                )
-                with self._lock:
-                    self._pending_submissions.pop(request.proposal_id, None)
-                return self.get_task(pending.proposal.task_id)
-            self._scope.consent.approve(
-                request.proposal_id, interface=request.actor_id, now=self._scope.clock.now()
+            approved_future = runtime.decide_consent(
+                request.proposal_id,
+                request.approve,
+                actor_id=request.actor_id,
             )
-            self._scope.audit.append(
-                AuditEvent(
-                    task_id=pending.proposal.task_id,
-                    session_id=pending.request.session_id,
-                    event_type="consent.approved",
-                    at=self._scope.clock.now(),
-                    task_status=TaskStatus.AWAITING_CONSENT,
-                    detail=f"proposal={request.proposal_id} actor={request.actor_id}",
-                )
-            )
-            approved_request = replace(pending.request, approval_id=request.proposal_id)
-            approved_future = self._submit_internal(approved_request)
+            self._track_future(task_id, approved_future)
             try:
                 approved_future.result(timeout=2.0)
             except TimeoutError:
                 pass
             except BaseException as exc:
                 return ApiResult.failed(_failure(exc, correlation_id))
-            with self._lock:
-                self._pending_submissions.pop(request.proposal_id, None)
-            return self.get_task(pending.proposal.task_id)
+            return self.get_task(task_id)
         except BaseException as exc:
             return ApiResult.failed(_failure(exc, correlation_id))
 
@@ -714,95 +650,29 @@ class EllyApplication:
                 raise InputInvalidError("action decision is invalid")
             _require_id(request.confirmation_id, "confirmation_id")
             _require_id(request.actor_id, "actor_id")
-            pending = self._pending_actions.get(request.confirmation_id)
-            if pending is None:
+            runtime = getattr(self._scope, "runtime", None)
+            if runtime is None or not callable(getattr(runtime, "decide_action", None)):
+                return ApiResult.failed(
+                    _failure_unavailable("action authorization is unavailable", correlation_id)
+                )
+            task_id = runtime.authorization_task_id(request.confirmation_id)
+            if task_id is None:
                 return ApiResult.failed(
                     _failure_not_found("action confirmation", request.confirmation_id)
                 )
-            if not request.approve:
-                self._scope.action_authorization.confirmations.deny(
-                    request.confirmation_id,
-                    interface=request.actor_id,
-                    now=self._scope.clock.now(),
-                )
-                with self._lock:
-                    prior_outcome = self._outcomes.get(pending.proposal.task_id)
-                route = (
-                    prior_outcome.result.route_summary
-                    if prior_outcome is not None
-                    else Route.LOCAL_CONVERSATION
-                )
-                blocked = _blocked_after_action_denial(pending.proposal, route)
-                if prior_outcome is not None:
-                    blocked = inherit_route_metadata(blocked, prior_outcome.result)
-                self._scope.repository.finish_task(
-                    pending.proposal.task_id,
-                    TaskStatus.BLOCKED.value,
-                    self._scope.clock.now(),
-                )
-                self._scope.repository.save_task_result(blocked, self._scope.clock.now())
-                self._scope.audit.append(
-                    AuditEvent(
-                        task_id=pending.proposal.task_id,
-                        session_id=pending.request.session_id,
-                        event_type="action.confirmation_denied",
-                        at=self._scope.clock.now(),
-                        task_status=TaskStatus.BLOCKED,
-                        detail=(
-                            f"confirmation={request.confirmation_id} "
-                            f"category={pending.proposal.proposal.category.value} "
-                            f"target={safe_action_target_reference(pending.proposal.proposal.target)} "
-                            f"digest={pending.proposal.action_digest[:16]} "
-                            f"actor={request.actor_id}"
-                        ),
-                    )
-                )
-                with self._lock:
-                    self._pending_actions.pop(request.confirmation_id, None)
-                    prior = self._outcomes.get(pending.proposal.task_id)
-                    self._outcomes[pending.proposal.task_id] = ConversationOutcome(
-                        result=blocked,
-                        manifest=(
-                            prior.manifest if prior is not None else ContextManifest((), {}, 0, 0)
-                        ),
-                    )
-                return self.get_task(pending.proposal.task_id)
-
-            self._scope.action_authorization.confirmations.approve(
+            approved_future = runtime.decide_action(
                 request.confirmation_id,
-                interface=request.actor_id,
-                now=self._scope.clock.now(),
+                request.approve,
+                actor_id=request.actor_id,
             )
-            self._scope.audit.append(
-                AuditEvent(
-                    task_id=pending.proposal.task_id,
-                    session_id=pending.request.session_id,
-                    event_type="action.confirmation_approved",
-                    at=self._scope.clock.now(),
-                    task_status=TaskStatus.AWAITING_CONFIRMATION,
-                    detail=(
-                        f"confirmation={request.confirmation_id} "
-                        f"category={pending.proposal.proposal.category.value} "
-                        f"target={safe_action_target_reference(pending.proposal.proposal.target)} "
-                        f"digest={pending.proposal.action_digest[:16]} "
-                        f"actor={request.actor_id}"
-                    ),
-                )
-            )
-            approved_request = replace(
-                pending.request,
-                action_confirmation_id=request.confirmation_id,
-            )
-            approved_future = self._submit_internal(approved_request)
+            self._track_future(task_id, approved_future)
             try:
                 approved_future.result(timeout=2.0)
             except TimeoutError:
                 pass
             except BaseException as exc:
                 return ApiResult.failed(_failure(exc, correlation_id))
-            with self._lock:
-                self._pending_actions.pop(request.confirmation_id, None)
-            return self.get_task(pending.proposal.task_id)
+            return self.get_task(task_id)
         except BaseException as exc:
             return ApiResult.failed(_failure(exc, correlation_id))
 
@@ -918,18 +788,19 @@ class EllyApplication:
             except BaseException as exc:
                 future.set_exception(exc)
         task_id = f"task-{request.request_id}"
+        self._track_future(task_id, future)
+        return future
+
+    def _track_future(self, task_id: str, future: Future[ConversationOutcome]) -> None:
         with self._lock:
             self._futures[task_id] = future
-            self._requests[task_id] = request
         future.add_done_callback(
-            lambda completed: self._on_future_done(task_id, request, completed)
+            lambda completed: self._on_future_done(task_id, completed)
         )
-        return future
 
     def _on_future_done(
         self,
         task_id: str,
-        request: TaskRequest,
         future: Future[ConversationOutcome],
     ) -> None:
         with self._lock:
@@ -938,34 +809,18 @@ class EllyApplication:
             self._processed_futures.add(future)
             try:
                 outcome = future.result()
-            except BaseException as exc:
-                self._future_errors[task_id] = exc
+            except BaseException:
                 return
             # AssistantRuntime is authoritative for normal final result/task
             # persistence. This callback only publishes API compatibility state.
-            # Consent/action denial remains API-owned until Phase 6.
             self._outcomes[task_id] = outcome
-            if outcome.consent_proposal is not None:
-                self._pending_submissions[outcome.consent_proposal.proposal_id] = (
-                    _PendingSubmission(
-                        request=request,
-                        proposal=outcome.consent_proposal,
-                    )
-                )
-            if outcome.action_confirmation is not None:
-                self._pending_actions[outcome.action_confirmation.confirmation_id] = _PendingAction(
-                    request=request,
-                    proposal=outcome.action_confirmation,
-                )
 
     def _harvest_future(self, task_id: str) -> None:
         with self._lock:
             future = self._futures.get(task_id)
-            request = self._requests.get(task_id)
         if future is None or not future.done():
             return
-        if request is not None:
-            self._on_future_done(task_id, request, future)
+        self._on_future_done(task_id, future)
 
     def _wait_for_future(self, task_id: str) -> None:
         with self._lock:
@@ -1414,34 +1269,6 @@ def _consent_view(proposal: ConsentProposal) -> ConsentView:
         max_reserved_cost=proposal.max_reserved_cost,
         created_at=proposal.created_at,
         expires_at=proposal.expires_at,
-    )
-
-
-def _blocked_after_consent_denial(proposal: ConsentProposal, route: Route) -> TaskResult:
-    return TaskResult(
-        task_id=proposal.task_id,
-        task_status=TaskStatus.BLOCKED,
-        outcome_code=OutcomeCode.BLOCKED,
-        epistemic_status=EpistemicStatus.BLOCKED,
-        validation_status=ValidationStatus.REJECTED,
-        answer="",
-        route_summary=route,
-        failures=("consent denied",),
-        next_actions=("submit a new request",),
-    )
-
-
-def _blocked_after_action_denial(proposal: ActionConfirmationProposal, route: Route) -> TaskResult:
-    return TaskResult(
-        task_id=proposal.task_id,
-        task_status=TaskStatus.BLOCKED,
-        outcome_code=OutcomeCode.BLOCKED,
-        epistemic_status=EpistemicStatus.BLOCKED,
-        validation_status=ValidationStatus.REJECTED,
-        answer="",
-        route_summary=route,
-        failures=("action confirmation denied",),
-        next_actions=("submit a new request",),
     )
 
 

@@ -5,19 +5,25 @@ from __future__ import annotations
 import time
 import uuid
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import RLock
 
+from ..application.action_authorization import (
+    ActionAuthorizationService,
+    safe_action_target_reference,
+)
 from ..domain.context import resolve_conversation_context
 from ..domain.enums import (
     CloudMode,
     ErrorClass,
+    OutcomeCode,
     PersistenceMode,
     RouteReasonCode,
     TaskStatus,
 )
-from ..domain.errors import ConfigInvalidError
+from ..domain.errors import ConfigInvalidError, InputInvalidError, PermissionDeniedError
 from ..domain.models import (
+    ActionConfirmationProposal,
     ContextManifest,
     ConversationOutcome,
     Message,
@@ -32,6 +38,7 @@ from ..planning.contracts import ExecutionPlan, ExecutionProposal, ProposalDispo
 from ..ports.clock import ClockPort
 from ..ports.plan_repository import PlanRepositoryPort
 from ..ports.repository import SessionRepositoryPort
+from ..privacy import ConsentProposal, ConsentWorkflow
 from .completion import CompletionService
 from .context_builder import ContextBuilder
 from .execution import CancellationToken
@@ -43,21 +50,36 @@ from .recovery import RecoveryReport
 from .replan import ReplanRequest, ReplanResult, ReplanTrigger
 from .response_composer import (
     compose_blocked,
+    compose_cancelled,
     compose_clarification,
     compose_possible_duplicate,
 )
 from .response_pipeline import ResponseCompositionService
-from .route_compatibility import enrich_task_result
+from .route_compatibility import enrich_task_result, inherit_route_metadata
 
 
 @dataclass(frozen=True, slots=True)
 class _ExecutionContinuation:
     """Minimum in-process context required to resume one authorization pause."""
 
+    task_id: str
     external_context: str
     local_context: str
     manifest: ContextManifest
     route_decision: RouteDecision
+
+
+@dataclass(frozen=True, slots=True)
+class _AuthorizationContinuation:
+    """Process-local request/proposal context for one exact decision."""
+
+    request: TaskRequest
+    plan_id: str
+    step_id: str
+    manifest: ContextManifest
+    route_decision: RouteDecision
+    consent_proposal: ConsentProposal | None = None
+    action_confirmation: ActionConfirmationProposal | None = None
 
 
 class AssistantRuntime:
@@ -80,6 +102,8 @@ class AssistantRuntime:
         completion: CompletionService,
         response_pipeline: ResponseCompositionService,
         local_conversation: LocalConversationUseCase,
+        consent: ConsentWorkflow | None,
+        action_authorization: ActionAuthorizationService,
         context_window: int,
         guardrails: GuardrailController | None = None,
         executor: BoundedTaskExecutor | None = None,
@@ -93,11 +117,14 @@ class AssistantRuntime:
         self._completion = completion
         self._response_pipeline = response_pipeline
         self._local_conversation = local_conversation
+        self._consent = consent
+        self._action_authorization = action_authorization
         self._context_window = context_window
         self._guardrails = guardrails
         self._executor = executor
         self._continuation_lock = RLock()
-        self._authorization_targets: dict[str, tuple[str, str]] = {}
+        self._authorization_continuations: dict[str, _AuthorizationContinuation] = {}
+        self._deciding_authorizations: set[str] = set()
         self._execution_continuations: dict[str, _ExecutionContinuation] = {}
 
     def new_session(
@@ -123,7 +150,16 @@ class AssistantRuntime:
     def cancel_task(self, task_id: str) -> bool:
         planning = self._planning_service.cancel(task_id)
         execution = self._task_execution_service.cancel_task(task_id)
-        return planning or execution
+        if planning or execution:
+            return True
+        return self._cancel_authorization_pause(task_id)
+
+    def cancel_queued_task(self, task_id: str, session_id: str) -> None:
+        """Materialize cancellation for work removed before runtime execution."""
+        result = compose_cancelled(task_id=task_id)
+        self._repository.start_task(task_id, session_id, self._clock.now())
+        self._completion.persist_result(result)
+        self._completion.finish_task(task_id, TaskStatus.CANCELLED)
 
     def cancel_plan(self, plan_id: str) -> bool:
         return self._task_execution_service.cancel(plan_id)
@@ -191,7 +227,14 @@ class AssistantRuntime:
         )
 
     def handle(self, request: TaskRequest) -> ConversationOutcome:
-        return self._handle_planned(request)
+        try:
+            return self._handle_planned(request)
+        except BaseException:
+            # A planning/execution exception can happen after process-local
+            # continuation context has been retained but before the normal
+            # terminal update runs. Never leave an unusable resume target.
+            self._clear_continuations_for_task(f"task-{request.request_id}")
+            raise
 
     def submit(self, request: TaskRequest) -> Future[ConversationOutcome]:
         if self._executor is None:
@@ -203,7 +246,390 @@ class AssistantRuntime:
         if authorization_id is None:
             return None
         with self._continuation_lock:
-            return self._authorization_targets.get(authorization_id)
+            continuation = self._authorization_continuations.get(authorization_id)
+            if continuation is None:
+                return None
+            return continuation.plan_id, continuation.step_id
+
+    def authorization_task_id(self, authorization_id: str) -> str | None:
+        """Return the task bound to a live process-local authorization request."""
+        if not isinstance(authorization_id, str) or not authorization_id.strip():
+            return None
+        with self._continuation_lock:
+            continuation = self._authorization_continuations.get(authorization_id)
+            return f"task-{continuation.request.request_id}" if continuation else None
+
+    def pending_action_for_task(self, task_id: str) -> ActionConfirmationProposal | None:
+        """Return the runtime-owned pending action for public projection only."""
+        with self._continuation_lock:
+            for continuation in self._authorization_continuations.values():
+                proposal = continuation.action_confirmation
+                if proposal is not None and proposal.task_id == task_id:
+                    return proposal
+        return None
+
+    def decide_consent(
+        self,
+        proposal_id: str,
+        approve: bool,
+        *,
+        actor_id: str = "owner",
+    ) -> Future[ConversationOutcome]:
+        """Decide one exact consent proposal and own its task lifecycle."""
+        if self._consent is None:
+            raise ConfigInvalidError("consent workflow is unavailable")
+        _require_authorization_decision(proposal_id, approve, actor_id)
+        continuation = self._claim_authorization(proposal_id, consent=True)
+        proposal = continuation.consent_proposal
+        if proposal is None:  # pragma: no cover - guarded by the claim
+            self._release_authorization(proposal_id)
+            raise PermissionDeniedError("authorization request is not a consent proposal")
+
+        try:
+            if not approve:
+                try:
+                    self._consent.deny(
+                        proposal_id,
+                        interface=actor_id,
+                        now=self._clock.now(),
+                    )
+                except PermissionDeniedError:
+                    outcome = self._complete_authorization_block(
+                        continuation,
+                        reason="consent proposal is missing or expired",
+                        event_type="consent.invalidated",
+                        detail=f"proposal={proposal_id} actor={actor_id}",
+                    )
+                else:
+                    outcome = self._complete_authorization_block(
+                        continuation,
+                        reason="consent denied",
+                        event_type="consent.denied",
+                        detail=f"proposal={proposal_id} actor={actor_id}",
+                    )
+                self._clear_plan_continuation(continuation.plan_id)
+                self._release_authorization(proposal_id)
+                return _completed_future(outcome)
+
+            try:
+                self._consent.approve(
+                    proposal_id,
+                    interface=actor_id,
+                    now=self._clock.now(),
+                )
+            except PermissionDeniedError:
+                outcome = self._complete_authorization_block(
+                    continuation,
+                    reason="consent proposal is missing or expired",
+                    event_type="consent.invalidated",
+                    detail=f"proposal={proposal_id} actor={actor_id}",
+                )
+                self._clear_plan_continuation(continuation.plan_id)
+                self._release_authorization(proposal_id)
+                return _completed_future(outcome)
+
+            self._completion.emit(
+                request=continuation.request,
+                task_id=proposal.task_id,
+                route=continuation.route_decision.generic_route,
+                route_decision=continuation.route_decision,
+                event_type="consent.approved",
+                status=TaskStatus.AWAITING_CONSENT,
+                detail=f"proposal={proposal_id} actor={actor_id}",
+            )
+            approved_request = replace(continuation.request, approval_id=proposal_id)
+            return self._schedule_authorization_resume(
+                continuation,
+                proposal_id,
+                approved_request,
+            )
+        except BaseException:
+            self._clear_plan_continuation(continuation.plan_id)
+            self._release_authorization(proposal_id)
+            raise
+
+    def decide_action(
+        self,
+        confirmation_id: str,
+        approve: bool,
+        *,
+        actor_id: str = "owner",
+    ) -> Future[ConversationOutcome]:
+        """Decide one exact consequential-action confirmation."""
+        _require_authorization_decision(confirmation_id, approve, actor_id)
+        continuation = self._claim_authorization(confirmation_id, consent=False)
+        proposal = continuation.action_confirmation
+        if proposal is None:  # pragma: no cover - guarded by the claim
+            self._release_authorization(confirmation_id)
+            raise PermissionDeniedError("authorization request is not an action confirmation")
+
+        try:
+            if not approve:
+                try:
+                    self._action_authorization.confirmations.deny(
+                        confirmation_id,
+                        interface=actor_id,
+                        now=self._clock.now(),
+                    )
+                except PermissionDeniedError:
+                    outcome = self._complete_authorization_block(
+                        continuation,
+                        reason="action confirmation is missing or expired",
+                        event_type="action.confirmation_invalidated",
+                        detail=(
+                            f"confirmation={confirmation_id} actor={actor_id}"
+                        ),
+                    )
+                else:
+                    outcome = self._complete_authorization_block(
+                        continuation,
+                        reason="action confirmation denied",
+                        event_type="action.confirmation_denied",
+                        detail=(
+                            f"confirmation={confirmation_id} "
+                            f"category={proposal.proposal.category.value} "
+                            f"target={safe_action_target_reference(proposal.proposal.target)} "
+                            f"digest={proposal.action_digest[:16]} actor={actor_id}"
+                        ),
+                    )
+                self._clear_plan_continuation(continuation.plan_id)
+                self._release_authorization(confirmation_id)
+                return _completed_future(outcome)
+
+            try:
+                self._action_authorization.confirmations.approve(
+                    confirmation_id,
+                    interface=actor_id,
+                    now=self._clock.now(),
+                )
+            except PermissionDeniedError:
+                outcome = self._complete_authorization_block(
+                    continuation,
+                    reason="action confirmation is missing or expired",
+                    event_type="action.confirmation_invalidated",
+                    detail=f"confirmation={confirmation_id} actor={actor_id}",
+                )
+                self._clear_plan_continuation(continuation.plan_id)
+                self._release_authorization(confirmation_id)
+                return _completed_future(outcome)
+
+            self._completion.emit(
+                request=continuation.request,
+                task_id=proposal.task_id,
+                route=continuation.route_decision.generic_route,
+                route_decision=continuation.route_decision,
+                event_type="action.confirmation_approved",
+                status=TaskStatus.AWAITING_CONFIRMATION,
+                detail=(
+                    f"confirmation={confirmation_id} "
+                    f"category={proposal.proposal.category.value} "
+                    f"target={safe_action_target_reference(proposal.proposal.target)} "
+                    f"digest={proposal.action_digest[:16]} actor={actor_id}"
+                ),
+            )
+            approved_request = replace(
+                continuation.request,
+                action_confirmation_id=confirmation_id,
+            )
+            return self._schedule_authorization_resume(
+                continuation,
+                confirmation_id,
+                approved_request,
+            )
+        except BaseException:
+            self._clear_plan_continuation(continuation.plan_id)
+            self._release_authorization(confirmation_id)
+            raise
+
+    def _claim_authorization(
+        self,
+        authorization_id: str,
+        *,
+        consent: bool,
+    ) -> _AuthorizationContinuation:
+        with self._continuation_lock:
+            continuation = self._authorization_continuations.get(authorization_id)
+            if continuation is None or authorization_id in self._deciding_authorizations:
+                raise PermissionDeniedError(
+                    "authorization request is missing or already being decided"
+                )
+            if consent and continuation.consent_proposal is None:
+                raise PermissionDeniedError("authorization request is not a consent proposal")
+            if not consent and continuation.action_confirmation is None:
+                raise PermissionDeniedError(
+                    "authorization request is not an action confirmation"
+                )
+            self._deciding_authorizations.add(authorization_id)
+            return continuation
+
+    def _release_authorization(self, authorization_id: str) -> None:
+        with self._continuation_lock:
+            self._authorization_continuations.pop(authorization_id, None)
+            self._deciding_authorizations.discard(authorization_id)
+
+    def _schedule_authorization_resume(
+        self,
+        continuation: _AuthorizationContinuation,
+        authorization_id: str,
+        request: TaskRequest,
+    ) -> Future[ConversationOutcome]:
+        def operation() -> ConversationOutcome:
+            return self._resume_authorization(continuation, authorization_id, request)
+
+        if self._executor is not None:
+            try:
+                return self._executor.submit(operation)
+            except BaseException:
+                self._clear_plan_continuation(continuation.plan_id)
+                self._release_authorization(authorization_id)
+                raise
+        future: Future[ConversationOutcome] = Future()
+        try:
+            future.set_result(operation())
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+    def _resume_authorization(
+        self,
+        continuation: _AuthorizationContinuation,
+        authorization_id: str,
+        request: TaskRequest,
+    ) -> ConversationOutcome:
+        try:
+            return self.handle(request)
+        except BaseException:
+            self._clear_plan_continuation(continuation.plan_id)
+            raise
+        finally:
+            self._release_authorization(authorization_id)
+
+    def _complete_authorization_block(
+        self,
+        continuation: _AuthorizationContinuation,
+        *,
+        reason: str,
+        event_type: str,
+        detail: str,
+    ) -> ConversationOutcome:
+        proposal = continuation.consent_proposal or continuation.action_confirmation
+        if proposal is None:  # pragma: no cover - guarded by the claim
+            raise ConfigInvalidError("authorization continuation proposal is unavailable")
+        task_id = proposal.task_id
+        blocked = compose_blocked(
+            task_id=task_id,
+            reason=reason,
+            route=continuation.route_decision.generic_route,
+            outcome_code=OutcomeCode.BLOCKED,
+        )
+        existing = self._repository.get_task_result(task_id)
+        if existing is not None:
+            blocked = inherit_route_metadata(blocked, existing)
+        else:
+            blocked = enrich_task_result(blocked, continuation.route_decision)
+        self._completion.emit(
+            request=continuation.request,
+            task_id=task_id,
+            route=continuation.route_decision.generic_route,
+            route_decision=continuation.route_decision,
+            event_type=event_type,
+            status=TaskStatus.BLOCKED,
+            error_class=ErrorClass.PERMISSION_DENIED,
+            detail=detail,
+        )
+        durable = self._completion.persist_result(blocked)
+        self._completion.finish_task(task_id, TaskStatus.BLOCKED)
+        return ConversationOutcome(result=durable, manifest=continuation.manifest)
+
+    def _cancel_authorization_pause(self, task_id: str) -> bool:
+        with self._continuation_lock:
+            pending = tuple(
+                (authorization_id, continuation)
+                for authorization_id, continuation in self._authorization_continuations.items()
+                if continuation.request.request_id
+                and f"task-{continuation.request.request_id}" == task_id
+                and authorization_id not in self._deciding_authorizations
+            )
+        if not pending:
+            return False
+        for authorization_id, continuation in pending:
+            if continuation.consent_proposal is not None and self._consent is not None:
+                try:
+                    self._consent.deny(
+                        authorization_id,
+                        interface="cancellation",
+                        now=self._clock.now(),
+                    )
+                except PermissionDeniedError:
+                    pass
+            if continuation.action_confirmation is not None:
+                try:
+                    self._action_authorization.confirmations.deny(
+                        authorization_id,
+                        interface="cancellation",
+                        now=self._clock.now(),
+                    )
+                except PermissionDeniedError:
+                    pass
+            cancelled = compose_cancelled(
+                task_id=task_id,
+                partial_work="authorization pause cancelled",
+                route=continuation.route_decision.generic_route,
+            )
+            existing = self._repository.get_task_result(task_id)
+            if existing is not None:
+                cancelled = inherit_route_metadata(cancelled, existing)
+            else:
+                cancelled = enrich_task_result(cancelled, continuation.route_decision)
+            self._completion.emit(
+                request=continuation.request,
+                task_id=task_id,
+                route=continuation.route_decision.generic_route,
+                route_decision=continuation.route_decision,
+                event_type="authorization.cancelled",
+                status=TaskStatus.CANCELLED,
+                error_class=ErrorClass.CANCELLED,
+                detail=f"authorization={authorization_id}",
+            )
+            self._completion.persist_result(cancelled)
+            self._completion.finish_task(task_id, TaskStatus.CANCELLED)
+            self._clear_plan_continuation(continuation.plan_id)
+            self._release_authorization(authorization_id)
+        return True
+
+    def _clear_plan_continuation(self, plan_id: str) -> None:
+        with self._continuation_lock:
+            self._execution_continuations.pop(plan_id, None)
+            for authorization_id, continuation in tuple(
+                self._authorization_continuations.items()
+            ):
+                if continuation.plan_id == plan_id:
+                    self._authorization_continuations.pop(authorization_id, None)
+                    self._deciding_authorizations.discard(authorization_id)
+
+    def _clear_continuations_for_task(self, task_id: str) -> None:
+        with self._continuation_lock:
+            plan_ids = {
+                plan_id
+                for plan_id, continuation in self._execution_continuations.items()
+                if continuation.task_id == task_id
+            }
+            plan_ids.update(
+                continuation.plan_id
+                for continuation in self._authorization_continuations.values()
+                if f"task-{continuation.request.request_id}" == task_id
+            )
+            for plan_id in plan_ids:
+                self._execution_continuations.pop(plan_id, None)
+            for authorization_id, continuation in tuple(
+                self._authorization_continuations.items()
+            ):
+                if (
+                    f"task-{continuation.request.request_id}" == task_id
+                    or continuation.plan_id in plan_ids
+                ):
+                    self._authorization_continuations.pop(authorization_id, None)
+                    self._deciding_authorizations.discard(authorization_id)
 
     def _handle_direct_planning_result(
         self,
@@ -359,6 +785,7 @@ class AssistantRuntime:
             )
             with self._continuation_lock:
                 self._execution_continuations[plan.plan_id] = _ExecutionContinuation(
+                    task_id=plan.task_id,
                     external_context=context_text,
                     local_context=local_context_text,
                     manifest=context_manifest,
@@ -468,23 +895,54 @@ class AssistantRuntime:
         execution: PlanExecutionResult,
     ) -> None:
         with self._continuation_lock:
+            consumed_authorization_id = request.approval_id or request.action_confirmation_id
+            if consumed_authorization_id is not None:
+                self._authorization_continuations.pop(consumed_authorization_id, None)
             if execution.consent_proposal is not None:
                 proposal = execution.consent_proposal
-                self._authorization_targets[proposal.proposal_id] = (
-                    proposal.plan_id,
-                    proposal.step_id,
+                self._authorization_continuations[proposal.proposal_id] = (
+                    _AuthorizationContinuation(
+                        request=request,
+                        plan_id=proposal.plan_id,
+                        step_id=proposal.step_id,
+                        manifest=self._execution_continuations[plan.plan_id].manifest,
+                        route_decision=self._execution_continuations[plan.plan_id].route_decision,
+                        consent_proposal=proposal,
+                    )
                 )
             if execution.action_confirmation is not None:
                 confirmation = execution.action_confirmation
-                self._authorization_targets[confirmation.confirmation_id] = (
-                    confirmation.plan_id,
-                    confirmation.step_id,
+                self._authorization_continuations[confirmation.confirmation_id] = (
+                    _AuthorizationContinuation(
+                        request=request,
+                        plan_id=confirmation.plan_id,
+                        step_id=confirmation.step_id,
+                        manifest=self._execution_continuations[plan.plan_id].manifest,
+                        route_decision=self._execution_continuations[plan.plan_id].route_decision,
+                        action_confirmation=confirmation,
+                    )
                 )
             if execution.consent_proposal is None and execution.action_confirmation is None:
                 self._execution_continuations.pop(plan.plan_id, None)
-                authorization_id = request.approval_id or request.action_confirmation_id
-                if authorization_id is not None:
-                    self._authorization_targets.pop(authorization_id, None)
+
+
+def _completed_future(outcome: ConversationOutcome) -> Future[ConversationOutcome]:
+    future: Future[ConversationOutcome] = Future()
+    future.set_result(outcome)
+    return future
+
+
+def _require_authorization_decision(
+    authorization_id: str,
+    approve: bool,
+    actor_id: str,
+) -> None:
+    if not isinstance(authorization_id, str) or not authorization_id.strip():
+        raise InputInvalidError("authorization id must be non-empty")
+    if not isinstance(approve, bool):
+        raise InputInvalidError("authorization decision must be boolean")
+    if not isinstance(actor_id, str) or not actor_id.strip():
+        raise InputInvalidError("authorization actor id must be non-empty")
 
 
 __all__ = ["AssistantRuntime"]

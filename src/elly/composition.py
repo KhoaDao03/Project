@@ -169,6 +169,19 @@ class Application:
         """Cancel one identified in-flight operation through its provider port."""
         return self.runtime.cancel_task(task_id)
 
+    @property
+    def audit(self) -> AuditPort:
+        return self._audit
+
+    @audit.setter
+    def audit(self, value: AuditPort) -> None:
+        # Compatibility callers may replace the audit port after composition;
+        # keep the runtime's completion boundary on the same port.
+        self._audit = value
+        completion = getattr(self, "completion", None)
+        if completion is not None:
+            completion._audit = value
+
     def __init__(
         self,
         *,
@@ -337,6 +350,8 @@ class Application:
             completion=self.completion,
             response_pipeline=self.response_pipeline,
             local_conversation=self.local_conversation,
+            consent=self.consent,
+            action_authorization=self.action_authorization,
             context_window=config.context_window_messages,
             guardrails=guardrails,
             executor=executor,

@@ -170,13 +170,17 @@ Expose interface-neutral application operations to CLI, web, mobile, or future c
 
 ### Should not own
 
-- worker futures;
+- worker execution ownership (it may retain interface futures for submit/wait and
+  result publication);
 - scheduling;
 - plan execution state;
 - capability selection;
 - planner logic;
 - provider authority;
 - authorization policy;
+- authorization approval/denial semantics, continuation state, or lifecycle
+  audit/completion writes;
+- task lifecycle transitions or `TaskResult` persistence;
 - response synthesis/composition policy.
 
 The public API should be thin.
@@ -221,7 +225,7 @@ It should provide a small, coherent use-case surface such as:
 
 There should be one runtime authority, not one runtime in `composition.Application` and a second runtime in the API façade.
 
-### Implemented Phase 5 boundary
+### Implemented Phase 5 and Revised Phase 6 boundary
 
 `application.runtime.AssistantRuntime` is the canonical outer lifecycle owner.
 `composition.Application` constructs it and retains narrow compatibility delegates;
@@ -231,16 +235,24 @@ backup/profile operational wiring, and shutdown because these are process-level
 composition concerns rather than request execution.
 
 Normal final task completion and final `TaskResult` persistence occur once in
-`AssistantRuntime` through `CompletionService`. The API callback only publishes
-temporary API compatibility state. API-owned future/pending maps and explicit
-consent/action denial completion remain bounded Phase 6 cleanup.
+`AssistantRuntime` through `CompletionService`. Consent/action approval,
+denial, invalidation, cancellation while paused, audit emission, result
+persistence, and continuation cleanup are also runtime-owned. The API callback
+only publishes interface-specific asynchronous state and forwards authorization
+decisions; it does not perform task lifecycle writes.
+
+The API deliberately retains `_futures`, `_accepted_tasks`, `_outcomes`, and
+`_processed_futures` as interface bookkeeping for submit/wait/get-task semantics.
+The former `_requests`, `_future_errors`, `_pending_submissions`, and
+`_pending_actions` maps were removed because request and authorization
+continuation state is authoritative below the API boundary.
 
 Authorization continuation currently survives only within the running process:
 the runtime retains authorization ID to plan/step identity plus the request context
 needed for exact resume. Persisted task and plan records survive restart, but this
 continuation context does not, so a pending consent/action request cannot currently
-be resumed after restart. No restart-safe continuation contract or schema is added
-by Phase 5.
+be resumed after restart. No restart-safe continuation contract, durable future
+storage, or SQLite schema is added by Phases 5 or Revised Phase 6.
 
 ---
 

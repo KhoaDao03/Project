@@ -430,6 +430,46 @@ class PublicActionConfirmationTests(unittest.TestCase):
         self.assertEqual(TaskStatus.COMPLETED, approved.value.status)
         self.assertEqual(1, self.capability.calls)
 
+    def test_public_api_action_denial_persists_once_and_never_dispatches(self) -> None:
+        session = self.api.create_session(CreateSessionRequest())
+        assert session.value is not None
+        intent = CapabilityIntentInput(
+            proposed_capability_id="phase5.messaging",
+            operation="message.send",
+            arguments=(("subject", "message"),),
+            confidence=1.0,
+            ambiguity=IntentAmbiguity.CLEAR.value,
+            rationale_code="TEST",
+        )
+        pending = self.api.submit_and_wait(
+            SubmitRequest(
+                "api-action-denied",
+                session.value.session_id,
+                "message body",
+                capability_intent=intent,
+            )
+        )
+        self.assertTrue(pending.is_success)
+        assert pending.value is not None
+        self.assertEqual(TaskStatus.AWAITING_CONFIRMATION, pending.value.status)
+        assert pending.value.action_confirmation is not None
+        confirmation_id = pending.value.action_confirmation.confirmation_id
+
+        repository = self.application.repository
+        with patch.object(repository, "save_task_result", wraps=repository.save_task_result) as save:
+            denied = self.api.decide_action(ActionDecisionRequest(confirmation_id, False))
+
+        self.assertTrue(denied.is_success, denied.failure)
+        assert denied.value is not None
+        self.assertEqual(TaskStatus.BLOCKED, denied.value.status)
+        self.assertEqual(0, self.capability.calls)
+        self.assertEqual(1, save.call_count)
+        self.assertIsNone(self.application.runtime.authorization_task_id(confirmation_id))
+        replay = self.api.decide_action(ActionDecisionRequest(confirmation_id, False))
+        self.assertFalse(replay.is_success)
+        assert replay.failure is not None
+        self.assertEqual("NOT_FOUND", replay.failure.code.value)
+
 
 class SpecialistActionTests(unittest.TestCase):
     def test_specialist_draft_is_allowed_and_transmit_is_typed_not_keyword_blocked(self) -> None:

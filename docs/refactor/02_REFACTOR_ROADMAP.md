@@ -422,25 +422,45 @@ Later phases are preserved below but remain subject to post-Phase-5 review.
 
 ---
 
-# 10. Phase 6 — Thin the public API façade
+# 10. Revised Phase 6 — Public API Boundary and Authorization Lifecycle Consolidation
 
 ## Objective
 
-Prevent `api/application.py` from becoming a second runtime.
+Make `EllyApplication` a thin public interface adapter and remove the remaining
+authorization/task-lifecycle ownership collision between the API façade and
+`AssistantRuntime`.
 
-## Work
+## Implemented work
 
-- Identify API-owned futures/request/outcome/pending-state maps.
-- Move application lifecycle state to the appropriate runtime/execution service.
-- Keep the API interface-neutral.
-- Preserve current external behavior and DTOs where possible.
+- `AssistantRuntime.decide_consent` owns consent approval, denial, invalidation,
+  cancellation while paused, exact-plan resume, audit emission, task result
+  persistence, task completion, and continuation cleanup.
+- `AssistantRuntime.decide_action` owns the equivalent consequential-action
+  confirmation lifecycle and preserves the exact action target/digest boundary.
+- Approval resumes the retained plan/step through
+  `TaskExecutionService.resume_authorized_step`; it does not re-plan the request.
+- Denial and cancellation dispatch no protected provider/action, persist one
+  terminal result through `CompletionService`, emit the application audit event,
+  and remove the process-local continuation.
+- Concurrent decisions claim an authorization ID once; stale/replayed IDs fail
+  safely after the runtime releases the continuation.
+- The API retains only `_futures`, `_accepted_tasks`, `_outcomes`, and
+  `_processed_futures` for interface-specific async publication. `_requests`,
+  `_future_errors`, `_pending_submissions`, and `_pending_actions` were removed.
+- API task cancellation and queued cancellation now delegate lifecycle writes to
+  `AssistantRuntime`; query-side repository reads remain direct where no new
+  use-case boundary is needed.
+- No restart-safe continuation persistence, new SQLite table, durable future
+  storage, workflow engine, or manager hierarchy was introduced.
 
 ## Acceptance criteria
 
-- API façade delegates lifecycle behavior.
-- No duplicate authoritative task state exists in API and execution layers.
-- External behavior remains compatible.
-- Full suite passes.
+- API façade delegates authorization and task lifecycle behavior.
+- No duplicate authoritative task state exists in API and runtime layers.
+- Consent/action approval, denial, replay, stale-ID, and paused-cancellation
+  behavior remain safe and externally compatible.
+- Existing local, research, specialist, DAG, idempotency, and public API tests
+  remain passing, with focused Phase 6 persistence/cleanup coverage added.
 
 ---
 

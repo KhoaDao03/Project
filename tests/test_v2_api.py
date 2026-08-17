@@ -261,6 +261,78 @@ class V2ApplicationApiTests(unittest.TestCase):
             )
             self.assertTrue(decided.is_success, decided.failure)
 
+    def test_consent_denial_is_runtime_owned_and_cleans_continuation(self) -> None:
+        created = self.api.create_session(
+            CreateSessionRequest(cloud_mode=CloudMode.CLOUD_PERMITTED)
+        )
+        assert created.value is not None
+        pending = self.api.submit_and_wait(
+            SubmitRequest(
+                "api-consent-denied",
+                created.value.session_id,
+                "Research the latest news about my family",
+            )
+        )
+        self.assertTrue(pending.is_success)
+        consents = self.api.list_consents()
+        assert consents.value is not None
+        self.assertEqual(1, len(consents.value))
+        proposal = consents.value[0]
+        provider = self.api._scope.research.provider
+
+        repository = self.api._scope.repository
+        with patch.object(repository, "save_task_result", wraps=repository.save_task_result) as save:
+            denied = self.api.decide_consent(
+                ConsentDecisionRequest(proposal.proposal_id, approve=False)
+            )
+
+        self.assertTrue(denied.is_success, denied.failure)
+        assert denied.value is not None
+        self.assertEqual(TaskStatus.BLOCKED, denied.value.status)
+        self.assertEqual([], provider.calls)
+        self.assertEqual(1, save.call_count)
+        self.assertEqual((), self.api.list_consents().value)
+        self.assertIsNone(
+            self.api._scope.runtime.authorization_task_id(proposal.proposal_id)
+        )
+        replay = self.api.decide_consent(
+            ConsentDecisionRequest(proposal.proposal_id, approve=False)
+        )
+        self.assertFalse(replay.is_success)
+        assert replay.failure is not None
+        self.assertEqual("NOT_FOUND", replay.failure.code.value)
+
+    def test_cancellation_while_awaiting_consent_invalidates_without_dispatch(self) -> None:
+        created = self.api.create_session(
+            CreateSessionRequest(cloud_mode=CloudMode.CLOUD_PERMITTED)
+        )
+        assert created.value is not None
+        pending = self.api.submit_and_wait(
+            SubmitRequest(
+                "api-consent-cancelled",
+                created.value.session_id,
+                "Research the latest news about my family",
+            )
+        )
+        assert pending.value is not None
+        consents = self.api.list_consents()
+        assert consents.value is not None
+        proposal = consents.value[0]
+
+        cancelled = self.api.cancel_task(pending.value.task_id)
+
+        self.assertTrue(cancelled.is_success, cancelled.failure)
+        assert cancelled.value is not None
+        self.assertEqual(TaskStatus.CANCELLED, cancelled.value.status)
+        self.assertEqual((), self.api.list_consents().value)
+        self.assertIsNone(
+            self.api._scope.runtime.authorization_task_id(proposal.proposal_id)
+        )
+        decision = self.api.decide_consent(
+            ConsentDecisionRequest(proposal.proposal_id, approve=True)
+        )
+        self.assertFalse(decision.is_success)
+
 
 if __name__ == "__main__":
     unittest.main()

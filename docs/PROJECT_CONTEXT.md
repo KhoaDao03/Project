@@ -146,21 +146,24 @@ legacy synthesis role and persisted finalization values remain readable only
 through documented migration behavior. See
 [`docs/v3.5/IMPLEMENTATION.md`](v3.5/IMPLEMENTATION.md).
 
-**Architecture consolidation status:** Phases 0–5 are implemented. The canonical
+**Architecture consolidation status:** Phases 0–6 are implemented. The canonical
 request path is Public API → `AssistantRuntime` → `PlanningService` → validated
 `ExecutionPlan` → `TaskExecutionService` → application-owned `CapabilityRegistry`
 → `ResponseCompositionService` → `TaskResult`. `AssistantRuntime` owns outer
 request/context/plan/task/result/message lifecycle coordination and process-local
-authorization continuation. `composition.py` is the dependency/startup/operational
-wiring boundary. `PlanningService` remains the planning authority and
-`TaskExecutionService` remains the validated DAG execution authority. Compatibility
-delegates in `composition.Application`, `_ConversationCompatibilityFacade`,
-`PlanOrchestrator`, the `plan_executor` name, and API future/pending maps are
-non-authoritative and temporary pending Phase 6/later cleanup.
+authorization decision and continuation lifecycle. `composition.py` is the
+dependency/startup/operational wiring boundary. `PlanningService` remains the
+planning authority and `TaskExecutionService` remains the validated DAG execution
+authority. Compatibility delegates in `composition.Application`,
+`_ConversationCompatibilityFacade`, `PlanOrchestrator`, and the `plan_executor`
+name remain non-authoritative. The API retains only interface async maps for future
+publication; it no longer stores pending authorization/request maps or performs
+task lifecycle writes.
 
 Consent/action continuation across process restart is not supported: task and plan
 records are durable, but authorization-ID mappings and retained request context are
-process-local. Phase 5 preserves this existing boundary and adds no SQLite schema.
+process-local. Revised Phase 6 preserves this existing boundary and adds no SQLite
+schema.
 
 ## 5. Users, Actors, and Use Cases
 
@@ -239,8 +242,10 @@ Trust boundaries are CLI input, model/provider output, hosted cloud, citation UR
    it does not alter application truth.
 8. `AssistantRuntime`, through `CompletionService` and repository ports, is the
    single normal owner of final task completion, final result persistence, and
-   assistant-message persistence. The public API callback retains only temporary
-   Phase 6 future/authorization presentation state.
+   assistant-message persistence. It also owns authorization approval/denial,
+   terminalization, audit emission, and continuation cleanup. The public API
+   callback retains only bounded future/result publication state and maps runtime
+   authorization views into public DTOs.
 
 ## 9. Important Contracts, Interfaces, and Data Models
 
