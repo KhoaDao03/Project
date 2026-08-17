@@ -381,22 +381,21 @@ class CapabilityExecutionWorkflow:
                     event_type="capability.authorization_denied",
                 )
 
-            if command.persist_completion:
-                self._completion.emit(
-                    request=command.request,
-                    task_id=command.task_id,
-                    route=command.route,
-                    route_decision=command.route_decision,
-                    event_type="authorization.approved",
-                    status=command.status,
-                    detail=(
-                        f"capability={descriptor.capability_id} "
-                        f"destination={descriptor.destination} "
-                        f"classification={classification.classification.value} "
-                        f"payload_digest={authorization.payload_digest[:16]} "
-                        f"reason={authorization.reason_code}"
-                    ),
-                )
+            self._completion.emit(
+                request=command.request,
+                task_id=command.task_id,
+                route=command.route,
+                route_decision=command.route_decision,
+                event_type="authorization.approved",
+                status=command.status,
+                detail=(
+                    f"capability={descriptor.capability_id} "
+                    f"destination={descriptor.destination} "
+                    f"classification={classification.classification.value} "
+                    f"payload_digest={authorization.payload_digest[:16]} "
+                    f"reason={authorization.reason_code}"
+                ),
+            )
             capability_request = CapabilityRequest(
                 task=capability_request.task,
                 route_request=capability_request.route_request,
@@ -427,7 +426,7 @@ class CapabilityExecutionWorkflow:
                         action_decision.reason_code,
                     ),
                 )
-            if action_assessment.confirmation_required and command.persist_completion:
+            if action_assessment.confirmation_required:
                 self._completion.emit(
                     request=command.request,
                     task_id=command.task_id,
@@ -658,8 +657,9 @@ class CapabilityExecutionWorkflow:
         The plan path deliberately creates a synthetic, application-owned route
         decision from the already validated ``PlanStep``.  It does not accept a
         provider or handler from planner output.  ``persist_completion=False``
-        leaves plan-level result/state persistence to ``PlanExecutor`` while all
-        existing capability, privacy, consent, and action checks remain shared.
+        leaves plan-level result/state persistence to ``TaskExecutionService``
+        while all existing capability, privacy, consent, and action checks remain
+        shared.
         """
         if not isinstance(plan, ExecutionPlan) or not isinstance(step, PlanStep):
             raise ConfigInvalidError("plan step execution requires validated plan contracts")
@@ -738,7 +738,22 @@ class CapabilityExecutionWorkflow:
             plan_id=plan.plan_id,
             step_id=step.step_id,
             require_typed_result=True,
-            require_action_receipt=True,
+            # Handlers without typed routing metadata are pre-V3 compatibility
+            # adapters and never promised execution receipts. Their operation
+            # lease and exact confirmation remain enforced. Retire this narrow
+            # exception when those handlers migrate to routing descriptors.
+            require_action_receipt=(
+                getattr(
+                    getattr(
+                        self._capability_registry.get(step.capability_id),
+                        "descriptor",
+                        None,
+                    ),
+                    "routing",
+                    None,
+                )
+                is not None
+            ),
         )
         return self.execute(command)
 

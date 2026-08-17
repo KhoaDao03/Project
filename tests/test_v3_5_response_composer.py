@@ -15,7 +15,6 @@ from elly.adapters.fake_response_composer import (
     FakeResponseComposer,
     ResponseComposerFailureMode,
 )
-from elly.adapters.fake_synthesis import FakeSynthesis
 from elly.adapters.ollama_response_composer import OllamaResponseComposer
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
@@ -380,7 +379,6 @@ synthesis = "two"
             generalist=FakeGeneralist(),
             repository=repository,
             audit=StructuredAuditLog(repository=repository),
-            synthesis=FakeSynthesis(),
             response_composer=composer,
         )
         try:

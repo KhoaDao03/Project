@@ -10,7 +10,7 @@ from typing import Any
 from unittest.mock import patch
 
 from elly.adapters.audit_log import StructuredAuditLog
-from elly.adapters.fake_synthesis import FakeSynthesis, SynthesisFailureMode
+from elly.adapters.fake_synthesis import FakeSynthesis
 from elly.adapters.ollama_synthesis import OllamaSynthesis
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
@@ -356,7 +356,7 @@ class _Capability:
         )
 
 
-class SynthesisExecutionTests(unittest.TestCase):
+class PersistedSynthesisCompatibilityTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repository = SqliteSessionRepository(":memory:")
         self.addCleanup(self.repository.close)
@@ -369,7 +369,7 @@ class SynthesisExecutionTests(unittest.TestCase):
         self.clock = FixedClock(UTC)
         self._run_count = 0
 
-    def _run(self, synthesis: FakeSynthesis):
+    def _run(self):
         self._run_count += 1
         registry = CapabilityRegistry((_Capability("left"), _Capability("right")))
         audit = StructuredAuditLog(repository=self.repository)
@@ -407,6 +407,7 @@ class SynthesisExecutionTests(unittest.TestCase):
         plan = PlanBuilder(
             registry.routing_catalog(),
             PlanLimitsSnapshot(max_specialist_executions=4, max_parallel_steps=2),
+            legacy_synthesis_enabled=True,
         ).build(proposal, f"task-phase7-execution-{self._run_count}")
         self.repository.save_plan(plan, at=UTC)
         self.repository.start_task(plan.task_id, "session-phase7", UTC)
@@ -415,9 +416,6 @@ class SynthesisExecutionTests(unittest.TestCase):
             capability_registry=registry,
             capability_workflow=workflow,
             clock=self.clock,
-            synthesis_port=synthesis,
-            synthesis_max_output_tokens=128,
-            synthesis_timeout_seconds=2,
         ).execute(
             plan,
             PlanExecutionRequest(
@@ -428,34 +426,21 @@ class SynthesisExecutionTests(unittest.TestCase):
         )
         return result, plan
 
-    def test_synthesis_node_returns_one_final_response_and_records_validation(self) -> None:
-        result, plan = self._run(FakeSynthesis())
+    def test_persisted_synthesis_node_is_a_deterministic_shim(self) -> None:
+        result, plan = self._run()
 
         self.assertEqual(PlanStatus.COMPLETED, result.status)
         self.assertIn("left", result.final_result.answer)  # type: ignore[union-attr]
         self.assertIn("right", result.final_result.answer)  # type: ignore[union-attr]
         record = self.repository.get_synthesis_result(plan.plan_id)
         self.assertIsNotNone(record)
-        self.assertEqual("validated", record.validation_state)  # type: ignore[union-attr]
-        self.assertEqual(("result-left-step", "result-right-step"), record.referenced_result_ids)  # type: ignore[union-attr]
-
-    def test_model_failure_and_cancellation_use_visible_deterministic_fallback(self) -> None:
-        for failure in (
-            SynthesisFailureMode.MALFORMED,
-            SynthesisFailureMode.TIMEOUT,
-            SynthesisFailureMode.CANCELLED,
-        ):
-            with self.subTest(failure=failure):
-                result, plan = self._run(FakeSynthesis(failure=failure))
-                self.assertEqual(PlanStatus.COMPLETED, result.status)
-                self.assertIn("Synthesis fallback", result.final_result.answer)  # type: ignore[union-attr]
-                self.assertTrue(result.final_result.failures)  # type: ignore[union-attr]
-                self.assertTrue(
-                    any(
-                        event.event_type == "synthesis.fallback"
-                        for event in self.repository.plan_events(plan.plan_id)
-                    )
-                )
+        self.assertTrue(record.validation_state.startswith("response_composition:"))  # type: ignore[union-attr]
+        self.assertFalse(
+            any(
+                event.event_type == "synthesis.fallback"
+                for event in self.repository.plan_events(plan.plan_id)
+            )
+        )
 
 
 if __name__ == "__main__":

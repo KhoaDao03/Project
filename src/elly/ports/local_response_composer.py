@@ -6,9 +6,9 @@ canonical records.  Its output is an outline plus explicitly bounded framing;
 the application remains the source of truth for facts, status, citations,
 warnings, disagreements, authorization, and exact records.
 
-``local_synthesis`` remains available as a compatibility port for V3 plans.
-This module is the canonical V3.5 vocabulary and intentionally has no provider
-or capability dependencies.
+Persisted V3 synthesis plans are decoded by the execution layer as deterministic
+migration shims. This module is the sole runtime model-composition port and
+intentionally has no provider or capability dependencies.
 """
 
 from __future__ import annotations

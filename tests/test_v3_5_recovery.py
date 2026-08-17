@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 
 from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_response_composer import FakeResponseComposer
-from elly.adapters.fake_synthesis import FakeSynthesis
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.application.capabilities import CapabilityRegistry
@@ -45,7 +44,6 @@ class V35RecoveryTests(unittest.TestCase):
         object,
         PlanExecutionRequest,
         FakeResponseComposer,
-        FakeSynthesis,
         object,
     ]:
         repository = SqliteSessionRepository(":memory:")
@@ -92,7 +90,6 @@ class V35RecoveryTests(unittest.TestCase):
         repository.save_plan(plan, at=UTC)
         repository.start_task(plan.task_id, "session-v35-recovery", UTC)
         composer = FakeResponseComposer()
-        old_synthesis = FakeSynthesis()
         execution = PlanExecutionRequest(
             request=TaskRequest(
                 request_id="request-v35-recovery",
@@ -112,14 +109,13 @@ class V35RecoveryTests(unittest.TestCase):
                 capability_registry=registry,
                 capability_workflow=workflow,
                 clock=clock,
-                synthesis_port=old_synthesis,
                 response_composer_port=composer,
             )
 
-        return repository, plan, execution, composer, old_synthesis, executor
+        return repository, plan, execution, composer, executor
 
     def test_retained_terminal_restart_reuses_composed_output(self) -> None:
-        repository, plan, execution, composer, _old, executor = self._fixture(
+        repository, plan, execution, composer, executor = self._fixture(
             PersistenceMode.STORE_WITH_RETENTION
         )
         first = executor().execute(plan, execution)  # type: ignore[union-attr]
@@ -140,7 +136,7 @@ class V35RecoveryTests(unittest.TestCase):
         self.assertNotIn("prompt", " ".join(event.detail for event in events))
 
     def test_no_store_terminal_restart_does_not_compose_twice(self) -> None:
-        _repository, plan, execution, composer, _old, executor = self._fixture(
+        _repository, plan, execution, composer, executor = self._fixture(
             PersistenceMode.NO_STORE
         )
         first = executor().execute(plan, execution)  # type: ignore[union-attr]
@@ -151,7 +147,7 @@ class V35RecoveryTests(unittest.TestCase):
         self.assertTrue(second.final_result.answer)
 
     def test_interrupted_reserved_attempt_recovers_without_redispatch(self) -> None:
-        repository, plan, execution, composer, _old, executor = self._fixture(
+        repository, plan, execution, composer, executor = self._fixture(
             PersistenceMode.STORE_WITH_RETENTION
         )
         repository.delete_plans_for_task(plan.task_id)
@@ -178,7 +174,7 @@ class V35RecoveryTests(unittest.TestCase):
         self.assertTrue(recovered.final_result.answer)
 
     def test_persisted_legacy_synthesis_node_is_a_shim(self) -> None:
-        _repository, plan, execution, composer, old_synthesis, executor = self._fixture(
+        _repository, plan, execution, composer, executor = self._fixture(
             PersistenceMode.STORE_WITH_RETENTION,
             finalization=FinalizationStrategy.LOCAL_SYNTHESIS,
             legacy_plan=True,
@@ -187,8 +183,31 @@ class V35RecoveryTests(unittest.TestCase):
         result = executor().execute(plan, execution)  # type: ignore[union-attr]
 
         self.assertEqual(TaskStatus.COMPLETED, result.final_result.task_status)
-        self.assertEqual(0, len(old_synthesis.requests))
         self.assertEqual(1, len(composer.requests))
+
+    def test_persisted_legacy_synthesis_result_remains_readable(self) -> None:
+        repository, plan, _execution, _composer, _executor = self._fixture(
+            PersistenceMode.STORE_WITH_RETENTION,
+            finalization=FinalizationStrategy.LOCAL_SYNTHESIS,
+            legacy_plan=True,
+        )
+        repository.save_synthesis_result(
+            plan.plan_id,
+            FinalizationStrategy.LOCAL_SYNTHESIS,
+            "validated",
+            ("result-recovery-step",),
+            {"answer": "legacy retained answer", "answer_retained": True},
+            at=UTC,
+        )
+
+        record = repository.get_synthesis_result(plan.plan_id)
+
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(FinalizationStrategy.LOCAL_SYNTHESIS, record.strategy)
+        self.assertEqual("validated", record.validation_state)
+        self.assertEqual(("result-recovery-step",), record.referenced_result_ids)
+        self.assertEqual("legacy retained answer", record.output["answer"])
 
 
 if __name__ == "__main__":

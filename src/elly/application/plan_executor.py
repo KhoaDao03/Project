@@ -1,10 +1,10 @@
-"""Bounded dependency-ready execution for validated V3 plans.
+"""Canonical task execution responsibilities for validated plans.
 
-The executor is deliberately separate from ``ConversationOrchestrator``.  It
-accepts an immutable, already validated plan, resolves each capability again
-from the live optional-capability registry, and keeps all scheduling state in
-application code.  Planner output never supplies a handler, provider, or
-callback.
+The executor accepts an immutable, already validated plan, resolves every
+capability again from the live registry, and keeps scheduling state in
+application code. Planner output never supplies a handler, provider, or
+callback; conversation is one executable capability on this same path. The
+module name remains for import compatibility until Phase 10.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from ..guardrails.controller import GuardrailController
 from ..planning.contracts import (
     AuthorizationState,
     ExecutionPlan,
+    ExecutionProposal,
     PlanLimitsSnapshot,
     PlanStatus,
     PlanStep,
@@ -53,17 +54,12 @@ from ..planning.contracts import (
 )
 from ..ports.clock import ClockPort
 from ..ports.local_response_composer import LocalResponseComposerPort
-from ..ports.local_synthesis import (
-    LocalSynthesisPort,
-    SynthesisDraft,
-    SynthesisInput,
-    SynthesisRequest,
-)
 from ..ports.plan_repository import PlanRepositoryPort
 from ..privacy import ConsentProposal, payload_hash
 from .capabilities import CapabilityKind, CapabilityRegistry
 from .capability_workflow import CapabilityExecutionOutcome, CapabilityExecutionWorkflow
 from .execution import CancellationToken
+from .local_conversation_capability import LOCAL_CONVERSATION_CAPABILITY_ID
 from .plan_results import (
     DisagreementRecord,
     PlanAggregation,
@@ -71,10 +67,11 @@ from .plan_results import (
     TemplateFinalizer,
     aggregate_plan_results,
     derive_plan_status,
-    finalize_plan,
+    legacy_source_aggregation,
 )
 from .plan_state import STEP_ELIGIBLE_STATES, STEP_TERMINAL_STATES
-from .recovery import PlanRecovery
+from .recovery import PlanRecovery, RecoveryReport
+from .replan import ReplanRequest, ReplanResult, ReplanService, ReplanTrigger
 from .response_composer import compose_blocked, compose_cancelled, compose_failed
 from .response_pipeline import ResponseCompositionService, ResponsePipelineResult
 from .step_results import (
@@ -82,17 +79,6 @@ from .step_results import (
     StepResultEnvelope,
     normalize_step_result,
 )
-from .synthesis import (
-    build_synthesis_input,
-    deterministic_synthesis_fallback,
-    render_synthesis_draft,
-    source_aggregation,
-    validate_synthesis_draft,
-)
-
-SynthesisExecutor = Callable[
-    [ExecutionPlan, PlanStep, Mapping[str, TaskResult], CancellationToken], TaskResult
-]
 
 
 class _NonBlockingThreadPoolExecutor(ThreadPoolExecutor):
@@ -110,6 +96,7 @@ class PlanExecutionRequest:
     request: TaskRequest
     context_text: str
     context_manifest: ContextManifest
+    local_context_text: str = ""
     cancellation: CancellationToken | None = None
     request_guardrails: GuardrailController | None = None
 
@@ -120,6 +107,8 @@ class PlanExecutionRequest:
             raise InputInvalidError("plan execution context must be non-empty")
         if not isinstance(self.context_manifest, ContextManifest):
             raise InputInvalidError("plan execution context manifest is invalid")
+        if not isinstance(self.local_context_text, str):
+            raise InputInvalidError("plan execution local context must be text")
         if self.cancellation is not None and not isinstance(self.cancellation, CancellationToken):
             raise InputInvalidError("plan execution cancellation token is invalid")
 
@@ -238,15 +227,440 @@ class _StepInputError(EllyError):
 class _StepCallResult:
     result: TaskResult
     envelope: StepResultEnvelope | None = None
-    synthesis_input: SynthesisInput | None = None
-    synthesis_draft: SynthesisDraft | None = None
-    synthesis_validation_state: str = ""
     consent_proposal: ConsentProposal | None = None
     action_confirmation: ActionConfirmationProposal | None = None
 
 
-class PlanExecutor:
-    """Execute validated plans with dependency and resource ceilings."""
+class PlanFinalizer:
+    """Own terminal aggregation presentation and its recovery-safe persistence."""
+
+    def __init__(
+        self,
+        *,
+        repository: PlanRepositoryPort,
+        response_pipeline: ResponseCompositionService,
+        clock: ClockPort,
+    ) -> None:
+        self._repository = repository
+        self._response_pipeline = response_pipeline
+        self._clock = clock
+
+    def finalize(
+        self,
+        aggregation: PlanAggregation,
+        execution: PlanExecutionRequest,
+        cancellation: CancellationToken | None = None,
+    ) -> TaskResult:
+        """Apply one common presentation decision after aggregation."""
+
+        stored = self._stored_response_result(aggregation)
+        if stored is not None:
+            self._record_response_composition(
+                aggregation.plan,
+                ResponsePipelineResult(
+                    result=stored,
+                    mode=PresentationMode.COMPOSED,
+                    observation=None,
+                ),
+            )
+            return stored
+        self._reserve_response_composition(aggregation.plan)
+        composed = self._response_pipeline.compose_aggregation(
+            aggregation,
+            request=execution.request,
+            approved_context=execution.local_context_text or execution.context_text,
+            cancellation=cancellation,
+        )
+        self._record_response_composition(aggregation.plan, composed)
+        self._save_response_composition(
+            aggregation.plan,
+            composed,
+            retain_output=(
+                execution.request.persistence_mode is PersistenceMode.STORE_WITH_RETENTION
+            ),
+        )
+        return composed.result
+
+    def _reserve_response_composition(self, plan: ExecutionPlan) -> None:
+        save = getattr(self._repository, "save_synthesis_result", None)
+        if not callable(save):
+            return
+        save(
+            plan.plan_id,
+            plan.finalization,
+            "response_composition:attempting",
+            (),
+            {"mode": "", "outcome": "attempting", "answer": "", "answer_retained": False},
+            at=self._clock.now(),
+        )
+        append_event = getattr(self._repository, "append_plan_event", None)
+        if callable(append_event):
+            append_event(
+                plan.plan_id,
+                "response_composer.attempted",
+                "RESPONSE_COMPOSITION_RESERVED",
+                "attempted=1 outcome=attempting",
+                at=self._clock.now(),
+            )
+
+    def _record_response_composition(
+        self,
+        plan: ExecutionPlan,
+        composed: ResponsePipelineResult,
+    ) -> None:
+        observation = composed.observation
+        if observation is None:
+            return
+        append_event = getattr(self._repository, "append_plan_event", None)
+        if not callable(append_event):
+            return
+        outcome = observation.outcome or "unknown"
+        reason = observation.reason_code[:128]
+        detail = (
+            f"mode={observation.mode.value} attempted={int(observation.attempted)} "
+            f"outcome={outcome} profile={observation.profile[:64]} "
+            f"model={observation.model_version[:128]} "
+            f"result_refs={','.join(observation.result_refs)} "
+            f"claim_refs={','.join(observation.claim_refs)} "
+            f"citation_refs={','.join(observation.citation_refs)} "
+            f"warning_refs={','.join(observation.warning_refs)} "
+            f"disagreement_refs={','.join(observation.disagreement_refs)} "
+            f"record_refs={','.join(observation.immutable_record_refs)} "
+            f"duration_ms={observation.duration_ms} output_tokens={observation.output_tokens}"
+        )
+        append_event(
+            plan.plan_id,
+            f"response_composer.{outcome}",
+            reason or "RESPONSE_COMPOSITION_RECORDED",
+            detail[:512],
+            at=self._clock.now(),
+        )
+
+    def _save_response_composition(
+        self,
+        plan: ExecutionPlan,
+        composed: ResponsePipelineResult,
+        *,
+        retain_output: bool,
+    ) -> None:
+        observation = composed.observation
+        save = getattr(self._repository, "save_synthesis_result", None)
+        if observation is None or not callable(save):
+            return
+        output: dict[str, object] = {
+            "mode": observation.mode.value,
+            "outcome": observation.outcome,
+            "reason_code": observation.reason_code,
+            "profile": observation.profile,
+            "model_version": observation.model_version,
+            "result_refs": list(observation.result_refs),
+            "claim_refs": list(observation.claim_refs),
+            "citation_refs": list(observation.citation_refs),
+            "warning_refs": list(observation.warning_refs),
+            "disagreement_refs": list(observation.disagreement_refs),
+            "immutable_record_refs": list(observation.immutable_record_refs),
+            "duration_ms": observation.duration_ms,
+            "output_tokens": observation.output_tokens,
+            "answer": composed.result.answer if retain_output else "",
+            "answer_retained": bool(retain_output and composed.result.answer_retained),
+        }
+        save(
+            plan.plan_id,
+            plan.finalization,
+            f"response_composition:{observation.outcome}",
+            observation.result_refs,
+            output,
+            at=self._clock.now(),
+        )
+
+    def _stored_response_result(self, aggregation: PlanAggregation) -> TaskResult | None:
+        get = getattr(self._repository, "get_synthesis_result", None)
+        if not callable(get):
+            return None
+        record = get(aggregation.plan_id)
+        if record is None or not record.validation_state.startswith("response_composition:"):
+            return None
+        canonical = TemplateFinalizer().finalize(aggregation)
+        answer = record.output.get("answer") if isinstance(record.output, Mapping) else None
+        if not isinstance(answer, str) or not answer.strip():
+            return canonical
+        return replace(canonical, answer=answer, answer_retained=True)
+
+
+class StepRunner:
+    """Resolve, authorize, invoke, normalize, and persist one validated step."""
+
+    def __init__(
+        self,
+        *,
+        repository: PlanRepositoryPort,
+        capability_registry: CapabilityRegistry,
+        capability_workflow: CapabilityExecutionWorkflow,
+        clock: ClockPort,
+    ) -> None:
+        self._repository = repository
+        self._capability_registry = capability_registry
+        self._capability_workflow = capability_workflow
+        self._clock = clock
+
+    def call(
+        self,
+        plan: ExecutionPlan,
+        step: PlanStep,
+        execution: PlanExecutionRequest,
+        payload: str,
+        results: Mapping[str, TaskResult],
+        envelopes: Mapping[str, StepResultEnvelope],
+        cancellation: CancellationToken,
+        lease: OperationLease | None,
+        before_dispatch: Callable[[], None],
+    ) -> _StepCallResult:
+        cancellation.raise_if_cancelled()
+        if step.kind is StepKind.LOCAL_SYNTHESIS:
+            before_dispatch()
+            source_result = legacy_source_aggregation(
+                plan,
+                results,
+                envelopes,
+                {item.step_id: item.state for item in plan.steps},
+            )
+            return _StepCallResult(TemplateFinalizer().finalize(source_result))
+        outcome: CapabilityExecutionOutcome = self._capability_workflow.execute_plan_step(
+            plan=plan,
+            step=step,
+            request=execution.request,
+            context_text=payload,
+            context_manifest=execution.context_manifest,
+            cancellation=cancellation,
+            request_guardrails=execution.request_guardrails,
+            operation_lease=lease,
+            before_dispatch=before_dispatch,
+        )
+        envelope = outcome.result_envelope
+        if envelope is None:
+            handler = self._capability_registry.get(step.capability_id)
+            supported = frozenset(
+                getattr(
+                    getattr(handler, "descriptor", None),
+                    "output_schema_versions",
+                    (),
+                )
+            )
+            envelope = normalize_step_result(
+                outcome.result,
+                plan_id=plan.plan_id,
+                task_id=plan.task_id,
+                step_id=step.step_id,
+                capability_id=step.capability_id,
+                operation_id=step.operation_id,
+                supported_schema_versions=supported or frozenset({RESULT_SCHEMA_VERSION}),
+            )
+        return _StepCallResult(
+            outcome.result,
+            envelope,
+            consent_proposal=outcome.consent_proposal,
+            action_confirmation=outcome.action_confirmation,
+        )
+
+    def live_handler(self, step: PlanStep) -> object | str:
+        if step.kind is StepKind.LOCAL_SYNTHESIS:
+            return object()
+        handler = self._capability_registry.get(step.capability_id)
+        if handler is None:
+            return "capability is not registered"
+        status = handler.status()
+        if not status.available:
+            return status.reason_code or "capability is unavailable"
+        if step.operation_id not in handler.descriptor.operations:
+            return "operation is not supported by the live capability"
+        return handler
+
+    @staticmethod
+    def capability_kind(step: PlanStep, handler: object) -> CapabilityKind:
+        if step.kind is StepKind.LOCAL_SYNTHESIS:
+            return CapabilityKind.SPECIALIST
+        routing = getattr(getattr(handler, "descriptor", None), "routing", None)
+        return routing.kind if routing is not None else CapabilityKind.SPECIALIST
+
+    @staticmethod
+    def resolve_inputs(
+        step: PlanStep,
+        execution: PlanExecutionRequest,
+        results: Mapping[str, TaskResult],
+        envelopes: Mapping[str, StepResultEnvelope],
+    ) -> str:
+        values: list[str] = []
+        for item in step.inputs:
+            value: str | None
+            if item.source == "request":
+                value = execution.request.text
+            elif item.source == "context":
+                value = (
+                    execution.local_context_text
+                    if step.capability_id == LOCAL_CONVERSATION_CAPABILITY_ID
+                    and execution.local_context_text
+                    else execution.context_text
+                )
+            elif item.source == "step":
+                result = results.get(item.reference)
+                envelope = envelopes.get(item.reference)
+                value = (
+                    (envelope.answer or envelope.summary)
+                    if envelope is not None
+                    else (result.answer if result is not None else None)
+                )
+                if not value and envelope is not None and envelope.structured_output:
+                    value = "; ".join(
+                        f"{key}={item_value}"
+                        for key, item_value in envelope.structured_output.items()
+                    )
+                if not value and result is not None and result.claims:
+                    value = "; ".join(result.claims)
+            else:
+                value = None
+            if not value:
+                if item.required:
+                    raise _StepInputError(f"required input {item.name} is unavailable")
+                continue
+            values.append(f"{item.name}: {value}")
+        if not values:
+            values.append(f"request: {execution.request.text}")
+        if step.objective_class == "deterministic_fallback" and len(values) == 1:
+            return values[0].split(": ", 1)[-1]
+        return f"objective: {step.objective}\n" + "\n".join(values)
+
+    def claim_lease(
+        self,
+        plan: ExecutionPlan,
+        step: PlanStep,
+        payload: str,
+        execution: PlanExecutionRequest,
+    ) -> OperationLease | None:
+        claim = getattr(self._repository, "claim_operation", None)
+        if not callable(claim):
+            return None
+        return cast(
+            OperationLease,
+            claim(
+                task_id=plan.task_id,
+                request_id=f"{execution.request.request_id}:{step.step_id}",
+                capability_id=step.capability_id,
+                request_digest=payload_hash(payload),
+                at=self._clock.now(),
+            ),
+        )
+
+    def finish_lease(
+        self,
+        lease: OperationLease | None,
+        *,
+        dispatched: bool,
+        success: bool = False,
+    ) -> None:
+        if lease is None:
+            return
+        if success:
+            complete = getattr(self._repository, "complete_operation", None)
+            if callable(complete):
+                complete(lease.operation_id, at=self._clock.now())
+            return
+        fail = getattr(self._repository, "fail_operation", None)
+        if callable(fail):
+            fail(
+                lease.operation_id,
+                at=self._clock.now(),
+                possible_duplicate=dispatched,
+            )
+
+    @staticmethod
+    def future_result(future: Future[_StepCallResult], task_id: str) -> _StepCallResult:
+        try:
+            result = future.result()
+        except CancelledError as exc:
+            return _StepCallResult(
+                compose_cancelled(
+                    task_id=task_id,
+                    partial_work=exc.partial_work,
+                    route=Route.REGISTERED_CAPABILITY,
+                )
+            )
+        except EllyError as exc:
+            return _StepCallResult(
+                compose_failed(
+                    task_id=task_id,
+                    reason=exc.summary,
+                    route=Route.REGISTERED_CAPABILITY,
+                )
+            )
+        except BaseException:
+            return _StepCallResult(
+                compose_failed(
+                    task_id=task_id,
+                    reason="plan step failed",
+                    route=Route.REGISTERED_CAPABILITY,
+                )
+            )
+        if not isinstance(result, _StepCallResult) or result.result.task_id != task_id:
+            return _StepCallResult(
+                compose_failed(
+                    task_id=task_id,
+                    reason="plan step returned an invalid result",
+                    route=Route.REGISTERED_CAPABILITY,
+                )
+            )
+        return result
+
+    @staticmethod
+    def state_for_result(result: TaskResult) -> StepState:
+        if result.task_status is TaskStatus.COMPLETED:
+            return StepState.COMPLETED
+        if result.task_status is TaskStatus.PARTIAL:
+            return StepState.PARTIAL
+        if result.task_status is TaskStatus.CANCELLED:
+            return StepState.CANCELLED
+        if result.task_status in {
+            TaskStatus.AWAITING_CONSENT,
+            TaskStatus.AWAITING_CONFIRMATION,
+            TaskStatus.BLOCKED,
+        }:
+            return StepState.BLOCKED
+        return StepState.FAILED
+
+    @staticmethod
+    def reason_for_result(result: TaskResult, state: StepState) -> str:
+        if result.failures:
+            safe = result.failures[0].replace(" ", "_").upper()
+            if safe and all(char.isalnum() or char == "_" for char in safe):
+                return safe[:64]
+        return f"STEP_{state.value.upper()}"
+
+    def save_result(
+        self,
+        plan: ExecutionPlan,
+        step: PlanStep,
+        result: TaskResult,
+        envelope: StepResultEnvelope | None = None,
+    ) -> None:
+        if envelope is not None:
+            save_envelope = getattr(self._repository, "save_step_envelope", None)
+            if callable(save_envelope):
+                save_envelope(plan.plan_id, step.step_id, envelope, at=self._clock.now())
+                return
+        save = getattr(self._repository, "save_step_result", None)
+        if callable(save):
+            save(plan.plan_id, step.step_id, result, at=self._clock.now())
+
+    def get_result(self, plan_id: str, step_id: str) -> TaskResult | None:
+        get = getattr(self._repository, "get_step_result", None)
+        return get(plan_id, step_id) if callable(get) else None
+
+    def get_envelope(self, plan_id: str, step_id: str) -> StepResultEnvelope | None:
+        get = getattr(self._repository, "get_step_envelope", None)
+        return get(plan_id, step_id) if callable(get) else None
+
+
+class PlanRunner:
+    """Own plan state, dependency scheduling, bounds, and cancellation propagation."""
 
     def __init__(
         self,
@@ -256,76 +670,63 @@ class PlanExecutor:
         capability_workflow: CapabilityExecutionWorkflow,
         clock: ClockPort,
         max_workers: int | None = None,
-        synthesis_executor: SynthesisExecutor | None = None,
-        synthesis_port: LocalSynthesisPort | None = None,
-        synthesis_max_output_tokens: int = 1600,
-        synthesis_timeout_seconds: float = 120.0,
         response_composer_port: LocalResponseComposerPort | None = None,
         response_composer_max_output_tokens: int = 1600,
         response_composer_timeout_seconds: float = 120.0,
         response_pipeline: ResponseCompositionService | None = None,
     ) -> None:
         if not isinstance(capability_registry, CapabilityRegistry):
-            raise ConfigInvalidError("plan executor requires a capability registry")
+            raise ConfigInvalidError("task execution requires a capability registry")
         if not isinstance(capability_workflow, CapabilityExecutionWorkflow):
-            raise ConfigInvalidError("plan executor requires the capability workflow")
+            raise ConfigInvalidError("task execution requires the capability workflow")
         if not isinstance(clock, ClockPort):
-            raise ConfigInvalidError("plan executor requires a clock")
+            raise ConfigInvalidError("task execution requires a clock")
         if max_workers is not None and (
             isinstance(max_workers, bool) or not isinstance(max_workers, int) or max_workers <= 0
         ):
-            raise ConfigInvalidError("plan executor max_workers must be positive")
-        if synthesis_port is not None and not isinstance(synthesis_port, LocalSynthesisPort):
-            raise ConfigInvalidError("plan executor synthesis port is invalid")
+            raise ConfigInvalidError("task execution max_workers must be positive")
         if response_composer_port is not None and not isinstance(
             response_composer_port, LocalResponseComposerPort
         ):
-            raise ConfigInvalidError("plan executor response composer port is invalid")
+            raise ConfigInvalidError("task execution response composer port is invalid")
         if response_pipeline is not None and not isinstance(
             response_pipeline, ResponseCompositionService
         ):
-            raise ConfigInvalidError("plan executor response pipeline is invalid")
-        if (
-            isinstance(synthesis_max_output_tokens, bool)
-            or not isinstance(synthesis_max_output_tokens, int)
-            or synthesis_max_output_tokens <= 0
-        ):
-            raise ConfigInvalidError("plan executor synthesis output limit must be positive")
-        if (
-            isinstance(synthesis_timeout_seconds, bool)
-            or not isinstance(synthesis_timeout_seconds, (int, float))
-            or synthesis_timeout_seconds <= 0
-        ):
-            raise ConfigInvalidError("plan executor synthesis timeout must be positive")
+            raise ConfigInvalidError("task execution response pipeline is invalid")
         if (
             isinstance(response_composer_max_output_tokens, bool)
             or not isinstance(response_composer_max_output_tokens, int)
             or response_composer_max_output_tokens <= 0
         ):
-            raise ConfigInvalidError("plan executor response composer output limit must be positive")
+            raise ConfigInvalidError(
+                "task execution response composer output limit must be positive"
+            )
         if (
             isinstance(response_composer_timeout_seconds, bool)
             or not isinstance(response_composer_timeout_seconds, (int, float))
             or response_composer_timeout_seconds <= 0
         ):
-            raise ConfigInvalidError("plan executor response composer timeout must be positive")
+            raise ConfigInvalidError(
+                "task execution response composer timeout must be positive"
+            )
         self._repository = repository
-        self._capability_registry = capability_registry
-        self._capability_workflow = capability_workflow
         self._clock = clock
         self._max_workers = max_workers
-        self._synthesis_executor = synthesis_executor
-        self._synthesis_port = synthesis_port
-        self._synthesis_max_output_tokens = synthesis_max_output_tokens
-        self._synthesis_timeout_seconds = float(synthesis_timeout_seconds)
-        self._response_pipeline = response_pipeline or (
-            ResponseCompositionService(
-                composer=response_composer_port,
-                max_output_tokens=response_composer_max_output_tokens,
-                timeout_seconds=response_composer_timeout_seconds,
-            )
-            if response_composer_port is not None
-            else None
+        resolved_response_pipeline = response_pipeline or ResponseCompositionService(
+            composer=response_composer_port,
+            max_output_tokens=response_composer_max_output_tokens,
+            timeout_seconds=response_composer_timeout_seconds,
+        )
+        self._finalizer = PlanFinalizer(
+            repository=repository,
+            response_pipeline=resolved_response_pipeline,
+            clock=clock,
+        )
+        self._step_runner = StepRunner(
+            repository=repository,
+            capability_registry=capability_registry,
+            capability_workflow=capability_workflow,
+            clock=clock,
         )
         self._run_lock = RLock()
         self._last_plan: ExecutionPlan | None = None
@@ -377,10 +778,10 @@ class PlanExecutor:
         results: dict[str, TaskResult] = {}
         envelopes: dict[str, StepResultEnvelope] = {}
         for step in plan.steps:
-            stored = self._get_step_result(plan.plan_id, step.step_id)
+            stored = self._step_runner.get_result(plan.plan_id, step.step_id)
             if stored is not None:
                 results[step.step_id] = stored
-            stored_envelope = self._get_step_envelope(plan.plan_id, step.step_id)
+            stored_envelope = self._step_runner.get_envelope(plan.plan_id, step.step_id)
             if stored_envelope is not None:
                 envelopes[step.step_id] = stored_envelope
             elif stored is not None and step.kind is StepKind.CAPABILITY:
@@ -396,7 +797,7 @@ class PlanExecutor:
                     operation_id=step.operation_id,
                 )
                 envelopes[step.step_id] = migrated
-                self._save_step_result(plan, step, stored, envelope=migrated)
+                self._step_runner.save_result(plan, step, stored, envelope=migrated)
 
         if working_plan.status in {
             PlanStatus.COMPLETED,
@@ -414,7 +815,7 @@ class PlanExecutor:
                 states=states,
                 cancellation_accepted=working_plan.status is PlanStatus.CANCELLED,
             )
-            final_result = self._finalize_aggregation(aggregation, execution, cancellation)
+            final_result = self._finalizer.finalize(aggregation, execution, cancellation)
             return PlanExecutionResult(
                 working_plan,
                 results,
@@ -548,7 +949,7 @@ class PlanExecutor:
                                 route=Route.REGISTERED_CAPABILITY,
                             )
                             results[step.step_id] = timeout_result
-                            self._save_step_result(working_plan, step, timeout_result)
+                            self._step_runner.save_result(working_plan, step, timeout_result)
 
                 # Exact consent and consequential-action confirmation suspend
                 # the whole plan. Already-running siblings may finish, but no
@@ -610,12 +1011,11 @@ class PlanExecutor:
                         )
                         working_plan = self._last_plan
                         try:
-                            payload = self._resolve_step_inputs(
+                            payload = self._step_runner.resolve_inputs(
                                 step,
                                 execution,
                                 results,
                                 envelopes,
-                                working_plan.steps,
                             )
                         except _StepInputError as exc:
                             result = compose_blocked(
@@ -625,7 +1025,7 @@ class PlanExecutor:
                                 outcome_code=OutcomeCode.BLOCKED,
                             )
                             results[step.step_id] = result
-                            self._save_step_result(working_plan, step, result)
+                            self._step_runner.save_result(working_plan, step, result)
                             self._transition_step(
                                 working_plan,
                                 step,
@@ -639,7 +1039,7 @@ class PlanExecutor:
                             working_plan = self._last_plan
                             continue
 
-                        live_handler = self._live_handler(step)
+                        live_handler = self._step_runner.live_handler(step)
                         if isinstance(live_handler, str):
                             result = compose_blocked(
                                 task_id=working_plan.task_id,
@@ -648,7 +1048,7 @@ class PlanExecutor:
                                 outcome_code=OutcomeCode.UNAVAILABLE,
                             )
                             results[step.step_id] = result
-                            self._save_step_result(working_plan, step, result)
+                            self._step_runner.save_result(working_plan, step, result)
                             self._transition_step(
                                 working_plan,
                                 step,
@@ -661,7 +1061,7 @@ class PlanExecutor:
                             working_plan = self._last_plan
                             continue
 
-                        kind = self._capability_kind(step, live_handler)
+                        kind = self._step_runner.capability_kind(step, live_handler)
                         limit_reason = self._reserve_execution(
                             kind,
                             step,
@@ -679,7 +1079,7 @@ class PlanExecutor:
                                 outcome_code=OutcomeCode.BLOCKED,
                             )
                             results[step.step_id] = result
-                            self._save_step_result(working_plan, step, result)
+                            self._step_runner.save_result(working_plan, step, result)
                             self._transition_step(
                                 working_plan,
                                 step,
@@ -712,7 +1112,9 @@ class PlanExecutor:
                         )
                         working_plan = self._last_plan
                         lease = (
-                            self._claim_lease(working_plan, step, payload, execution)
+                            self._step_runner.claim_lease(
+                                working_plan, step, payload, execution
+                            )
                             if step.kind is StepKind.CAPABILITY
                             else None
                         )
@@ -724,7 +1126,7 @@ class PlanExecutor:
                                 outcome_code=OutcomeCode.POSSIBLE_DUPLICATE_EXECUTION,
                             )
                             results[step.step_id] = result
-                            self._save_step_result(working_plan, step, result)
+                            self._step_runner.save_result(working_plan, step, result)
                             self._transition_step(
                                 working_plan,
                                 step,
@@ -764,7 +1166,7 @@ class PlanExecutor:
                             )
 
                         future = pool.submit(
-                            self._call_step,
+                            self._step_runner.call,
                             working_plan,
                             step,
                             execution,
@@ -832,7 +1234,7 @@ class PlanExecutor:
                                 route=Route.REGISTERED_CAPABILITY,
                             )
                             results[step.step_id] = result
-                            self._save_step_result(working_plan, step, result)
+                            self._step_runner.save_result(working_plan, step, result)
                             self._transition_step(
                                 working_plan,
                                 step,
@@ -863,8 +1265,10 @@ class PlanExecutor:
                         )
                         item.dispatched = item.dispatch_state["started"]
                         results[item.step.step_id] = result
-                        self._save_step_result(working_plan, item.step, result)
-                        self._finish_lease(item.lease, dispatched=item.dispatched)
+                        self._step_runner.save_result(working_plan, item.step, result)
+                        self._step_runner.finish_lease(
+                            item.lease, dispatched=item.dispatched
+                        )
                         expected = (
                             StepState.RUNNING
                             if states[item.step.step_id] is StepState.RUNNING
@@ -882,7 +1286,9 @@ class PlanExecutor:
                         working_plan = self._last_plan
                 for future in tuple(done):
                     item = running.pop(future)
-                    call_result = self._future_result(future, working_plan.task_id)
+                    call_result = self._step_runner.future_result(
+                        future, working_plan.task_id
+                    )
                     result = call_result.result
                     if call_result.consent_proposal is not None:
                         consent_proposal = call_result.consent_proposal
@@ -911,7 +1317,7 @@ class PlanExecutor:
                         and not deadline_expired
                     ):
                         envelopes[item.step.step_id] = call_result.envelope
-                    self._save_step_result(
+                    self._step_runner.save_result(
                         working_plan,
                         item.step,
                         result,
@@ -921,22 +1327,8 @@ class PlanExecutor:
                             else None
                         ),
                     )
-                    if (
-                        call_result.synthesis_input is not None
-                        and not cancellation_wins
-                        and not deadline_expired
-                    ):
-                        self._save_synthesis_result(
-                            working_plan,
-                            call_result,
-                            result,
-                            retain_output=(
-                                execution.request.persistence_mode
-                                is PersistenceMode.STORE_WITH_RETENTION
-                            ),
-                        )
-                    target = self._step_state_for_result(result)
-                    self._finish_lease(
+                    target = self._step_runner.state_for_result(result)
+                    self._step_runner.finish_lease(
                         item.lease,
                         dispatched=item.dispatched,
                         success=target in STEP_ELIGIBLE_STATES,
@@ -956,7 +1348,7 @@ class PlanExecutor:
                             if target in {StepState.BLOCKED, StepState.UNAVAILABLE}
                             else None
                         ),
-                        reason_code=self._reason_for_result(result, target),
+                        reason_code=self._step_runner.reason_for_result(result, target),
                         states=states,
                         state_lock=state_lock,
                     )
@@ -1014,7 +1406,7 @@ class PlanExecutor:
                 states=states,
                 cancellation_accepted=plan_cancelled,
             )
-        final_result = self._finalize_aggregation(aggregation, execution, cancellation)
+        final_result = self._finalizer.finalize(aggregation, execution, cancellation)
         return PlanExecutionResult(
             working_plan,
             results,
@@ -1023,359 +1415,6 @@ class PlanExecutor:
             aggregation,
             final_result,
         )
-
-    def _finalize_aggregation(
-        self,
-        aggregation: PlanAggregation,
-        execution: PlanExecutionRequest,
-        cancellation: CancellationToken | None = None,
-    ) -> TaskResult:
-        """Apply one common V3.5 presentation decision after aggregation."""
-
-        if self._response_pipeline is None:
-            return finalize_plan(
-                aggregation,
-                synthesized_result=self._synthesis_result(aggregation.plan, aggregation.step_results),
-            )
-
-        stored = self._stored_response_result(aggregation)
-        if stored is not None:
-            self._record_response_composition(
-                aggregation.plan,
-                ResponsePipelineResult(
-                    result=stored,
-                    mode=PresentationMode.COMPOSED,
-                    observation=None,
-                ),
-            )
-            return stored
-
-        # Persist an application-owned attempt reservation before invoking the
-        # local model. If the process stops after dispatch but before the final
-        # draft is stored, recovery deterministically finalizes the canonical
-        # aggregation instead of issuing a second composition request.
-        self._reserve_response_composition(aggregation.plan)
-        composed = self._response_pipeline.compose_aggregation(
-            aggregation,
-            request=execution.request,
-            approved_context=execution.context_text,
-            cancellation=cancellation,
-        )
-        self._record_response_composition(aggregation.plan, composed)
-        self._save_response_composition(
-            aggregation.plan,
-            composed,
-            retain_output=(
-                execution.request.persistence_mode is PersistenceMode.STORE_WITH_RETENTION
-            ),
-        )
-        return composed.result
-
-    def _reserve_response_composition(self, plan: ExecutionPlan) -> None:
-        save = getattr(self._repository, "save_synthesis_result", None)
-        if not callable(save):
-            return
-        save(
-            plan.plan_id,
-            plan.finalization,
-            "response_composition:attempting",
-            (),
-            {"mode": "", "outcome": "attempting", "answer": "", "answer_retained": False},
-            at=self._clock.now(),
-        )
-        append_event = getattr(self._repository, "append_plan_event", None)
-        if callable(append_event):
-            append_event(
-                plan.plan_id,
-                "response_composer.attempted",
-                "RESPONSE_COMPOSITION_RESERVED",
-                "attempted=1 outcome=attempting",
-                at=self._clock.now(),
-            )
-
-    def _record_response_composition(
-        self,
-        plan: ExecutionPlan,
-        composed: ResponsePipelineResult,
-    ) -> None:
-        observation = composed.observation
-        if observation is None:
-            return
-        append_event = getattr(self._repository, "append_plan_event", None)
-        if not callable(append_event):
-            return
-        outcome = observation.outcome or "unknown"
-        reason = observation.reason_code[:128]
-        detail = (
-            f"mode={observation.mode.value} attempted={int(observation.attempted)} "
-            f"outcome={outcome} profile={observation.profile[:64]} "
-            f"model={observation.model_version[:128]} "
-            f"result_refs={','.join(observation.result_refs)} "
-            f"claim_refs={','.join(observation.claim_refs)} "
-            f"citation_refs={','.join(observation.citation_refs)} "
-            f"warning_refs={','.join(observation.warning_refs)} "
-            f"disagreement_refs={','.join(observation.disagreement_refs)} "
-            f"record_refs={','.join(observation.immutable_record_refs)} "
-            f"duration_ms={observation.duration_ms} output_tokens={observation.output_tokens}"
-        )
-        append_event(
-            plan.plan_id,
-            f"response_composer.{outcome}",
-            reason or "RESPONSE_COMPOSITION_RECORDED",
-            detail[:512],
-            at=self._clock.now(),
-        )
-
-    def _save_response_composition(
-        self,
-        plan: ExecutionPlan,
-        composed: ResponsePipelineResult,
-        *,
-        retain_output: bool,
-    ) -> None:
-        observation = composed.observation
-        save = getattr(self._repository, "save_synthesis_result", None)
-        if observation is None or not callable(save):
-            return
-        output: dict[str, object] = {
-            "mode": observation.mode.value,
-            "outcome": observation.outcome,
-            "reason_code": observation.reason_code,
-            "profile": observation.profile,
-            "model_version": observation.model_version,
-            "result_refs": list(observation.result_refs),
-            "claim_refs": list(observation.claim_refs),
-            "citation_refs": list(observation.citation_refs),
-            "warning_refs": list(observation.warning_refs),
-            "disagreement_refs": list(observation.disagreement_refs),
-            "immutable_record_refs": list(observation.immutable_record_refs),
-            "duration_ms": observation.duration_ms,
-            "output_tokens": observation.output_tokens,
-            "answer": composed.result.answer if retain_output else "",
-            "answer_retained": bool(retain_output and composed.result.answer_retained),
-        }
-        save(
-            plan.plan_id,
-            plan.finalization,
-            f"response_composition:{observation.outcome}",
-            observation.result_refs,
-            output,
-            at=self._clock.now(),
-        )
-
-    def _stored_response_result(self, aggregation: PlanAggregation) -> TaskResult | None:
-        get = getattr(self._repository, "get_synthesis_result", None)
-        if not callable(get):
-            return None
-        record = get(aggregation.plan_id)
-        if record is None or not record.validation_state.startswith("response_composition:"):
-            return None
-        canonical = TemplateFinalizer().finalize(aggregation)
-        answer = record.output.get("answer") if isinstance(record.output, Mapping) else None
-        if not isinstance(answer, str) or not answer.strip():
-            return canonical
-        return replace(canonical, answer=answer, answer_retained=True)
-
-    def _call_step(
-        self,
-        plan: ExecutionPlan,
-        step: PlanStep,
-        execution: PlanExecutionRequest,
-        payload: str,
-        results: Mapping[str, TaskResult],
-        envelopes: Mapping[str, StepResultEnvelope],
-        cancellation: CancellationToken,
-        lease: OperationLease | None,
-        before_dispatch: Callable[[], None],
-    ) -> _StepCallResult:
-        cancellation.raise_if_cancelled()
-        if step.kind is StepKind.LOCAL_SYNTHESIS:
-            before_dispatch()
-            if self._response_pipeline is not None:
-                # A persisted V3 plan may still contain the old terminal
-                # synthesis node.  Treat it as a deterministic migration shim;
-                # V3.5's single response composer runs only after the complete
-                # aggregation below.
-                source_result = source_aggregation(
-                    plan,
-                    results,
-                    envelopes,
-                    {item.step_id: item.state for item in plan.steps},
-                )
-                return _StepCallResult(TemplateFinalizer().finalize(source_result))
-            if self._synthesis_executor is not None:
-                result = self._synthesis_executor(plan, step, results, cancellation)
-                if not isinstance(result, TaskResult):
-                    raise ConfigInvalidError("synthesis executor returned an invalid result")
-                return _StepCallResult(result)
-
-            source_input: SynthesisInput | None = None
-            try:
-                source_input, source_result = build_synthesis_input(
-                    plan,
-                    execution.request,
-                    execution.context_text,
-                    results,
-                    envelopes,
-                    {item.step_id: item.state for item in plan.steps},
-                )
-            except Exception:
-                # The deterministic source aggregation is still useful for a
-                # safe fallback even if a bounded model input cannot be built.
-                source_result = source_aggregation(
-                    plan,
-                    results,
-                    envelopes,
-                    {item.step_id: item.state for item in plan.steps},
-                )
-            if self._synthesis_port is None or source_input is None:
-                return self._synthesis_fallback(
-                    plan,
-                    source_result,
-                    source_input,
-                    "SYNTHESIS_PORT_UNAVAILABLE"
-                    if self._synthesis_port is None
-                    else "SYNTHESIS_INPUT_INVALID",
-                )
-
-            request = SynthesisRequest(
-                request_id=execution.request.request_id,
-                synthesis_input=source_input,
-                max_output_tokens=self._synthesis_max_output_tokens,
-                timeout_seconds=min(step.timeout_seconds, self._synthesis_timeout_seconds),
-            )
-            unregister = cancellation.register(self._synthesis_port.cancel)
-            try:
-                draft = self._synthesis_port.synthesize(request)
-                validated = validate_synthesis_draft(source_input, draft)
-                rendered = render_synthesis_draft(source_input, validated, source_result)
-                if not isinstance(rendered, TaskResult):
-                    raise ConfigInvalidError("synthesis renderer returned invalid output")
-                return _StepCallResult(
-                    rendered,
-                    synthesis_input=source_input,
-                    synthesis_draft=validated,
-                    synthesis_validation_state="validated",
-                )
-            except CancelledError:
-                if cancellation.cancelled:
-                    raise
-                return self._synthesis_fallback(
-                    plan,
-                    source_result,
-                    source_input,
-                    "SYNTHESIS_CANCELLED",
-                )
-            except Exception as exc:  # provider/model/parser failures are safe fallbacks
-                return self._synthesis_fallback(
-                    plan,
-                    source_result,
-                    source_input,
-                    self._synthesis_failure_code(exc),
-                )
-            finally:
-                unregister()
-        outcome: CapabilityExecutionOutcome = self._capability_workflow.execute_plan_step(
-            plan=plan,
-            step=step,
-            request=execution.request,
-            context_text=payload,
-            context_manifest=execution.context_manifest,
-            cancellation=cancellation,
-            request_guardrails=execution.request_guardrails,
-            operation_lease=lease,
-            before_dispatch=before_dispatch,
-        )
-        envelope = outcome.result_envelope
-        if envelope is None:
-            handler = self._capability_registry.get(step.capability_id)
-            supported = frozenset(
-                getattr(
-                    getattr(handler, "descriptor", None),
-                    "output_schema_versions",
-                    (),
-                )
-            )
-            envelope = normalize_step_result(
-                outcome.result,
-                plan_id=plan.plan_id,
-                task_id=plan.task_id,
-                step_id=step.step_id,
-                capability_id=step.capability_id,
-                operation_id=step.operation_id,
-                supported_schema_versions=supported or frozenset({RESULT_SCHEMA_VERSION}),
-            )
-        return _StepCallResult(
-            outcome.result,
-            envelope,
-            consent_proposal=outcome.consent_proposal,
-            action_confirmation=outcome.action_confirmation,
-        )
-
-    def _live_handler(self, step: PlanStep) -> object | str:
-        if step.kind is StepKind.LOCAL_SYNTHESIS:
-            return object()
-        handler = self._capability_registry.get(step.capability_id)
-        if handler is None:
-            return "capability is not registered"
-        status = handler.status()
-        if not status.available:
-            return status.reason_code or "capability is unavailable"
-        if step.operation_id not in handler.descriptor.operations:
-            return "operation is not supported by the live capability"
-        return handler
-
-    def _synthesis_fallback(
-        self,
-        plan: ExecutionPlan,
-        aggregation: PlanAggregation,
-        synthesis_input: SynthesisInput | None,
-        reason_code: str,
-    ) -> _StepCallResult:
-        result = deterministic_synthesis_fallback(aggregation, reason_code)
-        append_event = getattr(self._repository, "append_plan_event", None)
-        if callable(append_event):
-            append_event(
-                plan.plan_id,
-                "synthesis.fallback",
-                "SYNTHESIS_FALLBACK",
-                reason_code[:256],
-                at=self._clock.now(),
-            )
-        return _StepCallResult(
-            result,
-            synthesis_input=synthesis_input,
-            synthesis_validation_state=f"fallback:{reason_code}",
-        )
-
-    @staticmethod
-    def _synthesis_failure_code(error: Exception) -> str:
-        name = type(error).__name__.upper()
-        if "TIMEOUT" in name:
-            return "SYNTHESIS_TIMEOUT"
-        if "MALFORMED" in name or "VALUE" in name or "TYPE" in name:
-            return "SYNTHESIS_DRAFT_INVALID"
-        if "UNAVAILABLE" in name or "PERMANENT" in name or "TRANSIENT" in name:
-            return "SYNTHESIS_LOCAL_MODEL_UNAVAILABLE"
-        return "SYNTHESIS_FAILED"
-
-    @staticmethod
-    def _synthesis_result(
-        plan: ExecutionPlan,
-        results: Mapping[str, TaskResult],
-    ) -> TaskResult | None:
-        for step in plan.steps:
-            if step.kind is StepKind.LOCAL_SYNTHESIS:
-                result = results.get(step.step_id)
-                return result if isinstance(result, TaskResult) else None
-        return None
-
-    @staticmethod
-    def _capability_kind(step: PlanStep, handler: object) -> CapabilityKind:
-        if step.kind is StepKind.LOCAL_SYNTHESIS:
-            return CapabilityKind.SPECIALIST
-        routing = getattr(getattr(handler, "descriptor", None), "routing", None)
-        return routing.kind if routing is not None else CapabilityKind.SPECIALIST
 
     @staticmethod
     def _reserve_execution(
@@ -1413,7 +1452,7 @@ class PlanExecutor:
         ) and all(
             states[dependency] in STEP_ELIGIBLE_STATES
             for dependency in step.dependencies
-            if PlanExecutor._dependency_required(step, by_id[dependency])
+            if PlanRunner._dependency_required(step, by_id[dependency])
         )
 
     @staticmethod
@@ -1465,157 +1504,6 @@ class PlanExecutor:
                 working = self._last_plan
                 changed = True
         return working
-
-    def _resolve_step_inputs(
-        self,
-        step: PlanStep,
-        execution: PlanExecutionRequest,
-        results: Mapping[str, TaskResult],
-        envelopes: Mapping[str, StepResultEnvelope],
-        all_steps: tuple[PlanStep, ...],
-    ) -> str:
-        del all_steps
-        values: list[str] = []
-        for item in step.inputs:
-            value: str | None
-            if item.source == "request":
-                value = execution.request.text
-            elif item.source == "context":
-                value = execution.context_text
-            elif item.source == "step":
-                result = results.get(item.reference)
-                envelope = envelopes.get(item.reference)
-                value = (
-                    (envelope.answer or envelope.summary)
-                    if envelope is not None
-                    else (result.answer if result is not None else None)
-                )
-                if not value and envelope is not None and envelope.structured_output:
-                    value = "; ".join(
-                        f"{key}={item_value}"
-                        for key, item_value in envelope.structured_output.items()
-                    )
-                if not value and result is not None and result.claims:
-                    value = "; ".join(result.claims)
-            else:
-                value = None
-            if not value:
-                if item.required:
-                    raise _StepInputError(f"required input {item.name} is unavailable")
-                continue
-            values.append(f"{item.name}: {value}")
-        if not values:
-            values.append(f"request: {execution.request.text}")
-        if step.objective_class == "deterministic_fallback" and len(values) == 1:
-            return values[0].split(": ", 1)[-1]
-        # The objective is application-owned metadata and is included so a
-        # single handler can distinguish materially different validated steps.
-        return f"objective: {step.objective}\n" + "\n".join(values)
-
-    def _claim_lease(
-        self,
-        plan: ExecutionPlan,
-        step: PlanStep,
-        payload: str,
-        execution: PlanExecutionRequest,
-    ) -> OperationLease | None:
-        claim = getattr(self._repository, "claim_operation", None)
-        if not callable(claim):
-            return None
-        return cast(
-            OperationLease,
-            claim(
-                task_id=plan.task_id,
-                request_id=f"{execution.request.request_id}:{step.step_id}",
-                capability_id=step.capability_id,
-                request_digest=payload_hash(payload),
-                at=self._clock.now(),
-            ),
-        )
-
-    def _finish_lease(
-        self,
-        lease: OperationLease | None,
-        *,
-        dispatched: bool,
-        success: bool = False,
-    ) -> None:
-        if lease is None:
-            return
-        if success:
-            complete = getattr(self._repository, "complete_operation", None)
-            if callable(complete):
-                complete(lease.operation_id, at=self._clock.now())
-            return
-        fail = getattr(self._repository, "fail_operation", None)
-        if callable(fail):
-            fail(
-                lease.operation_id,
-                at=self._clock.now(),
-                possible_duplicate=dispatched,
-            )
-
-    def _future_result(self, future: Future[_StepCallResult], task_id: str) -> _StepCallResult:
-        try:
-            result = future.result()
-        except CancelledError as exc:
-            return _StepCallResult(
-                compose_cancelled(
-                    task_id=task_id,
-                    partial_work=exc.partial_work,
-                    route=Route.REGISTERED_CAPABILITY,
-                )
-            )
-        except EllyError as exc:
-            return _StepCallResult(
-                compose_failed(
-                    task_id=task_id,
-                    reason=exc.summary,
-                    route=Route.REGISTERED_CAPABILITY,
-                )
-            )
-        except BaseException:
-            return _StepCallResult(
-                compose_failed(
-                    task_id=task_id,
-                    reason="plan step failed",
-                    route=Route.REGISTERED_CAPABILITY,
-                )
-            )
-        if not isinstance(result, _StepCallResult) or result.result.task_id != task_id:
-            return _StepCallResult(
-                compose_failed(
-                    task_id=task_id,
-                    reason="plan step returned an invalid result",
-                    route=Route.REGISTERED_CAPABILITY,
-                )
-            )
-        return result
-
-    @staticmethod
-    def _step_state_for_result(result: TaskResult) -> StepState:
-        if result.task_status is TaskStatus.COMPLETED:
-            return StepState.COMPLETED
-        if result.task_status is TaskStatus.PARTIAL:
-            return StepState.PARTIAL
-        if result.task_status is TaskStatus.CANCELLED:
-            return StepState.CANCELLED
-        if (
-            result.task_status is TaskStatus.AWAITING_CONSENT
-            or result.task_status is TaskStatus.AWAITING_CONFIRMATION
-        ):
-            return StepState.BLOCKED
-        if result.task_status is TaskStatus.BLOCKED:
-            return StepState.BLOCKED
-        return StepState.FAILED
-
-    @staticmethod
-    def _reason_for_result(result: TaskResult, state: StepState) -> str:
-        if result.failures:
-            safe = result.failures[0].replace(" ", "_").upper()
-            if safe and all(char.isalnum() or char == "_" for char in safe):
-                return safe[:64]
-        return f"STEP_{state.value.upper()}"
 
     def _wait_timeout(
         self,
@@ -1706,69 +1594,6 @@ class PlanExecutor:
             raise ConflictError("plan status changed before transition")
         return replace(plan, status=target)
 
-    def _save_step_result(
-        self,
-        plan: ExecutionPlan,
-        step: PlanStep,
-        result: TaskResult,
-        envelope: StepResultEnvelope | None = None,
-    ) -> None:
-        if envelope is not None:
-            save_envelope = getattr(self._repository, "save_step_envelope", None)
-            if callable(save_envelope):
-                save_envelope(
-                    plan.plan_id,
-                    step.step_id,
-                    envelope,
-                    at=self._clock.now(),
-                )
-                return
-        save = getattr(self._repository, "save_step_result", None)
-        if callable(save):
-            save(plan.plan_id, step.step_id, result, at=self._clock.now())
-
-    def _save_synthesis_result(
-        self,
-        plan: ExecutionPlan,
-        call_result: _StepCallResult,
-        result: TaskResult,
-        *,
-        retain_output: bool,
-    ) -> None:
-        save = getattr(self._repository, "save_synthesis_result", None)
-        if not callable(save) or call_result.synthesis_input is None:
-            return
-        output: dict[str, object] = {
-            "status": result.task_status.value,
-            "answer": result.answer if retain_output and result.answer_retained else "",
-            "claims": list(result.claims) if retain_output else [],
-            "citations": list(result.citations) if retain_output else [],
-            "partial_work": list(result.partial_work) if retain_output else [],
-            "failures": list(result.failures),
-            "next_actions": list(result.next_actions) if retain_output else [],
-            "draft": (
-                call_result.synthesis_draft.to_dict()
-                if call_result.synthesis_draft is not None
-                else None
-            ),
-        }
-        save(
-            plan.plan_id,
-            plan.finalization,
-            call_result.synthesis_validation_state or "fallback",
-            call_result.synthesis_input.result_ids,
-            output,
-            at=self._clock.now(),
-        )
-
-    def _get_step_result(self, plan_id: str, step_id: str) -> TaskResult | None:
-        get = getattr(self._repository, "get_step_result", None)
-        return get(plan_id, step_id) if callable(get) else None
-
-    def _get_step_envelope(self, plan_id: str, step_id: str) -> StepResultEnvelope | None:
-        get = getattr(self._repository, "get_step_envelope", None)
-        return get(plan_id, step_id) if callable(get) else None
-
     @staticmethod
     def _derive_plan_status(
         steps: tuple[PlanStep, ...],
@@ -1782,6 +1607,243 @@ class PlanExecutor:
         )
 
 
+class TaskExecutionService:
+    """Sole public authority for executing one validated task plan."""
+
+    def __init__(
+        self,
+        *,
+        repository: PlanRepositoryPort,
+        capability_registry: CapabilityRegistry,
+        capability_workflow: CapabilityExecutionWorkflow,
+        clock: ClockPort,
+        max_workers: int | None = None,
+        response_composer_port: LocalResponseComposerPort | None = None,
+        response_composer_max_output_tokens: int = 1600,
+        response_composer_timeout_seconds: float = 120.0,
+        response_pipeline: ResponseCompositionService | None = None,
+        recovery: PlanRecovery | None = None,
+        replan_service: ReplanService | None = None,
+    ) -> None:
+        self._repository = repository
+        self._clock = clock
+        self._recovery = recovery or PlanRecovery(clock=clock)
+        self._replan_service = replan_service
+        self._active_lock = RLock()
+        self._active: dict[str, CancellationToken] = {}
+        self._active_tasks: dict[str, str] = {}
+        self._runner = PlanRunner(
+            repository=repository,
+            capability_registry=capability_registry,
+            capability_workflow=capability_workflow,
+            clock=clock,
+            max_workers=max_workers,
+            response_composer_port=response_composer_port,
+            response_composer_max_output_tokens=response_composer_max_output_tokens,
+            response_composer_timeout_seconds=response_composer_timeout_seconds,
+            response_pipeline=response_pipeline,
+        )
+
+    def execute(
+        self,
+        plan: ExecutionPlan | str,
+        execution: PlanExecutionRequest | None = None,
+        *,
+        request: TaskRequest | None = None,
+        context_text: str | None = None,
+        context_manifest: ContextManifest | None = None,
+        local_context_text: str = "",
+        cancellation: CancellationToken | None = None,
+        request_guardrails: GuardrailController | None = None,
+        manage_task_lifecycle: bool = True,
+    ) -> PlanExecutionResult:
+        if execution is not None:
+            if not isinstance(execution, PlanExecutionRequest):
+                raise InputInvalidError("task execution context is invalid")
+            request = execution.request
+            context_text = execution.context_text
+            context_manifest = execution.context_manifest
+            local_context_text = execution.local_context_text
+            cancellation = execution.cancellation
+            request_guardrails = execution.request_guardrails
+        if request is None or context_text is None or context_manifest is None:
+            raise InputInvalidError("task execution context is incomplete")
+        if not isinstance(request, TaskRequest):
+            raise InputInvalidError("task execution request is invalid")
+        resolved = self._resolve_plan(plan)
+        token = cancellation or CancellationToken()
+        with self._active_lock:
+            self._active[resolved.plan_id] = token
+            self._active_tasks[resolved.task_id] = resolved.plan_id
+        if manage_task_lifecycle:
+            self._start_task_if_available(resolved, request)
+        try:
+            result = self._runner.execute(
+                resolved,
+                PlanExecutionRequest(
+                    request=request,
+                    context_text=context_text,
+                    context_manifest=context_manifest,
+                    local_context_text=local_context_text,
+                    cancellation=token,
+                    request_guardrails=request_guardrails,
+                ),
+            )
+            if manage_task_lifecycle:
+                self._finish_task_if_available(result)
+            return result
+        finally:
+            with self._active_lock:
+                self._active.pop(resolved.plan_id, None)
+                self._active_tasks.pop(resolved.task_id, None)
+
+    run = execute
+
+    def reconcile_startup(self) -> tuple[RecoveryReport, ...]:
+        """Recover persisted nonterminal plans without dispatching providers."""
+
+        return self._recovery.reconcile_startup(self._repository)
+
+    def replan(
+        self,
+        plan: ExecutionPlan | str,
+        proposal: ExecutionProposal,
+        *,
+        request: ReplanRequest | None = None,
+        trigger: ReplanTrigger | None = None,
+        failed_step_id: str | None = None,
+        cancellation_accepted: bool = False,
+        authorization_denied: bool = False,
+        consent_denied: bool = False,
+        hard_limit_reached: bool = False,
+        uncertain_external_action: bool = False,
+        idempotency_safe: bool = True,
+        same_contract: bool = True,
+        cancellation: CancellationToken | None = None,
+    ) -> ReplanResult:
+        if self._replan_service is None:
+            raise ConfigInvalidError("plan replanning is not configured")
+        return self._replan_service.replan(
+            self._resolve_plan(plan),
+            proposal,
+            request=request,
+            trigger=trigger,
+            failed_step_id=failed_step_id,
+            cancellation_accepted=cancellation_accepted,
+            authorization_denied=authorization_denied,
+            consent_denied=consent_denied,
+            hard_limit_reached=hard_limit_reached,
+            uncertain_external_action=uncertain_external_action,
+            idempotency_safe=idempotency_safe,
+            same_contract=same_contract,
+            cancellation=cancellation,
+        )
+
+    def cancel(self, plan_id: str) -> bool:
+        with self._active_lock:
+            token = self._active.get(plan_id)
+        if token is None:
+            return False
+        token.cancel()
+        return True
+
+    cancel_plan = cancel
+
+    def cancel_active(self) -> bool:
+        with self._active_lock:
+            token = next(iter(self._active.values()), None)
+        if token is None:
+            return False
+        token.cancel()
+        return True
+
+    def cancel_task(self, task_id: str) -> bool:
+        with self._active_lock:
+            plan_id = self._active_tasks.get(task_id)
+        return self.cancel(plan_id) if plan_id is not None else False
+
+    def resume_authorized_step(self, plan_id: str, step_id: str) -> ExecutionPlan:
+        plan = self._resolve_plan(plan_id)
+        if plan.status is not PlanStatus.BLOCKED:
+            raise InputInvalidError("execution plan is not awaiting authorization")
+        selected = next((step for step in plan.steps if step.step_id == step_id), None)
+        if selected is None or selected.state is not StepState.BLOCKED:
+            raise InputInvalidError("authorized plan step is not resumable")
+        stored = self._repository.get_step_result(plan.plan_id, step_id)
+        if stored is None or stored.task_status not in {
+            TaskStatus.AWAITING_CONSENT,
+            TaskStatus.AWAITING_CONFIRMATION,
+        }:
+            raise InputInvalidError("plan step has no matching authorization pause")
+        updated = plan
+        for step in plan.steps:
+            if step.state is not StepState.BLOCKED:
+                continue
+            step_result = self._repository.get_step_result(plan.plan_id, step.step_id)
+            if step.step_id != step_id and step_result is not None:
+                continue
+            updated = self._repository.transition_step(
+                plan.plan_id,
+                step.step_id,
+                StepState.PENDING,
+                expected_state=StepState.BLOCKED,
+                authorization_state=AuthorizationState.PENDING,
+                reason_code="PLAN_AUTHORIZATION_RESUMED",
+                at=self._clock.now(),
+            )
+        return self._repository.transition_plan(
+            updated.plan_id,
+            PlanStatus.PENDING,
+            expected_status=PlanStatus.BLOCKED,
+            reason_code="PLAN_AUTHORIZATION_RESUMED",
+            at=self._clock.now(),
+        )
+
+    def _resolve_plan(self, plan: ExecutionPlan | str) -> ExecutionPlan:
+        if isinstance(plan, ExecutionPlan):
+            return plan
+        if not isinstance(plan, str) or not plan.strip():
+            raise InputInvalidError("plan identifier is invalid")
+        loaded = self._repository.get_plan(plan)
+        if loaded is None:
+            raise InputInvalidError("execution plan was not found")
+        return loaded
+
+    def _start_task_if_available(self, plan: ExecutionPlan, request: TaskRequest) -> None:
+        get_session = getattr(self._repository, "get_session", None)
+        start_task = getattr(self._repository, "start_task", None)
+        if callable(get_session) and callable(start_task):
+            if get_session(request.session_id) is not None:
+                start_task(plan.task_id, request.session_id, self._clock.now())
+
+    def _finish_task_if_available(self, result: PlanExecutionResult) -> None:
+        save_task_result = getattr(self._repository, "save_task_result", None)
+        task_session_id = getattr(self._repository, "task_session_id", None)
+        if (
+            result.final_result is not None
+            and callable(save_task_result)
+            and callable(task_session_id)
+            and task_session_id(result.plan.task_id) is not None
+        ):
+            save_task_result(result.final_result, self._clock.now())
+        finish_task = getattr(self._repository, "finish_task", None)
+        if not callable(finish_task):
+            return
+        task_status = (
+            result.final_result.task_status.value
+            if result.final_result is not None
+            and result.final_result.task_status
+            in {TaskStatus.AWAITING_CONSENT, TaskStatus.AWAITING_CONFIRMATION}
+            else ("failed" if result.status is PlanStatus.UNAVAILABLE else result.status.value)
+        )
+        finish_task(result.plan.task_id, task_status, self._clock.now())
+
+
+# Import compatibility only. The active composition and orchestration paths use
+# TaskExecutionService. Retire this alias after direct callers migrate in Phase 10.
+PlanExecutor = TaskExecutionService
+
+
 def _request_for_plan(plan: ExecutionPlan) -> TaskRequest:
     """Construct a conservative convenience request for direct unit callers."""
 
@@ -1789,9 +1851,13 @@ def _request_for_plan(plan: ExecutionPlan) -> TaskRequest:
 
 
 __all__ = [
+    "PlanFinalizer",
     "PlanExecutionRequest",
     "PlanExecutionResult",
     "PlanExecutor",
+    "PlanRunner",
     "PlanStatusPolicy",
+    "StepRunner",
+    "TaskExecutionService",
     "PlanRunResult",
 ]

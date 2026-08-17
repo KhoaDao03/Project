@@ -31,6 +31,7 @@ class CapabilityKind(str, Enum):
 
     SPECIALIST = "specialist"
     RESEARCH = "research"
+    LOCAL = "local"
 
 
 class FreshnessSupport(str, Enum):

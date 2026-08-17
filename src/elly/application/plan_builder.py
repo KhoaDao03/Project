@@ -76,7 +76,7 @@ class PlanBuilder:
         default_timeout_seconds: float = 60.0,
         synthesis_timeout_seconds: float | None = None,
         redundancy_policy: RedundancyPolicy | None = None,
-        legacy_synthesis_enabled: bool = True,
+        legacy_synthesis_enabled: bool = False,
     ) -> None:
         if not isinstance(catalog, tuple):
             raise InputInvalidError("plan builder catalog must be an immutable tuple")
@@ -110,6 +110,10 @@ class PlanBuilder:
             else default_timeout_seconds
         )
         self._redundancy_policy = redundancy_policy or RedundancyPolicy()
+        # Compatibility is opt-in and exists only to construct representative
+        # persisted V3 plans in migration tests. Retire it when V3 plans have
+        # been migrated or leave the supported recovery window. New runtime
+        # plans always use post-aggregation response composition.
         self._legacy_synthesis_enabled = legacy_synthesis_enabled
 
     @property

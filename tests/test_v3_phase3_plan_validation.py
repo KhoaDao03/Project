@@ -342,7 +342,17 @@ class Phase3PlanBuilderTests(unittest.TestCase):
             ("a", _operation("a.run")),
             ("b", _operation("b.run")),
         )
-        synthesis = PlanBuilder(synthesis_catalog).build(
+        current = PlanBuilder(synthesis_catalog).build(
+            _proposal(
+                (_step("a-step", "a", "a.run"), _step("b-step", "b", "b.run")),
+                finalization=FinalizationStrategy.LOCAL_SYNTHESIS,
+            ),
+            "task-current",
+        )
+        self.assertEqual(FinalizationStrategy.TEMPLATE, current.finalization)
+        self.assertNotIn(StepKind.LOCAL_SYNTHESIS, {step.kind for step in current.steps})
+
+        synthesis = PlanBuilder(synthesis_catalog, legacy_synthesis_enabled=True).build(
             _proposal(
                 (_step("a-step", "a", "a.run"), _step("b-step", "b", "b.run")),
                 finalization=FinalizationStrategy.LOCAL_SYNTHESIS,

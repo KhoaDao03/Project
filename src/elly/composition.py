@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 import uuid
 from concurrent.futures import Future
 from typing import TYPE_CHECKING, cast
@@ -24,12 +25,10 @@ from .adapters.audit_log import StructuredAuditLog
 from .adapters.fake_generalist import FakeGeneralist
 from .adapters.fake_planner import FakePlanner, PlannerFailureMode
 from .adapters.fake_response_composer import FakeResponseComposer
-from .adapters.fake_synthesis import FakeSynthesis
 from .adapters.http_document_retriever import HttpDocumentRetriever
 from .adapters.ollama_generalist import OllamaGeneralist
 from .adapters.ollama_planner import OllamaPlanner
 from .adapters.ollama_response_composer import OllamaResponseComposer
-from .adapters.ollama_synthesis import OllamaSynthesis
 from .adapters.openai_specialist import OpenAISpecialistProvider
 from .adapters.openai_web_research import OpenAIHostedWebSearch
 from .adapters.sqlite_repository import SqliteSessionRepository
@@ -44,13 +43,17 @@ from .application.capability_handlers import (
 from .application.capability_workflow import CapabilityExecutionWorkflow
 from .application.completion import CompletionService
 from .application.context_builder import ContextBuilder
-from .application.conversation import ConversationOrchestrator
 from .application.execution import CancellationToken
 from .application.local_conversation import LocalConversationUseCase
+from .application.local_conversation_capability import (
+    LOCAL_CONVERSATION_CAPABILITY_ID,
+    LocalConversationCapabilityHandler,
+)
 from .application.plan_builder import PlanBuilder
-from .application.plan_executor import PlanExecutionResult, PlanExecutor
+from .application.plan_executor import PlanExecutionResult, TaskExecutionService
 from .application.plan_interpreter import PlanInterpreter
 from .application.plan_orchestrator import PlanOrchestrator
+from .application.planning_service import PlanningService
 from .application.recovery import PlanRecovery, RecoveryReport
 from .application.replan import (
     ReplanRequest,
@@ -59,19 +62,33 @@ from .application.replan import (
     ReplanTrigger,
 )
 from .application.research import ResearchPipeline
+from .application.response_composer import (
+    compose_blocked,
+    compose_clarification,
+    compose_possible_duplicate,
+)
 from .application.response_pipeline import ResponseCompositionService
+from .application.route_compatibility import enrich_task_result
 from .application.routing import RoutingPolicy
 from .application.specialist_policy import SpecialistExecutionPolicy
 from .application.specialists import SpecialistWorkflow
 from .config import Config, load_config
 from .domain.context import resolve_conversation_context
-from .domain.enums import CloudMode, HealthState, PersistenceMode
-from .domain.errors import ConfigInvalidError, PlanValidationError
+from .domain.enums import (
+    CloudMode,
+    ErrorClass,
+    HealthState,
+    PersistenceMode,
+    RouteReasonCode,
+    TaskStatus,
+)
+from .domain.errors import ConfigInvalidError
 from .domain.models import (
     ContextManifest,
     ConversationOutcome,
     HealthReport,
     Message,
+    RouteDecision,
     RouteRequest,
     SessionRecord,
     TaskRequest,
@@ -85,7 +102,6 @@ from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
 from .ports.local_planner import LocalPlannerPort
 from .ports.local_response_composer import LocalResponseComposerPort
-from .ports.local_synthesis import LocalSynthesisPort
 from .ports.plan_repository import PlanRepositoryPort
 from .ports.repository import SessionRepositoryPort
 from .privacy import ConsentWorkflow, PrivacyPolicy
@@ -131,6 +147,27 @@ def _specialist_capability_handlers(
     )
 
 
+class _ConversationCompatibilityFacade:
+    """Preserve the old composed attribute while delegating to the canonical path.
+
+    This boundary exists for callers that still invoke ``app.orchestrator``.
+    Retire it when those protocol/API callers move to ``Application.handle`` in
+    the compatibility-removal phase; it owns no lifecycle or cancellation state.
+    """
+
+    def __init__(self, application: "Application") -> None:
+        self._application = application
+
+    def handle(self, request: TaskRequest) -> ConversationOutcome:
+        return self._application.handle(request)
+
+    def cancel_active(self) -> bool:
+        return self._application.cancel_active()
+
+    def cancel_task(self, task_id: str) -> bool:
+        return self._application.cancel_task(task_id)
+
+
 class Application:
     """Wired M6 application container.
 
@@ -140,11 +177,15 @@ class Application:
 
     def cancel_active(self) -> bool:
         """Cancel the active local or hosted operation through its provider port."""
-        return self.plan_orchestrator.cancel_active() or self.orchestrator.cancel_active()
+        planning = self.planning_service.cancel()
+        execution = self.task_execution_service.cancel_active()
+        return planning or execution
 
     def cancel_task(self, task_id: str) -> bool:
         """Cancel one identified in-flight operation through its provider port."""
-        return self.plan_orchestrator.cancel_task(task_id) or self.orchestrator.cancel_task(task_id)
+        planning = self.planning_service.cancel(task_id)
+        execution = self.task_execution_service.cancel_task(task_id)
+        return planning or execution
 
     def __init__(
         self,
@@ -166,10 +207,10 @@ class Application:
         capability_registry: CapabilityRegistry | None = None,
         action_authorization: ActionAuthorizationService | None = None,
         planner: LocalPlannerPort | None = None,
-        synthesis: LocalSynthesisPort | None = None,
         response_composer: LocalResponseComposerPort | None = None,
-        plan_builder: PlanBuilder | None = None,
-        plan_executor: PlanExecutor | None = None,
+        planning_service: PlanningService | None = None,
+        task_execution_service: TaskExecutionService | None = None,
+        plan_executor: TaskExecutionService | None = None,
         plan_orchestrator: PlanOrchestrator | None = None,
         replan_service: ReplanService | None = None,
         recovery: PlanRecovery | None = None,
@@ -194,10 +235,11 @@ class Application:
         self.research = research
         self.specialist_workflow = specialist_workflow
         self.consent = consent
-        self._planning_enabled = planner is not None
         self._v3_authorization_lock = threading.RLock()
         self._v3_authorization_steps: dict[str, tuple[str, str]] = {}
-        self._v3_execution_context: dict[str, tuple[str, ContextManifest]] = {}
+        self._v3_execution_context: dict[
+            str, tuple[str, str, ContextManifest, RouteDecision]
+        ] = {}
         self.local_conversation = local_conversation or LocalConversationUseCase(
             generalist=generalist,
             model_id=config.conversation_role.model_id,
@@ -205,21 +247,24 @@ class Application:
             guardrails=guardrails,
         )
         self.capability_registry = capability_registry or CapabilityRegistry()
+        if self.capability_registry.get(LOCAL_CONVERSATION_CAPABILITY_ID) is None:
+            self.capability_registry.register(
+                LocalConversationCapabilityHandler(self.local_conversation)
+            )
         self.capability_registry.validate()
-        self.plan_builder = plan_builder or PlanBuilder(
+        replan_builder = PlanBuilder(
             self.capability_registry.routing_catalog(),
             config.execution_plan_limits(),
             default_timeout_seconds=config.tool_timeout_seconds,
             synthesis_timeout_seconds=config.response_composer_role.timeout_seconds,
-            legacy_synthesis_enabled=response_composer is None,
+            legacy_synthesis_enabled=False,
         )
         self.replan_service = replan_service or ReplanService(
             repository=self.plan_repository,
-            plan_builder=self.plan_builder,
+            plan_builder=replan_builder,
             clock=clock,
             catalog_provider=self.capability_registry.routing_catalog,
         )
-        self.recovery = recovery or PlanRecovery(clock=clock)
         self.routing_policy = RoutingPolicy(
             capabilities=self.capability_registry,
         )
@@ -227,27 +272,34 @@ class Application:
         # constructor keeps a deterministic fake for older tests and embedded
         # callers that construct the application without the composition root.
         self.planner = planner if planner is not None else FakePlanner()
-        self.synthesis = synthesis if synthesis is not None else FakeSynthesis()
-        # ``synthesis`` remains the V3 compatibility injection.  New callers
-        # should provide the independently role-bound response composer.
         self.response_composer = response_composer
-        self.response_pipeline = (
-            ResponseCompositionService(
-                composer=response_composer,
-                max_output_tokens=config.response_composer_role.max_output_tokens,
-                timeout_seconds=config.response_composer_role.timeout_seconds,
-                profile=config.response_composer_role.profile_name,
-                model_version=config.response_composer_role.model_id,
-            )
-            if response_composer is not None
-            else None
+        self.response_pipeline = ResponseCompositionService(
+            composer=response_composer,
+            max_output_tokens=config.response_composer_role.max_output_tokens,
+            timeout_seconds=config.response_composer_role.timeout_seconds,
+            profile=config.response_composer_role.profile_name,
+            model_version=config.response_composer_role.model_id,
         )
-        self.plan_interpreter = PlanInterpreter(
+        plan_interpreter = PlanInterpreter(
             planner=self.planner,
             capabilities=self.capability_registry,
             max_output_tokens=config.planner_role.max_output_tokens,
             timeout_seconds=config.planner_role.timeout_seconds,
             routing_policy=self.routing_policy,
+        )
+        if (
+            planning_service is not None
+            and planning_service.capabilities is not self.capability_registry
+        ):
+            raise ConfigInvalidError(
+                "planning service must use the application capability registry"
+            )
+        self.planning_service = planning_service or PlanningService(
+            interpreter=plan_interpreter,
+            capabilities=self.capability_registry,
+            limits=config.execution_plan_limits(),
+            default_timeout_seconds=config.tool_timeout_seconds,
+            response_timeout_seconds=config.response_composer_role.timeout_seconds,
         )
         self.privacy_policy = PrivacyPolicy()
         self.cloud_authorization_policy = CloudAuthorizationPolicy()
@@ -267,23 +319,30 @@ class Application:
             action_authorization=self.action_authorization,
             response_pipeline=self.response_pipeline,
         )
-        self.plan_executor = plan_executor or PlanExecutor(
+        if task_execution_service is not None and plan_executor is not None:
+            raise ConfigInvalidError(
+                "provide task_execution_service or legacy plan_executor, not both"
+            )
+        execution_service = task_execution_service or plan_executor
+        self.task_execution_service = execution_service or TaskExecutionService(
             repository=self.plan_repository,
             capability_registry=self.capability_registry,
             capability_workflow=self.capability_workflow,
             clock=clock,
             max_workers=config.max_parallel_steps,
-            synthesis_port=self.synthesis,
-            synthesis_max_output_tokens=config.response_composer_role.max_output_tokens,
-            synthesis_timeout_seconds=config.response_composer_role.timeout_seconds,
             response_composer_port=response_composer,
             response_composer_max_output_tokens=config.response_composer_role.max_output_tokens,
             response_composer_timeout_seconds=config.response_composer_role.timeout_seconds,
             response_pipeline=self.response_pipeline,
+            recovery=recovery,
+            replan_service=self.replan_service,
         )
+        # Attribute compatibility for callers composed before Phase 4. Both
+        # names reference the same service; retire the old name in Phase 10.
+        self.plan_executor = self.task_execution_service
         self.plan_orchestrator = plan_orchestrator or PlanOrchestrator(
             repository=self.plan_repository,
-            executor=self.plan_executor,
+            execution_service=self.task_execution_service,
             clock=clock,
             replan_service=self.replan_service,
         )
@@ -295,20 +354,7 @@ class Application:
         self.backup: BackupService | None = None
         self._maintenance_stop = threading.Event()
         self._maintenance_thread: threading.Thread | None = None
-        self.orchestrator = ConversationOrchestrator(
-            clock=clock,
-            repository=repository,
-            audit=audit,
-            context_window=config.context_window_messages,
-            local_conversation=self.local_conversation,
-            completion=self.completion,
-            capability_workflow=self.capability_workflow,
-            guardrails=guardrails,
-            profile_service=self.profile,
-            routing_policy=self.routing_policy,
-            context_builder=self.context_builder,
-            response_pipeline=self.response_pipeline,
-        )
+        self.orchestrator = _ConversationCompatibilityFacade(self)
 
     # -- session lifecycle -------------------------------------------------
 
@@ -339,37 +385,6 @@ class Application:
             self.executor.shutdown()
         self.repository.close()
 
-    def build_and_persist_plan(
-        self,
-        proposal: ExecutionProposal,
-        task_id: str,
-        *,
-        plan_id: str | None = None,
-        revision: int = 0,
-        parent_plan_id: str | None = None,
-        verification_requested: bool = False,
-    ) -> ExecutionPlan:
-        """Validate against a fresh catalog, then persist before execution."""
-        builder = PlanBuilder(
-            self.capability_registry.routing_catalog(),
-            self.config.execution_plan_limits(),
-            default_timeout_seconds=self.config.tool_timeout_seconds,
-            synthesis_timeout_seconds=self.config.response_composer_role.timeout_seconds,
-            legacy_synthesis_enabled=self.response_pipeline is None,
-        )
-        plan = builder.build(
-            proposal,
-            task_id,
-            plan_id=plan_id,
-            revision=revision,
-            parent_plan_id=parent_plan_id,
-            verification_requested=verification_requested,
-        )
-        self.plan_repository.save_plan(plan, at=self.clock.now())
-        return plan
-
-    persist_validated_plan = build_and_persist_plan
-
     def replan_plan(
         self,
         source_plan: ExecutionPlan | str,
@@ -395,7 +410,7 @@ class Application:
             resolved = loaded
         else:
             resolved = source_plan
-        return self.replan_service.replan(
+        return self.task_execution_service.replan(
             resolved,
             proposal,
             request=request,
@@ -413,7 +428,7 @@ class Application:
 
     def reconcile_plans(self) -> tuple[RecoveryReport, ...]:
         """Reconcile persisted nonterminal plans without starting providers."""
-        return self.recovery.reconcile_startup(self.plan_repository)
+        return self.task_execution_service.reconcile_startup()
 
     def execute_plan(
         self,
@@ -422,25 +437,29 @@ class Application:
         request: TaskRequest,
         context_text: str,
         context_manifest: ContextManifest,
+        local_context_text: str = "",
         cancellation: CancellationToken | None = None,
         request_guardrails: GuardrailController | None = None,
+        manage_task_lifecycle: bool = True,
     ) -> PlanExecutionResult:
         """Execute a persisted V3 plan through the independent scheduler."""
         effective_guardrails = request_guardrails
         if effective_guardrails is None and self.guardrails is not None:
             effective_guardrails = self.guardrails.for_request()
-        return self.plan_orchestrator.execute(
+        return self.task_execution_service.execute(
             plan,
             request=request,
             context_text=context_text,
             context_manifest=context_manifest,
+            local_context_text=local_context_text,
             cancellation=cancellation,
             request_guardrails=effective_guardrails,
+            manage_task_lifecycle=manage_task_lifecycle,
         )
 
     def cancel_plan(self, plan_id: str) -> bool:
         """Request cancellation of one active V3 plan."""
-        return self.plan_orchestrator.cancel(plan_id)
+        return self.task_execution_service.cancel(plan_id)
 
     def maintain_storage(self) -> None:
         """Apply configured retention and create a daily backup when enabled."""
@@ -486,7 +505,11 @@ class Application:
         reports.append(
             self.response_composer.health()
             if self.response_composer is not None
-            else self.synthesis.health()
+            else HealthReport(
+                component="response_composer",
+                state=HealthState.UNAVAILABLE,
+                detail="response composer is not configured",
+            )
         )
         if self.research is not None:
             reports.append(self.research.provider.health())
@@ -521,15 +544,90 @@ class Application:
         with self._v3_authorization_lock:
             return self._v3_authorization_steps.get(authorization_id)
 
+    def _handle_direct_planning_result(
+        self,
+        request: TaskRequest,
+        route_decision: RouteDecision,
+        prompt: str,
+        context_manifest: ContextManifest,
+    ) -> ConversationOutcome:
+        """Complete a non-executing planner decision without another orchestrator."""
+
+        task_id = f"task-{request.request_id}"
+        task_created = self.repository.start_task(
+            task_id,
+            request.session_id,
+            self.clock.now(),
+        )
+        if task_created:
+            self.repository.append_message(
+                request.session_id,
+                Message("user", request.text, self.clock.now()),
+            )
+        if route_decision.clarification_required:
+            result = compose_clarification(
+                task_id=task_id,
+                fields=route_decision.clarification_fields,
+                route=route_decision.generic_route,
+            )
+            event_type = "intent.clarification_required"
+            error_class = ErrorClass.INPUT_INVALID
+            detail = f"fields={','.join(route_decision.clarification_fields)}"
+        else:
+            unsupported_action = (
+                route_decision.reason_code is RouteReasonCode.ACTION_UNSUPPORTED
+            )
+            reason = (
+                "the requested consequential action is not supported"
+                if unsupported_action
+                else "the request could not be converted into an executable plan"
+            )
+            result = compose_blocked(
+                task_id=task_id,
+                reason=reason,
+                route=route_decision.generic_route,
+            )
+            event_type = (
+                "action.authorization_denied" if unsupported_action else "planning.unable"
+            )
+            error_class = ErrorClass.PERMISSION_DENIED
+            detail = (
+                "reason=ACTION_UNSUPPORTED provider_dispatch=not_started"
+                if unsupported_action
+                else "provider_dispatch=not_started"
+            )
+        if self.response_pipeline is not None:
+            result = self.response_pipeline.compose_task_result(
+                result,
+                request=request,
+                approved_context=prompt,
+            ).result
+        result = enrich_task_result(result, route_decision)
+        self.completion.emit(
+            request=request,
+            task_id=task_id,
+            route=route_decision.generic_route,
+            route_decision=route_decision,
+            event_type=event_type,
+            status=TaskStatus.BLOCKED,
+            error_class=error_class,
+            detail=detail,
+        )
+        self.completion.persist_result(result)
+        self.completion.finish_task(task_id, TaskStatus.BLOCKED)
+        return ConversationOutcome(result=result, manifest=context_manifest)
+
     def _handle_planned(self, request: TaskRequest) -> ConversationOutcome:
         """Run the V3 planner-to-DAG workflow behind the shared submission API."""
         task_id = f"task-{request.request_id}"
         resume_target = self._authorization_resume_target(request)
         if resume_target is not None:
             plan_id, step_id = resume_target
-            plan = self.plan_orchestrator.resume_authorized_step(plan_id, step_id)
+            plan = self.task_execution_service.resume_authorized_step(plan_id, step_id)
             with self._v3_authorization_lock:
-                context_text, context_manifest = self._v3_execution_context[plan_id]
+                context_text, local_context_text, context_manifest, route_decision = (
+                    self._v3_execution_context[plan_id]
+                )
         else:
             history = self.repository.recent_messages(
                 request.session_id, self.config.context_window_messages
@@ -542,31 +640,41 @@ class Application:
                 current_text=request.text,
                 history=history,
             )
-            decision = self.plan_interpreter.interpret(
+            planning = self.planning_service.plan(
                 RouteRequest(
                     request_id=request.request_id,
                     text=request.text,
                     contextual_text=conversation_context.routing_text,
                     cloud_mode=request.cloud_mode,
                 ),
+                task_id,
                 approved_context=prompt,
             )
+            decision = planning.decision
+            route_decision = decision.route_decision
             if decision.proposal.disposition is not ProposalDisposition.CAPABILITY_PLAN:
-                return self.orchestrator.handle(
+                return self._handle_direct_planning_result(
                     request,
-                    route_decision=decision.route_decision,
+                    route_decision,
+                    prompt,
+                    context_manifest,
                 )
-            try:
-                plan = self.build_and_persist_plan(decision.proposal, task_id)
-            except PlanValidationError:
-                # The builder is intentionally stricter than the advisory
-                # planner validator. A fresh-catalog race or stricter DAG rule
-                # falls back to the already validated deterministic route.
-                return self.orchestrator.handle(
-                    request,
-                    route_decision=decision.route_decision,
+            planned = planning.plan
+            if planned is None:
+                raise ConfigInvalidError("planning returned no execution plan")
+            plan = planned
+            if self.repository.get_task_result(task_id) is not None:
+                duplicate = enrich_task_result(
+                    compose_possible_duplicate(
+                        task_id=task_id,
+                        route=route_decision.generic_route,
+                    ),
+                    route_decision,
                 )
+                return ConversationOutcome(result=duplicate, manifest=context_manifest)
+            self.plan_repository.save_plan(plan, at=self.clock.now())
             context_text = conversation_context.remote_text
+            local_context_text = prompt
             task_created = self.repository.start_task(task_id, request.session_id, self.clock.now())
             if task_created:
                 self.repository.append_message(
@@ -579,25 +687,77 @@ class Application:
                 decision.proposal.reason_code,
                 (
                     f"catalog={decision.catalog_version} "
-                    f"fallback={str(decision.fallback_used).lower()}"
+                    f"fallback={str(decision.fallback_used).lower()} "
+                    f"strategy={planning.strategy.value}"
                 ),
                 at=self.clock.now(),
             )
             with self._v3_authorization_lock:
                 self._v3_execution_context[plan.plan_id] = (
                     context_text,
+                    local_context_text,
                     context_manifest,
+                    route_decision,
                 )
 
+        started = time.monotonic()
+        request_guardrails = (
+            self.guardrails.for_request() if self.guardrails is not None else None
+        )
         execution = self.execute_plan(
             plan,
             request=request,
             context_text=context_text,
             context_manifest=context_manifest,
+            local_context_text=local_context_text,
+            request_guardrails=request_guardrails,
+            manage_task_lifecycle=False,
         )
         final_result = execution.final_result
         if final_result is None:
             raise ConfigInvalidError("plan execution returned no final result")
+        final_result = enrich_task_result(final_result, route_decision)
+        self.completion.record_sources(plan.task_id, final_result.citations)
+        self.completion.record_provenance(plan.task_id, final_result.provenance)
+        self.completion.persist_result(final_result)
+        self.completion.finish_task(plan.task_id, final_result.task_status)
+        if len(plan.steps) == 1:
+            local_step = plan.steps[0].capability_id == LOCAL_CONVERSATION_CAPABILITY_ID
+            event_type = (
+                "task.completed"
+                if local_step and final_result.task_status.value == "completed"
+                else "task.cancelled"
+                if local_step and final_result.task_status.value == "cancelled"
+                else "generalist.failed"
+                if local_step
+                else "capability.completed"
+            )
+            detail = (
+                f"capability={plan.steps[0].capability_id} "
+                f"operation={plan.steps[0].operation_id} unified_plan=true"
+            )
+            if local_step:
+                envelope = execution.step_envelopes.get(plan.steps[0].step_id)
+                usage = envelope.usage if envelope is not None else None
+                detail = (
+                    f"provider={type(self.local_conversation.generalist).__name__} "
+                    f"model={self.local_conversation.model_id} "
+                    "prompt=local-generalist-v1 tools=none "
+                    f"duration_ms={int((time.monotonic() - started) * 1000)} "
+                    f"output_tokens={usage.output_tokens if usage is not None else 0} "
+                    f"latency_ms={usage.latency_ms if usage is not None else 0} "
+                    f"{self.completion.guardrail_detail(request_guardrails)} "
+                    "unified_plan=true"
+                )
+            self.completion.emit(
+                request=request,
+                task_id=plan.task_id,
+                route=route_decision.generic_route,
+                route_decision=route_decision,
+                event_type=event_type,
+                status=final_result.task_status,
+                detail=detail,
+            )
         assistant_message: Message | None = None
         if (
             final_result.answer_retained
@@ -633,12 +793,16 @@ class Application:
             action_confirmation=execution.action_confirmation,
         )
 
+    def handle(self, request: TaskRequest) -> ConversationOutcome:
+        """Plan and handle one request synchronously through the canonical boundary."""
+
+        return self._handle_planned(request)
+
     def submit(self, request: TaskRequest) -> Future[ConversationOutcome]:
         """Submit a conversation through bounded local admission."""
         if self.executor is None:
             raise RuntimeError("task executor is not configured")
-        handler = self._handle_planned if self._planning_enabled else self.orchestrator.handle
-        return self.executor.submit(lambda: handler(request))
+        return self.executor.submit(lambda: self.handle(request))
 
 
 def build(toml_path: str | None = None) -> Application:
@@ -772,11 +936,6 @@ def build(toml_path: str | None = None) -> Application:
             FakePlanner(failure=PlannerFailureMode.MALFORMED)
             if config.planner_role.provider == "fake"
             else OllamaPlanner(role=config.planner_role)
-        ),
-        synthesis=(
-            FakeSynthesis()
-            if config.response_composer_role.provider == "fake"
-            else OllamaSynthesis(role=config.response_composer_role)
         ),
         response_composer=(
             FakeResponseComposer()

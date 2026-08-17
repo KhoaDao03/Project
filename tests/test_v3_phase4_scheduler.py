@@ -23,7 +23,7 @@ from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.execution import CancellationToken
 from elly.application.plan_builder import PlanBuilder
-from elly.application.plan_executor import PlanExecutor
+from elly.application.plan_executor import PlanExecutor, TaskExecutionService
 from elly.application.plan_orchestrator import PlanOrchestrator
 from elly.application.routing_contracts import (
     CapabilityKind,
@@ -213,7 +213,7 @@ class Phase4SchedulerTests(unittest.TestCase):
                 audit=self.audit,
             ),
         )
-        executor = PlanExecutor(
+        executor = TaskExecutionService(
             repository=self.repository,
             capability_registry=registry,
             capability_workflow=workflow,
@@ -221,9 +221,16 @@ class Phase4SchedulerTests(unittest.TestCase):
         )
         return PlanOrchestrator(
             repository=self.repository,
-            executor=executor,
+            execution_service=executor,
             clock=self.clock,
         ), registry
+
+    def test_plan_executor_name_is_import_compatibility_only(self) -> None:
+        self.assertIs(PlanExecutor, TaskExecutionService)
+
+    def test_plan_orchestrator_compatibility_facade_owns_no_runtime_state(self) -> None:
+        orchestrator, _registry = self._runtime(())
+        self.assertEqual({"_execution_service"}, set(vars(orchestrator)))
 
     def _plan(
         self,

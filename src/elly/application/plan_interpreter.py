@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..domain.enums import IntentAmbiguity, Route, RouteReasonCode
 from ..domain.errors import CancelledError, EllyError, InputInvalidError
@@ -146,6 +146,32 @@ class PlanInterpreter:
     def catalog_snapshot(self) -> PlannerCatalog:
         """Return a fresh immutable model-safe view of the live registry."""
         return build_planner_catalog(self._capabilities.routing_catalog())
+
+    def deterministic_decision(self, request: RouteRequest) -> PlanningDecision:
+        """Return the validated catalog strategy without invoking the planner.
+
+        ``PlanningService`` owns strategy selection. This method exposes the
+        existing deterministic machinery without creating a second planning
+        entry point or granting routing output execution authority.
+        """
+
+        if not isinstance(request, RouteRequest):
+            raise InputInvalidError("planning requires a RouteRequest")
+        catalog = self._capabilities.routing_catalog()
+        version = build_planner_catalog(catalog).version
+        decision = self._fallback(request, catalog, version, "")
+        proposal = replace(
+            decision.proposal,
+            reason_code="DETERMINISTIC_FAST_PATH",
+            justification="validated deterministic catalog strategy",
+        )
+        return replace(
+            decision,
+            proposal=proposal,
+            accepted=True,
+            fallback_used=False,
+            rejection_code="",
+        )
 
     def interpret(
         self,
@@ -590,11 +616,18 @@ class PlanInterpreter:
     @staticmethod
     def _fallback_input(operation: OperationIntentContract | None) -> ProposedInput:
         """Describe the deterministic route's first declared input safely."""
-        value_type = (
-            "text"
-            if operation is None or "text" in operation.accepted_inputs
-            else operation.accepted_inputs[0]
-        )
+        if operation is not None and operation.required_entities:
+            value_type = operation.required_entities[0]
+            if value_type == "ticker_or_company":
+                value_type = "ticker"
+            elif value_type == "security":
+                value_type = "security"
+        else:
+            value_type = (
+                "text"
+                if operation is None or "text" in operation.accepted_inputs
+                else operation.accepted_inputs[0]
+            )
         # Deterministic V2.5 fallback consumes the already resolved bounded
         # conversation context, preserving follow-up behavior and one-step
         # execution equivalence while still entering the V3 plan pipeline.

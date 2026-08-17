@@ -17,12 +17,11 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
-from ..domain.enums import PresentationMode, TaskStatus
+from ..domain.enums import PresentationMode
 from ..domain.errors import InputInvalidError, MalformedResultError
 from ..domain.models import TaskRequest, TaskResult
-from ..planning.contracts import FinalizationStrategy, PlanStatus, StepKind, StepState
+from ..planning.contracts import StepKind
 from ..ports.local_response_composer import (
-    RESPONSE_COMPOSITION_DRAFT_SCHEMA_VERSION,
     RESPONSE_COMPOSITION_INPUT_SCHEMA_VERSION,
     LocalResponseComposerPort,
     ResponseCitationSummary,
@@ -32,23 +31,10 @@ from ..ports.local_response_composer import (
     ResponseCompositionRequest,
     ResponseDisagreementSummary,
     ResponseResultSummary,
-    ResponseSection,
     ResponseWarningSummary,
     decode_response_composition_draft,
 )
-from ..ports.local_synthesis import (
-    SYNTHESIS_INPUT_SCHEMA_VERSION,
-    LocalSynthesisPort,
-    SynthesisCitation,
-    SynthesisClaim,
-    SynthesisDisagreement,
-    SynthesisDraft,
-    SynthesisInput,
-    SynthesisRequest,
-    SynthesisStepSummary,
-    SynthesisWarning,
-)
-from .plan_results import PlanAggregation, TemplateFinalizer
+from .plan_results import PlanAggregation, finalize_plan
 from .presentation_policy import mode_for_plan_aggregation, select_presentation_mode
 from .step_results import ActionExecutionReceipt, StepClaim, StepResultEnvelope
 
@@ -87,13 +73,6 @@ def _aggregation_exact_records(aggregation: PlanAggregation) -> dict[str, str]:
             receipt
         )
     return records
-
-
-def _step_state(value: str) -> StepState:
-    try:
-        return StepState(value)
-    except ValueError:
-        return StepState.COMPLETED if value == TaskStatus.COMPLETED.value else StepState.PARTIAL
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,7 +342,7 @@ def build_response_composition_input(
 
     if not isinstance(aggregation, PlanAggregation):
         raise InputInvalidError("response composition requires a plan aggregation")
-    canonical = TemplateFinalizer().finalize(aggregation)
+    canonical = finalize_plan(aggregation)
     source: list[tuple[str, TaskResult, StepResultEnvelope | None]] = []
     plan_steps = {step.step_id: step for step in aggregation.plan.steps}
     for step_id in aggregation.eligible_step_ids:
@@ -589,118 +568,6 @@ def render_response_composition(
     return "\n".join(lines)
 
 
-class _LegacySynthesisComposer:
-    """Adapt the V3 synthesis port without changing its one-call semantics."""
-
-    def __init__(self, legacy: LocalSynthesisPort) -> None:
-        self._legacy = legacy
-
-    def compose(self, request: ResponseCompositionRequest) -> ResponseCompositionDraft:
-        value = request.composition_input
-        summaries = tuple(
-            SynthesisStepSummary(
-                result_id=item.result_ref,
-                step_id=item.result_ref,
-                status=_step_state(item.status),
-                summary=item.summary,
-                limitations=item.limitations,
-                claim_ids=item.claim_refs,
-                citation_ids=item.citation_refs,
-                warning_ids=item.warning_refs,
-            )
-            for item in value.result_summaries
-        )
-        claims = tuple(
-            SynthesisClaim(
-                claim_id=item.claim_ref,
-                text=item.text,
-                step_id=item.result_ref,
-                evidence_ids=item.evidence_refs,
-                citation_ids=item.citation_refs,
-                support_status=item.support_status,
-            )
-            for item in value.claim_summaries
-        )
-        citations = tuple(
-            SynthesisCitation(
-                citation_id=item.citation_ref,
-                text=item.text,
-                step_id=item.result_ref,
-                claim_ids=item.claim_refs,
-            )
-            for item in value.citation_summaries
-        )
-        warnings = tuple(
-            SynthesisWarning(item.warning_ref, item.text, item.result_ref)
-            for item in value.warning_summaries
-        )
-        disagreements = tuple(
-            SynthesisDisagreement(
-                disagreement_id=item.disagreement_ref,
-                claim_id=item.claim_ref or "disagreement",
-                step_ids=item.result_refs,
-                statements=item.statements,
-                evidence_ids=item.evidence_refs,
-            )
-            for item in value.disagreement_summaries
-        )
-        legacy_input = SynthesisInput(
-            schema_version=SYNTHESIS_INPUT_SCHEMA_VERSION,
-            request_id=request.request_id,
-            task_id=value.task_id,
-            plan_id=value.task_id,
-            request_text=value.request_text,
-            approved_context=value.approved_context or "approved context",
-            plan_summary=f"task={value.task_id} status={value.task_status}",
-            plan_status=PlanStatus(value.task_status)
-            if value.task_status in {item.value for item in PlanStatus}
-            else PlanStatus.PARTIAL,
-            finalization=FinalizationStrategy.LOCAL_SYNTHESIS,
-            step_summaries=summaries,
-            claims=claims,
-            citations=citations,
-            warnings=warnings,
-            disagreements=disagreements,
-        )
-        legacy_request = SynthesisRequest(
-            request_id=request.request_id,
-            synthesis_input=legacy_input,
-            max_output_tokens=request.max_output_tokens,
-            timeout_seconds=request.timeout_seconds,
-        )
-        draft = self._legacy.synthesize(legacy_request)
-        if not isinstance(draft, SynthesisDraft):
-            raise MalformedResultError("legacy synthesis returned an invalid draft")
-        sections = tuple(
-            ResponseSection(
-                section_id=item.section_id,
-                title="",
-                result_refs=item.result_ids,
-                claim_refs=item.claim_ids,
-                citation_refs=item.citation_ids,
-                immutable_record_refs=(value.immutable_record_refs if index == 0 else ()),
-                narrative="",
-            )
-            for index, item in enumerate(draft.sections)
-        )
-        # A legacy adapter may return no section for an unusual provider; this
-        # is rejected by the new validator and correctly falls back.
-        return ResponseCompositionDraft(
-            schema_version=RESPONSE_COMPOSITION_DRAFT_SCHEMA_VERSION,
-            sections=sections,
-            referenced_result_ids=value.result_refs,
-            referenced_claim_ids=value.claim_refs,
-            referenced_citation_ids=value.citation_refs,
-            acknowledged_warning_ids=value.warning_refs,
-            acknowledged_disagreement_ids=value.disagreement_refs,
-            referenced_immutable_record_ids=value.immutable_record_refs,
-            task_status=value.task_status,
-        )
-
-    def cancel(self) -> None:
-        self._legacy.cancel()
-
-
 class ResponseCompositionService:
     """Exactly-once local composition plus deterministic fallback."""
 
@@ -713,10 +580,8 @@ class ResponseCompositionService:
         profile: str = "",
         model_version: str = "",
     ) -> None:
-        if composer is not None and not (
-            hasattr(composer, "compose") or isinstance(composer, LocalSynthesisPort)
-        ):
-            raise InputInvalidError("response composer does not implement a supported port")
+        if composer is not None and not callable(getattr(composer, "compose", None)):
+            raise InputInvalidError("response composer must implement LocalResponseComposerPort")
         if (
             isinstance(max_output_tokens, bool)
             or not isinstance(max_output_tokens, int)
@@ -730,11 +595,7 @@ class ResponseCompositionService:
             or not 0 < timeout_seconds <= 3_600
         ):
             raise InputInvalidError("response composer timeout must be positive")
-        self._composer = (
-            _LegacySynthesisComposer(cast(LocalSynthesisPort, composer))
-            if composer is not None and not hasattr(composer, "compose")
-            else composer
-        )
+        self._composer = composer
         self._max_output_tokens = max_output_tokens
         self._timeout_seconds = float(timeout_seconds)
         self._profile = profile
@@ -762,7 +623,7 @@ class ResponseCompositionService:
                 presentation_mode=presentation_mode,
             )
         except Exception:
-            canonical = TemplateFinalizer().finalize(aggregation)
+            canonical = finalize_plan(aggregation)
             return self._input_fallback(
                 canonical,
                 presentation_mode or mode_for_plan_aggregation(aggregation),

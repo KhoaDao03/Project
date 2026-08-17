@@ -11,7 +11,6 @@ from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_generalist import FakeGeneralist
 from elly.adapters.fake_planner import FakePlanner
 from elly.adapters.fake_response_composer import FakeResponseComposer
-from elly.adapters.fake_synthesis import FakeSynthesis
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.api.application import EllyApplication
@@ -227,7 +226,6 @@ class ComposedWorkflowTests(unittest.TestCase):
             capability_registry=CapabilityRegistry((capability,) + additional_capabilities),
             consent=ConsentWorkflow(),
             planner=FakePlanner(selected_proposal),
-            synthesis=FakeSynthesis(),
             response_composer=response_composer,
             executor=BoundedTaskExecutor(workers=2, queue_size=4),
         )
@@ -253,12 +251,12 @@ class ComposedWorkflowTests(unittest.TestCase):
 
     def test_exact_consent_resumes_same_plan_revision(self) -> None:
         capability = _Capability("phase9.external", external=True)
-        application = self._application(capability)
         # Match the external metadata declared by the capability proposal.
         proposal = _proposal(capability.descriptor.capability_id)
         external_step = proposal.steps[0]
-        application.planner = FakePlanner(
-            ExecutionProposal(
+        application = self._application(
+            capability,
+            proposal=ExecutionProposal(
                 schema_version=proposal.schema_version,
                 disposition=proposal.disposition,
                 steps=(
@@ -278,12 +276,7 @@ class ComposedWorkflowTests(unittest.TestCase):
                 ambiguities=(),
                 confidence=1.0,
                 reason_code=proposal.reason_code,
-            )
-        )
-        application.plan_interpreter = application.plan_interpreter.__class__(
-            planner=application.planner,
-            capabilities=application.capability_registry,
-            routing_policy=application.routing_policy,
+            ),
         )
         api = EllyApplication(application)
         self.addCleanup(api.close)
@@ -323,7 +316,7 @@ class ComposedWorkflowTests(unittest.TestCase):
         self.assertEqual(revision, resumed.value.plan.revision)
         self.assertEqual(1, capability.calls)
 
-    def test_research_then_specialist_runs_through_local_synthesis(self) -> None:
+    def test_research_then_specialist_uses_post_aggregation_finalization(self) -> None:
         research = _Capability("phase9.research", kind=CapabilityKind.RESEARCH)
         specialist = _Capability("phase9.specialist")
         proposal = _research_synthesis_proposal(
@@ -357,9 +350,10 @@ class ComposedWorkflowTests(unittest.TestCase):
         self.assertIn("completed:phase9.research", result.value.answer)
         self.assertIn("completed:phase9.specialist", result.value.answer)
         assert result.value.plan is not None
-        self.assertEqual(3, len(result.value.plan.steps))
+        self.assertEqual(2, len(result.value.plan.steps))
+        self.assertNotIn("synthesis", {step.step_id for step in result.value.plan.steps})
 
-    def test_research_feeds_two_specialists_then_local_synthesis(self) -> None:
+    def test_research_feeds_two_specialists_without_synthesis_node(self) -> None:
         research = _Capability("phase9.research", kind=CapabilityKind.RESEARCH)
         parallel_start = Barrier(2)
         first = _Capability("phase9.specialist_one", execution_barrier=parallel_start)
@@ -395,7 +389,8 @@ class ComposedWorkflowTests(unittest.TestCase):
         self.assertIn("completed:phase9.specialist_one", result.value.answer)
         self.assertIn("completed:phase9.specialist_two", result.value.answer)
         assert result.value.plan is not None
-        self.assertEqual(4, len(result.value.plan.steps))
+        self.assertEqual(3, len(result.value.plan.steps))
+        self.assertNotIn("synthesis", {step.step_id for step in result.value.plan.steps})
 
     def test_v35_multi_result_plan_uses_one_post_aggregation_composer(self) -> None:
         research = _Capability("phase9.v35_research", kind=CapabilityKind.RESEARCH)

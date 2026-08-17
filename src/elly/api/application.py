@@ -915,7 +915,7 @@ class EllyApplication:
         else:
             future = Future()
             try:
-                future.set_result(self._scope.orchestrator.handle(request))
+                future.set_result(self._scope.handle(request))
             except BaseException as exc:
                 future.set_exception(exc)
         task_id = f"task-{request.request_id}"

@@ -322,6 +322,7 @@ class ReplanService:
             source_plan.limits,
             default_timeout_seconds=source_plan.limits.max_step_timeout_seconds,
             synthesis_timeout_seconds=source_plan.limits.max_step_timeout_seconds,
+            legacy_synthesis_enabled=False,
         )
         try:
             replacement = builder.build(

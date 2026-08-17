@@ -80,7 +80,10 @@ class V2InterfaceParityTests(unittest.TestCase):
             assert accepted.value is not None
             task_id = accepted.value.task_id
             status = adapter.status(task_id)
-            for _ in range(20):
+            # The unified local path persists and executes a validated plan
+            # before terminal task projection; allow the same bounded polling
+            # window used by the routing-metadata parity coverage.
+            for _ in range(100):
                 if (
                     status.is_success
                     and status.value is not None

@@ -553,8 +553,8 @@ class ConversationOrchestrator:
                 )
             )
             # The capability workflow composes successful direct results while
-            # preserving typed plan-step results for PlanExecutor.  Complete
-            # the same common presentation pipeline for direct failures and
+            # preserving typed plan-step results for TaskExecutionService.
+            # Complete the same common presentation pipeline for direct failures and
             # blocked explanations that return before provider execution.  The
             # protocol statuses remain deterministic-only by policy.
             if (

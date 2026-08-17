@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 from dataclasses import FrozenInstanceError
+from threading import Event, Thread
 from typing import Any
 from unittest.mock import patch
 
@@ -25,6 +26,7 @@ from elly.application.capabilities import (
     OperationIntentContract,
 )
 from elly.application.plan_interpreter import PlanInterpreter
+from elly.application.planning_service import PlanningService, PlanningStrategy
 from elly.config import LocalModelProfile, LocalModelRoleConfig
 from elly.domain.enums import CloudMode, Route, RouteReasonCode
 from elly.domain.errors import (
@@ -570,6 +572,168 @@ class PlanInterpreterTests(unittest.TestCase):
             planner=FakePlanner(verification), capabilities=registry
         ).interpret(_request("Analyze AAPL valuation"))
         self.assertEqual("VERIFICATION_NOT_AUTHORIZED", verification_decision.rejection_code)
+
+
+class PlanningServiceTests(unittest.TestCase):
+    def _registry(self) -> CapabilityRegistry:
+        return CapabilityRegistry(
+            (
+                _Capability(
+                    "research_capability",
+                    (
+                        _operation(
+                            "research.search",
+                            "Research current public information",
+                            domains=("research",),
+                            required_entities=("ticker_or_company",),
+                            freshness=FreshnessSupport.CURRENT,
+                        ),
+                    ),
+                ),
+                _Capability(
+                    "finance_capability",
+                    (
+                        _operation(
+                            "valuation.analyze",
+                            "Analyze company valuation",
+                            domains=("finance",),
+                            required_entities=("ticker_or_company",),
+                        ),
+                    ),
+                ),
+            )
+        )
+
+    @staticmethod
+    def _service(
+        registry: CapabilityRegistry,
+        planner: FakePlanner,
+    ) -> PlanningService:
+        return PlanningService(
+            interpreter=PlanInterpreter(planner=planner, capabilities=registry),
+            capabilities=registry,
+        )
+
+    def test_obvious_local_request_uses_deterministic_strategy_without_model_call(self) -> None:
+        registry = self._registry()
+        planner = FakePlanner(
+            _proposal(
+                "finance_capability",
+                "valuation.analyze",
+                inputs=(ProposedInput("ticker", "ticker"),),
+            )
+        )
+
+        result = self._service(registry, planner).plan(
+            _request("Explain dependency injection"),
+            "task-fast-local",
+        )
+
+        self.assertEqual(PlanningStrategy.DETERMINISTIC, result.strategy)
+        self.assertIsNone(result.plan)
+        self.assertEqual(0, len(planner.requests))
+
+    def test_catalog_match_uses_validated_one_step_plan_without_model_call(self) -> None:
+        registry = self._registry()
+        planner = FakePlanner()
+
+        result = self._service(registry, planner).plan(
+            _request("Analyze AAPL company valuation"),
+            "task-fast-capability",
+        )
+
+        self.assertEqual(PlanningStrategy.DETERMINISTIC, result.strategy)
+        self.assertIsNotNone(result.plan)
+        assert result.plan is not None
+        self.assertEqual(1, len(result.plan.steps))
+        self.assertEqual("finance_capability", result.plan.steps[0].capability_id)
+        self.assertEqual(0, len(planner.requests))
+
+    def test_complex_request_uses_llm_strategy_and_returns_validated_dag(self) -> None:
+        registry = self._registry()
+        proposal = ExecutionProposal(
+            PROPOSAL_SCHEMA_VERSION,
+            ProposalDisposition.CAPABILITY_PLAN,
+            (
+                ProposedStep(
+                    "research-step",
+                    "research_capability",
+                    "research.search",
+                    "find current public information",
+                    "evidence",
+                    "market",
+                    (ProposedInput("ticker", "ticker"),),
+                ),
+                ProposedStep(
+                    "finance-step",
+                    "finance_capability",
+                    "valuation.analyze",
+                    "analyze valuation using the evidence",
+                    "analysis",
+                    "fundamental",
+                    (ProposedInput("ticker", "ticker"),),
+                    dependencies=("research-step",),
+                ),
+            ),
+            FinalizationStrategy.TEMPLATE,
+            (),
+            0.9,
+            "MULTI_CAPABILITY",
+            "bounded sequential work",
+        )
+        planner = FakePlanner(proposal)
+
+        result = self._service(registry, planner).plan(
+            _request("Research AAPL and then analyze its valuation"),
+            "task-llm-dag",
+        )
+
+        self.assertEqual(PlanningStrategy.LOCAL_LLM, result.strategy)
+        self.assertIsNotNone(result.plan)
+        assert result.plan is not None
+        self.assertEqual(("research-step",), result.plan.steps[1].dependencies)
+        self.assertEqual(1, len(planner.requests))
+
+    def test_active_llm_strategy_is_cancellable_by_task(self) -> None:
+        registry = self._registry()
+
+        class _BlockingPlanner(FakePlanner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.entered = Event()
+                self.release = Event()
+
+            def propose(self, request: PlannerRequest) -> ExecutionProposal:
+                self.entered.set()
+                self.release.wait(timeout=1.0)
+                return super().propose(request)
+
+            def cancel(self) -> None:
+                super().cancel()
+                self.release.set()
+
+        planner = _BlockingPlanner()
+        service = self._service(registry, planner)
+        failures: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                service.plan(
+                    _request("Research AAPL and then analyze its valuation"),
+                    "task-cancel-planning",
+                )
+            except BaseException as exc:
+                failures.append(exc)
+
+        worker = Thread(target=run)
+        worker.start()
+        self.assertTrue(planner.entered.wait(timeout=1.0))
+        self.assertTrue(service.cancel("task-cancel-planning"))
+        worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(1, len(failures))
+        self.assertIsInstance(failures[0], CancelledError)
 
 
 class OllamaPlannerAdapterTests(unittest.TestCase):

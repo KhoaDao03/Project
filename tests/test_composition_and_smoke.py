@@ -65,9 +65,9 @@ class CompositionTests(unittest.TestCase):
         loaded = self.app.repository.recent_messages(session.session_id, 5)
         self.assertEqual(loaded[-1].content, response.text)
 
-    def test_full_local_turn_through_orchestrator(self) -> None:
-        # End-to-end through the wired app: a local turn completes and both turns
-        # persist (UC-01, DATA-001).
+    def test_full_local_turn_uses_one_step_capability_plan(self) -> None:
+        # End-to-end through the canonical planning and execution path: a local
+        # turn completes and both turns persist (UC-01, DATA-001).
         session = self.app.new_session()
         request = TaskRequest(
             request_id="req-x",
@@ -77,8 +77,12 @@ class CompositionTests(unittest.TestCase):
             persistence_mode=session.persistence_mode,
             submitted_at=self.app.clock.now(),
         )
-        outcome = self.app.orchestrator.handle(request)
+        outcome = self.app.handle(request)
         self.assertTrue(outcome.result.answer.startswith("[fake-generalist]"))
+        plans = self.app.plan_repository.list_plans_for_task("task-req-x")
+        self.assertEqual(1, len(plans))
+        self.assertEqual(1, len(plans[0].steps))
+        self.assertEqual("local_conversation", plans[0].steps[0].capability_id)
         roles = [m.role for m in self.app.repository.recent_messages(session.session_id, 10)]
         self.assertEqual(roles, ["user", "assistant"])
 

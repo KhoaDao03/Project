@@ -8,10 +8,8 @@ Phase 6 keeps two responsibilities deliberately separate from scheduling:
   the existing ``TaskResult`` presentation contract.  They do not add claims,
   citations, receipts, or agreement that is not present in a step result.
 
-The local-synthesis finalizer is intentionally not implemented here.  A
-``LOCAL_SYNTHESIS`` plan receives the same safe template representation until
-the evidence-bounded synthesis phase adds its separately validated draft
-contract.
+Persisted ``LOCAL_SYNTHESIS`` plans receive a safe deterministic template.
+Model-authored presentation is owned solely by ``ResponseCompositionService``.
 """
 
 from __future__ import annotations
@@ -19,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TypeVar
 
@@ -38,6 +36,7 @@ from ..planning.contracts import (
     PlanStatus,
     PlanStep,
     StepCriticality,
+    StepKind,
     StepState,
 )
 from .plan_state import STEP_ELIGIBLE_STATES, STEP_TERMINAL_STATES
@@ -46,6 +45,35 @@ from .step_results import ActionExecutionReceipt, StepResultEnvelope
 _SAFE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _DISAGREEMENT_KINDS = frozenset({"claim", "finding"})
 _T = TypeVar("_T")
+
+
+def legacy_source_aggregation(
+    plan: ExecutionPlan,
+    step_results: Mapping[str, TaskResult],
+    step_envelopes: Mapping[str, StepResultEnvelope],
+    states: Mapping[str, StepState],
+) -> "PlanAggregation":
+    """Decode a persisted V3 synthesis node into its canonical source aggregate.
+
+    This compatibility boundary can be retired when persisted V3 execution
+    plans have been migrated or are outside the supported recovery window.
+    It never invokes a model and is not used while constructing new plans.
+    """
+
+    source_steps = tuple(
+        step for step in plan.steps if step.kind is not StepKind.LOCAL_SYNTHESIS
+    )
+    if not source_steps:
+        raise InputInvalidError("legacy synthesis requires at least one source step")
+    source_plan = replace(plan, steps=source_steps, finalization=FinalizationStrategy.TEMPLATE)
+    source_ids = {step.step_id for step in source_steps}
+    return aggregate_plan_results(
+        source_plan,
+        {key: value for key, value in step_results.items() if key in source_ids},
+        {key: value for key, value in step_envelopes.items() if key in source_ids},
+        states={key: value for key, value in states.items() if key in source_ids},
+        finalization_complete=True,
+    )
 
 
 def _safe_id(value: object, name: str) -> str:
@@ -904,16 +932,12 @@ class TemplateFinalizer:
     __call__ = finalize
 
 
-def finalize_plan(
-    aggregation: PlanAggregation,
-    *,
-    synthesized_result: TaskResult | None = None,
-) -> TaskResult:
+def finalize_plan(aggregation: PlanAggregation) -> TaskResult:
     """Select a deterministic finalizer for one aggregated plan.
 
-    ``LOCAL_SYNTHESIS`` accepts a result only after the Phase 7 application
-    validator has rendered it.  A missing or status-inconsistent synthesized
-    result uses the deterministic template, so completed work remains visible.
+    The legacy ``LOCAL_SYNTHESIS`` value has no model authority; persisted
+    plans using it receive the deterministic template before canonical response
+    composition.
     """
 
     if not isinstance(aggregation, PlanAggregation):
@@ -921,17 +945,6 @@ def finalize_plan(
     if aggregation.finalization is FinalizationStrategy.DIRECT:
         return DirectFinalizer().finalize(aggregation)
     if aggregation.finalization is FinalizationStrategy.LOCAL_SYNTHESIS:
-        if synthesized_result is not None:
-            if not isinstance(synthesized_result, TaskResult):
-                raise InputInvalidError("synthesized result is invalid")
-            expected_status = _outcome_for(aggregation.status)[0]
-            if (
-                synthesized_result.task_id == aggregation.task_id
-                and synthesized_result.task_status is expected_status
-                and synthesized_result.answer_retained
-                and bool(synthesized_result.answer.strip())
-            ):
-                return synthesized_result
         return TemplateFinalizer().finalize(aggregation)
     return TemplateFinalizer().finalize(aggregation)
 
@@ -964,5 +977,6 @@ __all__ = [
     "finalize_direct",
     "finalize_plan",
     "finalize_template",
+    "legacy_source_aggregation",
     "render_template",
 ]
