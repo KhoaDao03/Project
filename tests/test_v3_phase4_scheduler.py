@@ -23,8 +23,7 @@ from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.execution import CancellationToken
 from elly.application.plan_builder import PlanBuilder
-from elly.application.plan_executor import PlanExecutor, TaskExecutionService
-from elly.application.plan_orchestrator import PlanOrchestrator
+from elly.application.task_execution import TaskExecutionService
 from elly.application.routing_contracts import (
     CapabilityKind,
     CapabilityRoutingDescriptor,
@@ -219,18 +218,7 @@ class Phase4SchedulerTests(unittest.TestCase):
             capability_workflow=workflow,
             clock=self.clock,
         )
-        return PlanOrchestrator(
-            repository=self.repository,
-            execution_service=executor,
-            clock=self.clock,
-        ), registry
-
-    def test_plan_executor_name_is_import_compatibility_only(self) -> None:
-        self.assertIs(PlanExecutor, TaskExecutionService)
-
-    def test_plan_orchestrator_compatibility_facade_owns_no_runtime_state(self) -> None:
-        orchestrator, _registry = self._runtime(())
-        self.assertEqual({"_execution_service"}, set(vars(orchestrator)))
+        return executor, registry
 
     def _plan(
         self,
@@ -255,8 +243,8 @@ class Phase4SchedulerTests(unittest.TestCase):
             submitted_at=UTC,
         )
 
-    def _execute(self, plan, orchestrator, request_id="phase4-request", token=None):
-        return orchestrator.execute(
+    def _execute(self, plan, executor, request_id="phase4-request", token=None):
+        return executor.execute(
             plan,
             request=self._request(request_id),
             context_text="public test context",

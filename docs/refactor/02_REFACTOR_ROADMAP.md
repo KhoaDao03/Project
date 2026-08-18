@@ -604,10 +604,11 @@ execution, safety, API, or SQLite behavior. This phase narrows the canonical
 routing decision surface and isolates historical routing inputs at compatibility
 boundaries; it is not a wholesale contract rename or deletion exercise.
 
-**Status: COMPLETE.** The implementation was verified from the clean Revised
-Phase 8 baseline at `bdcaa860f7f4f0c1c4cce019609d64e01bbdfe09`. The final gate
-passed 500 deterministic tests, Ruff, strict MyPy, compileall, and
-`git diff --check`. Changes remain uncommitted for review.
+**Status: COMPLETE.** The implementation was verified at the clean Revised
+Phase 9 commit `b0a33d881a78d27219fd40724efcb01abb3f9a6c`. The final gate passed
+500 deterministic tests, Ruff, strict MyPy, compileall, and `git diff --check`.
+The Phase 9 implementation and documentation are committed; the current
+working tree contains the subsequent Revised Phase 10 work.
 
 ## Canonical pipeline
 
@@ -726,35 +727,69 @@ deletion, or test-suite consolidation.
 
 ---
 
-# 14. Phase 10 — Configuration and compatibility cleanup
+# 14. Revised Phase 10 — Configuration Canonicalization and Internal Compatibility Retirement
 
 ## Objective
 
-Remove stale migration-era configuration surface.
+Remove migration-era effective configuration and internal runtime aliases while
+keeping public V2 behavior, historical persisted data, and schema 7 intact.
 
-## Work
+## Canonical effective configuration
 
-Inspect compatibility aliases such as:
+The validated `Config` object exposes only the current vocabulary:
 
-- synthesis -> response composer;
-- synthesis role;
-- old provider-call-cost names;
-- old planning-limit aliases;
-- old generalist names.
+- local model profiles and roles: `local_model_profiles`, `conversation_role`,
+  `planner_role`, and `response_composer_role`;
+- remote choices: `research_provider`, `research_model_id`,
+  `specialist_provider`, `specialist_default_model_id`, and
+  `specialist_model_overrides`;
+- pricing: `remote_call_reservation_usd`, `consent_max_cost_usd`, and
+  `monthly_budget_usd`;
+- plan ceilings: `execution_plan_limits()`.
 
-For every alias:
+The loader remains the single configuration-input compatibility boundary. It
+accepts the old generalist/Ollama names, the old synthesis role spelling, and
+the old provider-call-cost spelling for one migration window, translates them
+to canonical values, emits one bounded deprecation warning, and rejects unsafe
+old/new pricing or role conflicts. Legacy input is never exposed as effective
+`Config` properties.
 
-- identify whether external config still uses it;
-- preserve if necessary;
-- document retirement condition;
-- otherwise remove.
+`max_steps` and `max_plan_steps` remain distinct: the former bounds global task
+guardrails and the latter is captured in validated execution-plan limits.
+`max_synthesis_executions` remains because it is part of persisted plan-limit
+compatibility, not active synthesis generation.
+
+## Runtime and synthesis retirement
+
+`AssistantRuntime`, `PlanningService`, `TaskExecutionService`, and
+`ResponseCompositionService` are the only normal request/planning/execution/
+presentation owners. `composition.Application` remains a process-level wiring,
+health, maintenance, profile, backup, and shutdown container. Its old request
+delegates, `orchestrator`, `plan_executor`, and `plan_orchestrator` attributes
+are retired; the public API calls `Application.runtime` directly.
+
+The compatibility-only `plan_executor.py`, `PlanExecutor`, `PlanRunResult`,
+`PlanOrchestrator`, and `PlanExecutionResult.results` aliases are removed after
+their repository callers migrate to `application.task_execution`.
+
+The obsolete model-generating V3 synthesis stack is removed. Normal new plans
+use response composition. `LOCAL_SYNTHESIS`, old finalization values,
+`task_execution/legacy.py`, `synthesis_results`, old plan/result decoding, and
+schema 7 remain as isolated persisted-data compatibility. The direct
+`ConversationOrchestrator` boundary remains isolated for established legacy
+routing callers and tests only; it is not constructed by composition or the
+public V2 path. Its retirement requires those direct callers to migrate while
+retaining equivalent routing, privacy, cancellation, and persistence coverage.
 
 ## Acceptance criteria
 
-- Active configuration matches current architecture terminology.
-- Legacy aliases are either removed or clearly isolated/documented.
-- Config tests pass.
-- Full suite passes.
+- effective configuration contains current terminology only;
+- supported old config inputs remain loader-only, warned, and fail closed on conflicts;
+- examples advertise canonical TOML and environment names only;
+- no normal request uses a compatibility façade or obsolete synthesis generation;
+- public V2 DTOs/routes and persisted SQLite schema 7/V1–V7 data remain compatible;
+- privacy, endpoint, authorization, idempotency, recovery, and task-truth invariants remain;
+- targeted and complete deterministic tests plus Ruff, MyPy, compileall, and whitespace gates pass.
 
 ---
 

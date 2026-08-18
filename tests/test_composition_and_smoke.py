@@ -25,18 +25,17 @@ class CompositionTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["ELLY_DB_PATH"] = os.path.join(self._tmp.name, "elly.db")
         os.environ["ELLY_LOG_LEVEL"] = "WARNING"
-        os.environ["ELLY_GENERALIST_PROVIDER"] = "fake"
-        os.environ["ELLY_GENERALIST_MODEL_ID"] = "fake-generalist-v1"
+        os.environ["ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER"] = "fake"
+        os.environ["ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID"] = "fake-generalist-v1"
         self.addCleanup(self._tmp.cleanup)
         self.addCleanup(os.environ.pop, "ELLY_DB_PATH", None)
         self.addCleanup(os.environ.pop, "ELLY_LOG_LEVEL", None)
-        self.addCleanup(os.environ.pop, "ELLY_GENERALIST_PROVIDER", None)
-        self.addCleanup(os.environ.pop, "ELLY_GENERALIST_MODEL_ID", None)
+        self.addCleanup(os.environ.pop, "ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER", None)
+        self.addCleanup(os.environ.pop, "ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID", None)
         self.app: Application = build(None)
         self.addCleanup(self.app.close)
 
     def test_app_is_wired(self) -> None:
-        self.assertIsNotNone(self.app.orchestrator)
         self.assertIsInstance(self.app.runtime, AssistantRuntime)
         components = {r.component for r in self.app.health()}
         self.assertTrue(any(c.startswith("generalist") for c in components))
@@ -47,17 +46,19 @@ class CompositionTests(unittest.TestCase):
         self.assertIs(gen.state, HealthState.HEALTHY)
 
     def test_new_session_persists(self) -> None:
-        rec = self.app.new_session(persistence_mode=PersistenceMode.STORE_WITH_RETENTION)
+        rec = self.app.runtime.new_session(persistence_mode=PersistenceMode.STORE_WITH_RETENTION)
         got = self.app.repository.get_session(rec.session_id)
         self.assertIsNotNone(got)
 
     def test_structural_smoke_path_without_orchestrator(self) -> None:
         # CLI -> orchestrator is exercised elsewhere; here we prove the lower
         # boundary composes: model port -> repository -> audit.
-        session = self.app.new_session()
+        session = self.app.runtime.new_session()
         response = self.app.generalist.generate(
             GeneralistRequest(
-                prompt="ping", model_id=self.app.config.generalist_model_id, max_output_tokens=32
+                prompt="ping",
+                model_id=self.app.config.conversation_role.model_id,
+                max_output_tokens=32,
             )
         )
         self.assertTrue(response.text.startswith("[fake-generalist]"))
@@ -70,7 +71,7 @@ class CompositionTests(unittest.TestCase):
     def test_full_local_turn_uses_one_step_capability_plan(self) -> None:
         # End-to-end through the canonical planning and execution path: a local
         # turn completes and both turns persist (UC-01, DATA-001).
-        session = self.app.new_session()
+        session = self.app.runtime.new_session()
         request = TaskRequest(
             request_id="req-x",
             session_id=session.session_id,
@@ -79,7 +80,7 @@ class CompositionTests(unittest.TestCase):
             persistence_mode=session.persistence_mode,
             submitted_at=self.app.clock.now(),
         )
-        outcome = self.app.handle(request)
+        outcome = self.app.runtime.handle(request)
         self.assertTrue(outcome.result.answer.startswith("[fake-generalist]"))
         plans = self.app.plan_repository.list_plans_for_task("task-req-x")
         self.assertEqual(1, len(plans))
@@ -90,7 +91,7 @@ class CompositionTests(unittest.TestCase):
 
     def test_local_output_ceiling_does_not_inherit_specialist_limit(self) -> None:
         self.assertEqual(
-            self.app.config.generalist_max_output_tokens,
+            self.app.config.conversation_role.max_output_tokens,
             self.app.local_conversation.max_output_tokens,
         )
 
@@ -113,7 +114,7 @@ class CompositionTests(unittest.TestCase):
         )
 
     def test_completed_local_trace_contains_model_usage_and_request_limits(self) -> None:
-        session = self.app.new_session()
+        session = self.app.runtime.new_session()
         request = TaskRequest(
             request_id="req-trace",
             session_id=session.session_id,
@@ -122,7 +123,7 @@ class CompositionTests(unittest.TestCase):
             persistence_mode=session.persistence_mode,
             submitted_at=self.app.clock.now(),
         )
-        self.app.orchestrator.handle(request)
+        self.app.runtime.handle(request)
         completed = next(
             event
             for event in self.app.repository.audit_by_task("task-req-trace")
@@ -136,7 +137,7 @@ class CompositionTests(unittest.TestCase):
 
     def test_failed_trace_contains_duration_and_request_limits(self) -> None:
         self.app.generalist._failure = FailureMode.PERMANENT
-        session = self.app.new_session()
+        session = self.app.runtime.new_session()
         request = TaskRequest(
             request_id="req-failed-trace",
             session_id=session.session_id,
@@ -145,7 +146,7 @@ class CompositionTests(unittest.TestCase):
             persistence_mode=session.persistence_mode,
             submitted_at=self.app.clock.now(),
         )
-        self.app.orchestrator.handle(request)
+        self.app.runtime.handle(request)
         failed = next(
             event
             for event in self.app.repository.audit_by_task("task-req-failed-trace")

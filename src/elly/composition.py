@@ -1,4 +1,4 @@
-"""Composition root — wires config, adapters, guardrails, registry, and orchestrator (M6).
+"""Composition root — wires config, adapters, guardrails, registry, and runtime.
 
 This is the ONE place that knows which concrete adapters back each port. Swapping
 the FakeGeneralist for the real Ollama adapter in M2 happens HERE plus config —
@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from concurrent.futures import Future
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -41,23 +40,17 @@ from .application.capability_handlers import (
 from .application.capability_workflow import CapabilityExecutionWorkflow
 from .application.completion import CompletionService
 from .application.context_builder import ContextBuilder
-from .application.execution import CancellationToken
 from .application.local_conversation import LocalConversationUseCase
 from .application.local_conversation_capability import (
     LOCAL_CONVERSATION_CAPABILITY_ID,
     LocalConversationCapabilityHandler,
 )
 from .application.plan_builder import PlanBuilder
-from .application.plan_executor import PlanExecutionResult, TaskExecutionService
 from .application.plan_interpreter import PlanInterpreter
-from .application.plan_orchestrator import PlanOrchestrator
 from .application.planning_service import PlanningService
-from .application.recovery import PlanRecovery, RecoveryReport
+from .application.recovery import PlanRecovery
 from .application.replan import (
-    ReplanRequest,
-    ReplanResult,
     ReplanService,
-    ReplanTrigger,
 )
 from .application.research import ResearchPipeline
 from .application.response_pipeline import ResponseCompositionService
@@ -66,23 +59,13 @@ from .application.runtime import AssistantRuntime
 from .application.specialist_policy import SpecialistExecutionPolicy
 from .application.specialists import SpecialistWorkflow
 from .config import Config, load_config
-from .domain.enums import (
-    CloudMode,
-    HealthState,
-    PersistenceMode,
-)
+from .domain.enums import HealthState
 from .domain.errors import ConfigInvalidError
-from .domain.models import (
-    ContextManifest,
-    ConversationOutcome,
-    HealthReport,
-    SessionRecord,
-    TaskRequest,
-)
+from .domain.models import HealthReport
 from .guardrails import BoundedTaskExecutor, GuardrailController, LimitPolicy
 from .memory import ProfileService
 from .operations import BackupService
-from .planning.contracts import ExecutionPlan, ExecutionProposal
+from .application.task_execution import TaskExecutionService
 from .ports.audit import AuditPort
 from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
@@ -133,41 +116,12 @@ def _specialist_capability_handlers(
     )
 
 
-class _ConversationCompatibilityFacade:
-    """Preserve the old composed attribute while delegating to the canonical path.
-
-    This boundary exists for callers that still invoke ``app.orchestrator``.
-    Retire it when those protocol/API callers move to ``Application.handle`` in
-    the compatibility-removal phase; it owns no lifecycle or cancellation state.
-    """
-
-    def __init__(self, application: "Application") -> None:
-        self._application = application
-
-    def handle(self, request: TaskRequest) -> ConversationOutcome:
-        return self._application.handle(request)
-
-    def cancel_active(self) -> bool:
-        return self._application.cancel_active()
-
-    def cancel_task(self, task_id: str) -> bool:
-        return self._application.cancel_task(task_id)
-
-
 class Application:
     """Wired M6 application container.
 
     Holds the composed collaborators and exposes the small surface the CLI needs.
     Construct via `build()`.
     """
-
-    def cancel_active(self) -> bool:
-        """Compatibility delegate to the application runtime."""
-        return self.runtime.cancel_active()
-
-    def cancel_task(self, task_id: str) -> bool:
-        """Cancel one identified in-flight operation through its provider port."""
-        return self.runtime.cancel_task(task_id)
 
     @property
     def audit(self) -> AuditPort:
@@ -205,8 +159,6 @@ class Application:
         response_composer: LocalResponseComposerPort | None = None,
         planning_service: PlanningService | None = None,
         task_execution_service: TaskExecutionService | None = None,
-        plan_executor: TaskExecutionService | None = None,
-        plan_orchestrator: PlanOrchestrator | None = None,
         replan_service: ReplanService | None = None,
         recovery: PlanRecovery | None = None,
     ) -> None:
@@ -309,12 +261,7 @@ class Application:
             action_authorization=self.action_authorization,
             response_pipeline=self.response_pipeline,
         )
-        if task_execution_service is not None and plan_executor is not None:
-            raise ConfigInvalidError(
-                "provide task_execution_service or legacy plan_executor, not both"
-            )
-        execution_service = task_execution_service or plan_executor
-        self.task_execution_service = execution_service or TaskExecutionService(
+        self.task_execution_service = task_execution_service or TaskExecutionService(
             repository=self.plan_repository,
             capability_registry=self.capability_registry,
             capability_workflow=self.capability_workflow,
@@ -325,15 +272,6 @@ class Application:
             response_composer_timeout_seconds=config.response_composer_role.timeout_seconds,
             response_pipeline=self.response_pipeline,
             recovery=recovery,
-            replan_service=self.replan_service,
-        )
-        # Attribute compatibility for callers composed before Phase 4. Both
-        # names reference the same service; retire the old name in Phase 10.
-        self.plan_executor = self.task_execution_service
-        self.plan_orchestrator = plan_orchestrator or PlanOrchestrator(
-            repository=self.plan_repository,
-            execution_service=self.task_execution_service,
-            clock=clock,
             replan_service=self.replan_service,
         )
         self.context_builder = ContextBuilder(
@@ -360,21 +298,6 @@ class Application:
         self.backup: BackupService | None = None
         self._maintenance_stop = threading.Event()
         self._maintenance_thread: threading.Thread | None = None
-        self.orchestrator = _ConversationCompatibilityFacade(self)
-
-    # -- session lifecycle -------------------------------------------------
-
-    def new_session(
-        self,
-        *,
-        persistence_mode: PersistenceMode = PersistenceMode.STORE_WITH_RETENTION,
-        cloud_mode: CloudMode = CloudMode.LOCAL_ONLY,  # CloudMode.CLOUD_PERMITTED
-    ) -> SessionRecord:
-        """Compatibility delegate for runtime-owned session creation."""
-        return self.runtime.new_session(
-            persistence_mode=persistence_mode,
-            cloud_mode=cloud_mode,
-        )
 
     # -- health (OPS-002 initial) -----------------------------------------
 
@@ -386,72 +309,6 @@ class Application:
         if self.executor is not None:
             self.executor.shutdown()
         self.repository.close()
-
-    def replan_plan(
-        self,
-        source_plan: ExecutionPlan | str,
-        proposal: ExecutionProposal,
-        *,
-        request: ReplanRequest | None = None,
-        trigger: ReplanTrigger | None = None,
-        failed_step_id: str | None = None,
-        cancellation_accepted: bool = False,
-        authorization_denied: bool = False,
-        consent_denied: bool = False,
-        hard_limit_reached: bool = False,
-        uncertain_external_action: bool = False,
-        idempotency_safe: bool = True,
-        same_contract: bool = True,
-        cancellation: CancellationToken | None = None,
-    ) -> ReplanResult:
-        """Compatibility delegate for runtime-owned replanning coordination."""
-        return self.runtime.replan_plan(
-            source_plan,
-            proposal,
-            request=request,
-            trigger=trigger,
-            failed_step_id=failed_step_id,
-            cancellation_accepted=cancellation_accepted,
-            authorization_denied=authorization_denied,
-            consent_denied=consent_denied,
-            hard_limit_reached=hard_limit_reached,
-            uncertain_external_action=uncertain_external_action,
-            idempotency_safe=idempotency_safe,
-            same_contract=same_contract,
-            cancellation=cancellation,
-        )
-
-    def reconcile_plans(self) -> tuple[RecoveryReport, ...]:
-        """Reconcile persisted nonterminal plans without starting providers."""
-        return self.runtime.reconcile_plans()
-
-    def execute_plan(
-        self,
-        plan: ExecutionPlan | str,
-        *,
-        request: TaskRequest,
-        context_text: str,
-        context_manifest: ContextManifest,
-        local_context_text: str = "",
-        cancellation: CancellationToken | None = None,
-        request_guardrails: GuardrailController | None = None,
-        manage_task_lifecycle: bool = True,
-    ) -> PlanExecutionResult:
-        """Compatibility delegate for runtime-owned execution coordination."""
-        return self.runtime.execute_plan(
-            plan,
-            request=request,
-            context_text=context_text,
-            context_manifest=context_manifest,
-            local_context_text=local_context_text,
-            cancellation=cancellation,
-            request_guardrails=request_guardrails,
-            manage_task_lifecycle=manage_task_lifecycle,
-        )
-
-    def cancel_plan(self, plan_id: str) -> bool:
-        """Request cancellation of one active V3 plan."""
-        return self.runtime.cancel_plan(plan_id)
 
     def maintain_storage(self) -> None:
         """Apply configured retention and create a daily backup when enabled."""
@@ -529,15 +386,6 @@ class Application:
         )
         return reports
 
-    def handle(self, request: TaskRequest) -> ConversationOutcome:
-        """Compatibility delegate to the canonical runtime boundary."""
-        return self.runtime.handle(request)
-
-    def submit(self, request: TaskRequest) -> Future[ConversationOutcome]:
-        """Compatibility delegate to bounded runtime submission."""
-        return self.runtime.submit(request)
-
-
 def build(toml_path: str | None = None) -> Application:
     """Build the fully-wired M6 application.
 
@@ -575,7 +423,7 @@ def build(toml_path: str | None = None) -> Application:
         ),
         tool_timeout_seconds=config.tool_timeout_seconds,
         total_timeout_seconds=config.total_timeout_seconds,
-        provider_call_cost_usd=0.0,
+        remote_call_reservation_usd=0.0,
     )
     executor = BoundedTaskExecutor(workers=config.max_concurrency, queue_size=config.max_queue_size)
     research_provider = (

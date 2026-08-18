@@ -920,6 +920,53 @@ planning/execution does not use those historical values as capability identity.
 
 ---
 
+## 7.2 Revised Phase 10 — Configuration Canonicalization and Internal Compatibility Retirement
+
+The effective configuration vocabulary is now canonical: local model profiles
+and `conversation_role`, `planner_role`, and `response_composer_role`; remote
+research/specialist provider and model fields; the pricing fields
+`remote_call_reservation_usd`, `consent_max_cost_usd`, and `monthly_budget_usd`;
+and `execution_plan_limits()`. The `Config` object no longer exposes
+`synthesis_role`, old generalist/Ollama properties, `provider_call_cost_usd`, or
+`plan_limits`.
+
+Legacy TOML tables/keys and environment names remain only in the loader boundary
+for one migration window. They translate to canonical values, emit one bounded
+warning, and fail closed when old and canonical pricing or role spellings are
+configured together. The examples advertise canonical names only. `max_steps`
+and `max_plan_steps` remain separate ceilings, while
+`max_synthesis_executions` remains a persisted plan-limit field.
+
+The normal request graph remains:
+
+```text
+Public V2 API
+ -> AssistantRuntime
+ -> PlanningService
+ -> validated ExecutionPlan
+ -> TaskExecutionService
+ -> CapabilityRegistry
+ -> ResponseCompositionService
+ -> TaskResult
+```
+
+`composition.Application` is only the process-level wiring/operations container;
+its request delegates and `orchestrator`, `plan_executor`, and
+`plan_orchestrator` attributes are retired. `PlanExecutor`, `PlanRunResult`,
+`PlanOrchestrator`, and `PlanExecutionResult.results` are no longer internal
+compatibility exports. The direct `ConversationOrchestrator` module is isolated
+for established legacy routing callers/tests and is not constructed by the
+composition root or public API; its retirement condition is migration of those
+callers with equivalent routing, cancellation, privacy, and persistence tests.
+
+The obsolete model-generating V3 synthesis modules are removed from the active
+codebase. Normal plans use response composition. Persisted `LOCAL_SYNTHESIS`
+steps, old finalization values, `task_execution/legacy.py`, synthesis-named
+SQLite records, schema version 7, and historical result decoding remain readable
+and executable only through the deterministic compatibility boundary.
+
+---
+
 # 8. Ownership rules
 
 The finished architecture should have clear answers to these questions.

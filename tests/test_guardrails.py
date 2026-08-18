@@ -65,7 +65,7 @@ class RetryCircuitCostTests(unittest.TestCase):
             policy=LimitPolicy(monthly_budget_usd=1),
             tool_timeout_seconds=1,
             total_timeout_seconds=2,
-            provider_call_cost_usd=0.01,
+            remote_call_reservation_usd=0.01,
         )
         self.assertEqual(controller.execute(lambda: "local", cost_usd=0.0), "local")
         self.assertEqual(controller.cost.reserved_usd, 0.0)
@@ -140,7 +140,7 @@ class RetryCircuitCostTests(unittest.TestCase):
             policy=LimitPolicy(max_provider_calls=2, max_retries=1, monthly_budget_usd=1),
             tool_timeout_seconds=1,
             total_timeout_seconds=2,
-            provider_call_cost_usd=0.25,
+            remote_call_reservation_usd=0.25,
             sleep=lambda _delay: None,
         )
         self.assertEqual("ok", controller.execute(operation))
@@ -152,7 +152,7 @@ class RetryCircuitCostTests(unittest.TestCase):
             policy=LimitPolicy(monthly_budget_usd=0.25),
             tool_timeout_seconds=1,
             total_timeout_seconds=1,
-            provider_call_cost_usd=0.25,
+            remote_call_reservation_usd=0.25,
         )
         self.assertEqual("ok", controller.execute(lambda: "ok"))
         with self.assertRaises(LimitExceededError):

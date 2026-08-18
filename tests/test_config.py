@@ -14,13 +14,13 @@ class ConfigTests(unittest.TestCase):
     def test_defaults(self) -> None:
         cfg = load_config(None)
         self.assertEqual(cfg.max_input_chars, 20000)
-        self.assertEqual(cfg.generalist_model_id, "qwen3:8b")
-        self.assertEqual(cfg.generalist_provider, "ollama")
-        self.assertEqual(cfg.ollama_base_url, "http://127.0.0.1:11434")
+        self.assertEqual(cfg.conversation_role.model_id, "qwen3:8b")
+        self.assertEqual(cfg.conversation_role.provider, "ollama")
+        self.assertEqual(cfg.conversation_role.base_url, "http://127.0.0.1:11434")
         self.assertEqual(cfg.session_retention_days, 30)
         self.assertEqual(cfg.evidence_retention_days, 7)
         self.assertEqual(cfg.audit_retention_days, 90)
-        self.assertEqual(cfg.provider_call_cost_usd, 0.01)
+        self.assertEqual(cfg.remote_call_reservation_usd, 0.01)
         self.assertEqual(cfg.specialist_provider, "openai")
         self.assertEqual(cfg.specialist_model_id("coding"), "gpt-5.6-luna")
         self.assertEqual(cfg.consent_max_cost_usd, 0.25)
@@ -28,12 +28,12 @@ class ConfigTests(unittest.TestCase):
 
     def test_development_config_selects_eight_b(self) -> None:
         cfg = load_config("config.example.toml")
-        self.assertEqual(cfg.generalist_provider, "ollama")
-        self.assertEqual(cfg.generalist_model_id, "qwen3:8b")
+        self.assertEqual(cfg.conversation_role.provider, "ollama")
+        self.assertEqual(cfg.conversation_role.model_id, "qwen3:8b")
 
     def test_fourteen_b_is_explicit_opt_in_config(self) -> None:
         cfg = load_config("config.qwen3-14b.example.toml")
-        self.assertEqual(cfg.generalist_model_id, "qwen3:14b")
+        self.assertEqual(cfg.conversation_role.model_id, "qwen3:14b")
 
     def test_toml_overrides(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as fh:
@@ -61,10 +61,10 @@ class ConfigTests(unittest.TestCase):
             path = fh.name
         try:
             cfg = load_config(path)
-            self.assertEqual(cfg.generalist_provider, "fake")
+            self.assertEqual(cfg.conversation_role.provider, "fake")
             self.assertEqual(cfg.research_provider, "fixtures")
             self.assertEqual(cfg.specialist_provider, "fake")
-            self.assertEqual(cfg.generalist_model_id, "local-one")
+            self.assertEqual(cfg.conversation_role.model_id, "local-one")
             self.assertEqual(cfg.research_model_id, "web-one")
             self.assertEqual(cfg.specialist_model_id("coding"), "cloud-code")
             self.assertEqual(cfg.specialist_model_id("research"), "cloud-one")
@@ -84,8 +84,8 @@ class ConfigTests(unittest.TestCase):
             path = fh.name
         try:
             cfg = load_config(path)
-            self.assertEqual(cfg.generalist_provider, "fake")
-            self.assertEqual(cfg.generalist_model_id, "central-model")
+            self.assertEqual(cfg.conversation_role.provider, "fake")
+            self.assertEqual(cfg.conversation_role.model_id, "central-model")
         finally:
             os.unlink(path)
 
@@ -140,6 +140,36 @@ class ConfigTests(unittest.TestCase):
     def test_empty_model_ids_fail_closed(self) -> None:
         os.environ["ELLY_RESEARCH_MODEL_ID"] = "   "
         self.addCleanup(os.environ.pop, "ELLY_RESEARCH_MODEL_ID", None)
+        with self.assertRaises(ConfigInvalidError):
+            load_config(None)
+
+    def test_effective_config_exposes_canonical_names_only(self) -> None:
+        cfg = load_config(None)
+
+        for alias in (
+            "provider_call_cost_usd",
+            "synthesis_role",
+            "plan_limits",
+            "generalist_model_id",
+            "generalist_provider",
+            "generalist_max_output_tokens",
+            "ollama_base_url",
+            "ollama_timeout_seconds",
+        ):
+            self.assertFalse(hasattr(cfg, alias), alias)
+        with self.assertRaises(ConfigInvalidError):
+            cfg.local_model_role("synthesis")
+
+    def test_legacy_pricing_input_is_loader_only_and_conflicts_fail_closed(self) -> None:
+        os.environ["ELLY_PROVIDER_CALL_COST_USD"] = "0.03"
+        self.addCleanup(os.environ.pop, "ELLY_PROVIDER_CALL_COST_USD", None)
+        with self.assertLogs("elly.config", level="WARNING") as captured:
+            cfg = load_config(None)
+        self.assertEqual(0.03, cfg.remote_call_reservation_usd)
+        self.assertEqual(1, len(captured.records))
+
+        os.environ["ELLY_REMOTE_CALL_RESERVATION_USD"] = "0.03"
+        self.addCleanup(os.environ.pop, "ELLY_REMOTE_CALL_RESERVATION_USD", None)
         with self.assertRaises(ConfigInvalidError):
             load_config(None)
 

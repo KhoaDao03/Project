@@ -123,16 +123,16 @@ class Phase0CliCharacterizationTests(unittest.TestCase):
             for name in (
                 "ELLY_DB_PATH",
                 "ELLY_LOG_LEVEL",
-                "ELLY_GENERALIST_PROVIDER",
-                "ELLY_GENERALIST_MODEL_ID",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID",
             )
         }
         os.environ.update(
             {
                 "ELLY_DB_PATH": os.path.join(self.temp.name, "phase0.db"),
                 "ELLY_LOG_LEVEL": "WARNING",
-                "ELLY_GENERALIST_PROVIDER": "fake",
-                "ELLY_GENERALIST_MODEL_ID": "fake-generalist-v1",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER": "fake",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID": "fake-generalist-v1",
             }
         )
         self.app = build(None)

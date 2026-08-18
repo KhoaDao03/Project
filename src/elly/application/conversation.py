@@ -1,12 +1,14 @@
-"""ConversationOrchestrator — UC-01 local conversation (M1).
+"""Legacy direct-conversation compatibility boundary.
 
-`handle()` IS the orchestration control flow — the core of Elly's architecture
-(AI-002: the application, not the model, owns sequencing, validation, and status).
-It deterministically sequences one local turn: build minimum context, persist the
-user turn, call the generalist via its port, VALIDATE the untrusted output,
-compose the three-axis TaskResult, persist the assistant turn, and emit correlated
-audit events — mapping any typed failure to a safe blocked result WITHOUT ever
-fabricating success.
+This module is not constructed by the composition root or public V2 API.  The
+normal request path is ``AssistantRuntime`` -> ``PlanningService`` ->
+``TaskExecutionService``.  The direct class remains only for established
+characterization/integration callers that still supply historical routing
+inputs; retire it after those callers migrate with equivalent behavior coverage.
+
+Its `handle()` method preserves the historical direct-turn sequencing for those
+callers; it is not a second normal request path or a source of public API task
+lifecycle authority.
 
 Status: Implemented (M1). Owner waived the "Owner implements with guidance"
 exercise on 2026-08-03 and authorized this implementation.
@@ -66,7 +68,7 @@ from .routing import RoutingPolicy
 
 
 class ConversationOrchestrator:
-    """Sequence request context, routing, and local/optional workflow dispatch.
+    """Sequence historical direct callers without becoming the normal runtime.
 
     Provider-specific optional execution and durable completion are delegated to
     ``CapabilityExecutionWorkflow`` and ``CompletionService``. The local model

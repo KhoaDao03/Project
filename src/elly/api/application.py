@@ -125,7 +125,7 @@ class EllyApplication:
         try:
             if not isinstance(request, CreateSessionRequest):
                 raise InputInvalidError("create session request is invalid")
-            record = self._scope.new_session(
+            record = self._scope.runtime.new_session(
                 persistence_mode=request.persistence_mode,
                 cloud_mode=request.cloud_mode,
             )
@@ -392,7 +392,7 @@ class EllyApplication:
                     future = self._futures.get(task_id)
                 if future is not None and future.cancel():
                     return self._cancel_queued_task(task_id, current.value.session_id)
-            if not self._scope.cancel_task(task_id):
+            if not self._scope.runtime.cancel_task(task_id):
                 return ApiResult.failed(
                     ApiFailure(
                         code=ApiFailureCode.CONFLICT,
@@ -784,11 +784,11 @@ class EllyApplication:
 
     def _submit_internal(self, request: TaskRequest) -> Future[ConversationOutcome]:
         if self._scope.executor is not None:
-            future = self._scope.submit(request)
+            future = self._scope.runtime.submit(request)
         else:
             future = Future()
             try:
-                future.set_result(self._scope.handle(request))
+                future.set_result(self._scope.runtime.handle(request))
             except BaseException as exc:
                 future.set_exception(exc)
         task_id = f"task-{request.request_id}"

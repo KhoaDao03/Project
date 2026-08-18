@@ -4,10 +4,9 @@ Responsibility: define and enforce the ALLOWED task-status transitions so the
 orchestrator cannot drive a task into an illegal state (e.g., completed -> running
 or a false success after failure). This is deterministic domain logic with no I/O.
 
-Status: Implemented + Tested (M1). Used by `ConversationOrchestrator.handle`, which
-drives the M1 transitions QUEUED->RUNNING->(COMPLETED|BLOCKED) through
-`ensure_transition`. Later milestones drive the remaining edges (AWAITING_CONSENT
-in M5, CANCELLED/PARTIAL in M2/M3).
+Status: Implemented + Tested. Used by `AssistantRuntime` and the isolated legacy
+direct-conversation boundary to guard every task transition. Later milestones
+drive the remaining edges (AWAITING_CONSENT, CANCELLED, and PARTIAL).
 
 Requirements: AI-002 (deterministic control), FR-006 (no false success).
 Non-responsibilities: does not perform the work of a state; only guards moves.

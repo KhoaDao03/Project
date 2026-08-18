@@ -373,16 +373,16 @@ class V3Phase0ApiViewTests(unittest.TestCase):
             names = (
                 "ELLY_DB_PATH",
                 "ELLY_LOG_LEVEL",
-                "ELLY_GENERALIST_PROVIDER",
-                "ELLY_GENERALIST_MODEL_ID",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID",
             )
             previous = {name: os.environ.get(name) for name in names}
             os.environ.update(
                 {
                     "ELLY_DB_PATH": str(Path(directory) / "elly.db"),
                     "ELLY_LOG_LEVEL": "WARNING",
-                    "ELLY_GENERALIST_PROVIDER": "fake",
-                    "ELLY_GENERALIST_MODEL_ID": "fake-generalist-v1",
+                    "ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER": "fake",
+                    "ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID": "fake-generalist-v1",
                 }
             )
             application = build_application(None)

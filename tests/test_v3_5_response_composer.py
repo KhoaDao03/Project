@@ -343,7 +343,7 @@ synthesis_max_output_tokens = 99
         self.assertEqual("conversation-model", config.conversation_role.model_id)
         self.assertEqual("composer-model", config.response_composer_role.model_id)
         self.assertEqual(99, config.response_composer_role.max_output_tokens)
-        self.assertEqual("response_composer", config.synthesis_role.role)
+        self.assertEqual("response_composer", config.response_composer_role.role)
 
     def test_conflicting_synthesis_and_response_composer_bindings_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -382,11 +382,11 @@ synthesis = "two"
             response_composer=composer,
         )
         try:
-            session = app.new_session()
-            outcome = app.orchestrator.handle(
+            session = app.runtime.new_session()
+            outcome = app.runtime.handle(
                 replace(_request(), session_id=session.session_id)
             )
-            replay = app.orchestrator.handle(
+            replay = app.runtime.handle(
                 replace(_request(), session_id=session.session_id)
             )
             self.assertEqual(TaskStatus.COMPLETED, outcome.result.task_status)

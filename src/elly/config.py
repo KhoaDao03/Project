@@ -28,7 +28,9 @@ if TYPE_CHECKING:
     from .planning.contracts import PlanLimitsSnapshot
 
 _LOCAL_MODEL_ROLES = ("conversation", "planner", "response_composer")
-_LOCAL_MODEL_ROLE_ALIASES = {"synthesis": "response_composer"}
+# Historical configuration spellings are accepted only while loading input.
+# The effective Config object exposes canonical role names exclusively.
+_LEGACY_LOCAL_MODEL_ROLE_ALIASES = {"synthesis": "response_composer"}
 _LOCAL_MODEL_PROFILE_FIELDS = frozenset({"provider", "model_id", "base_url", "timeout_seconds"})
 _PROFILE_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 
@@ -98,10 +100,6 @@ class LocalModelRoleConfig:
     max_output_tokens: int
 
     def __post_init__(self) -> None:
-        if self.role == "synthesis":
-            # Constructor-level compatibility for V3 adapters/tests.  Loaded
-            # configuration is always exposed under the canonical role name.
-            object.__setattr__(self, "role", "response_composer")
         if self.role not in _LOCAL_MODEL_ROLES:
             raise ConfigInvalidError("local model role is unsupported")
         if not isinstance(self.profile, LocalModelProfile):
@@ -208,11 +206,6 @@ class Config:
             specialist_id, self.specialist_default_model_id
         )
 
-    @property
-    def provider_call_cost_usd(self) -> float:
-        """Compatibility alias for pre-centralization callers."""
-        return self.remote_call_reservation_usd
-
     def local_model_profile(self, name: str) -> LocalModelProfile:
         """Return one immutable named local-model profile."""
         for profile in self.local_model_profiles:
@@ -222,7 +215,6 @@ class Config:
 
     def local_model_role(self, role: str) -> LocalModelRoleConfig:
         """Return the resolved immutable configuration for one logical role."""
-        role = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
         roles = {
             "conversation": self.conversation_role,
             "planner": self.planner_role,
@@ -232,11 +224,6 @@ class Config:
             return roles[role]
         except KeyError as exc:
             raise ConfigInvalidError(f"unknown local model role: {role}") from exc
-
-    @property
-    def synthesis_role(self) -> LocalModelRoleConfig:
-        """Temporary V3 compatibility alias for ``response_composer_role``."""
-        return self.response_composer_role
 
     def execution_plan_limits(self) -> PlanLimitsSnapshot:
         """Return the immutable V3 ceilings captured by a validated plan."""
@@ -257,46 +244,13 @@ class Config:
             max_total_timeout_seconds=self.total_timeout_seconds,
         )
 
-    @property
-    def plan_limits(self) -> PlanLimitsSnapshot:
-        """Compatibility alias for callers that use the shorter name."""
-        return self.execution_plan_limits()
-
-    # V2.5 compatibility properties. Existing callers continue to see the
-    # conversation role while all new composition code resolves explicit roles.
-    @property
-    def generalist_model_id(self) -> str:
-        return self.conversation_role.model_id
-
-    @property
-    def generalist_provider(self) -> str:
-        return self.conversation_role.provider
-
-    @property
-    def generalist_max_output_tokens(self) -> int:
-        return self.conversation_role.max_output_tokens
-
-    @property
-    def ollama_base_url(self) -> str:
-        return self.conversation_role.base_url
-
-    @property
-    def ollama_timeout_seconds(self) -> float:
-        return self.conversation_role.timeout_seconds
-
-
 _DEFAULTS: dict[str, object] = {
     "app_name": "elly",
     "db_path": "data/elly.db",
     "max_input_chars": 20000,
     "context_window_messages": 20,
-    "generalist_model_id": "qwen3:8b",
-    "generalist_provider": "ollama",
-    "generalist_max_output_tokens": 512,
     "specialist_max_output_tokens": 2000,
     "log_level": "INFO",
-    "ollama_base_url": "http://127.0.0.1:11434",
-    "ollama_timeout_seconds": 120.0,
     "specialist_manifest_dir": "config/specialists",
     "specialist_provider": "openai",
     "specialist_default_model_id": "gpt-5.6-luna",
@@ -424,6 +378,24 @@ def _from_toml(path: str) -> dict[str, object]:
     providers = raw.get("providers", {})
     models = raw.get("models", {})
     pricing = raw.get("pricing", {})
+    research = raw.get("research", {})
+    storage = raw.get("storage", {})
+    specialists = raw.get("specialists", {})
+    for name, value in (
+        ("app", app),
+        ("limits", limits),
+        ("orchestration", orchestration),
+        ("generalist", generalist),
+        ("log", log),
+        ("providers", providers),
+        ("models", models),
+        ("pricing", pricing),
+        ("research", research),
+        ("storage", storage),
+        ("specialists", specialists),
+    ):
+        if not isinstance(value, dict):
+            raise ConfigInvalidError(f"{name} must be a TOML table")
     local_models = raw.get("local_models")
     if local_models is not None:
         if not isinstance(local_models, dict):
@@ -469,8 +441,6 @@ def _from_toml(path: str) -> dict[str, object]:
     ):
         if key in limits:
             flat[key] = limits[key]
-    if not isinstance(orchestration, dict):
-        raise ConfigInvalidError("orchestration must be a TOML table")
     for key in (
         "max_plan_steps",
         "max_specialist_executions",
@@ -484,6 +454,7 @@ def _from_toml(path: str) -> dict[str, object]:
     ):
         if key in orchestration:
             flat["max_replanning_attempts" if key == "max_replans" else key] = orchestration[key]
+    legacy_local_profile: dict[str, object] = {}
     for key in (
         "tool_timeout_seconds",
         "total_timeout_seconds",
@@ -493,7 +464,8 @@ def _from_toml(path: str) -> dict[str, object]:
         if key in limits:
             destination = "remote_call_reservation_usd" if key == "provider_call_cost_usd" else key
             flat[destination] = limits[key]
-    research = raw.get("research", {})
+            if key == "provider_call_cost_usd":
+                flat["_legacy_pricing_configured"] = True
     for key in ("provider", "model_id", "max_results", "max_output_tokens", "timeout_seconds"):
         if key in research:
             flat[
@@ -505,42 +477,39 @@ def _from_toml(path: str) -> dict[str, object]:
                     "timeout_seconds": "research_timeout_seconds",
                 }[key]
             ] = research[key]
-    storage = raw.get("storage", {})
     for key in ("session_retention_days", "evidence_retention_days", "audit_retention_days"):
         if key in storage:
             flat[key] = storage[key]
     if "backup_dir" in storage:
         flat["backup_dir"] = storage["backup_dir"]
-    if "model_id" in generalist:
-        flat["generalist_model_id"] = generalist["model_id"]
-    if "provider" in generalist:
-        flat["generalist_provider"] = generalist["provider"]
-    if "max_output_tokens" in generalist:
-        flat["generalist_max_output_tokens"] = generalist["max_output_tokens"]
-    if "base_url" in generalist:
-        flat["ollama_base_url"] = generalist["base_url"]
-    if "timeout_seconds" in generalist:
-        flat["ollama_timeout_seconds"] = generalist["timeout_seconds"]
-    specialists = raw.get("specialists", {})
+    for key in ("model_id", "provider", "max_output_tokens", "base_url", "timeout_seconds"):
+        if key in generalist:
+            legacy_local_profile[key] = generalist[key]
     if "manifest_dir" in specialists:
         flat["specialist_manifest_dir"] = specialists["manifest_dir"]
     # New centralized tables override the legacy [generalist], [research], and
     # [limits] locations above, giving operators exactly one edit surface.
     for name, destination in (
-        ("generalist", "generalist_provider"),
+        ("generalist", "provider"),
         ("research", "research_provider"),
         ("specialists", "specialist_provider"),
     ):
         if name in providers:
-            flat[destination] = providers[name]
+            if name == "generalist":
+                legacy_local_profile[destination] = providers[name]
+            else:
+                flat[destination] = providers[name]
     for name, destination in (
-        ("generalist", "generalist_model_id"),
+        ("generalist", "model_id"),
         ("research", "research_model_id"),
         ("specialist_default", "specialist_default_model_id"),
     ):
         if name in models:
-            flat[destination] = models[name]
-    specialist_models = models.get("specialists", {}) if isinstance(models, dict) else {}
+            if name == "generalist":
+                legacy_local_profile[destination] = models[name]
+            else:
+                flat[destination] = models[name]
+    specialist_models = models.get("specialists", {})
     if specialist_models:
         if not isinstance(specialist_models, dict):
             raise ConfigInvalidError("models.specialists must be a TOML table")
@@ -553,14 +522,34 @@ def _from_toml(path: str) -> dict[str, object]:
         ("consent_max_cost_usd", "consent_max_cost_usd"),
     ):
         if name in pricing:
+            if name == "remote_call_reservation_usd" and flat.get(
+                "_legacy_pricing_configured", False
+            ):
+                raise ConfigInvalidError(
+                    "configure only remote_call_reservation_usd or its deprecated "
+                    "provider_call_cost_usd alias"
+                )
             flat[destination] = pricing[name]
     if "level" in log:
         flat["log_level"] = log["level"]
-    flat["_legacy_generalist_configured"] = bool(
-        generalist
-        or (isinstance(providers, dict) and "generalist" in providers)
-        or (isinstance(models, dict) and "generalist" in models)
+    legacy_generalist_configured = bool(
+        "generalist" in raw
+        or "generalist" in providers
+        or "generalist" in models
     )
+    flat["_legacy_generalist_configured"] = legacy_generalist_configured
+    if legacy_local_profile:
+        flat["_legacy_local_profile"] = legacy_local_profile
+    if any(
+        role == "synthesis"
+        for role, _value in _pairs(flat.get("_local_model_roles"), "local_models.roles")
+    ) or any(
+        key == "synthesis_max_output_tokens"
+        for key, _value in _pairs(
+            flat.get("_local_model_role_limits"), "local_models.role_limits"
+        )
+    ):
+        flat["_legacy_role_alias_configured"] = True
     return flat
 
 
@@ -569,13 +558,8 @@ def _from_env() -> dict[str, object]:
         "ELLY_DB_PATH": "db_path",
         "ELLY_MAX_INPUT_CHARS": "max_input_chars",
         "ELLY_CONTEXT_WINDOW_MESSAGES": "context_window_messages",
-        "ELLY_GENERALIST_MODEL_ID": "generalist_model_id",
-        "ELLY_GENERALIST_PROVIDER": "generalist_provider",
-        "ELLY_GENERALIST_MAX_OUTPUT_TOKENS": "generalist_max_output_tokens",
         "ELLY_SPECIALIST_MAX_OUTPUT_TOKENS": "specialist_max_output_tokens",
         "ELLY_LOG_LEVEL": "log_level",
-        "ELLY_OLLAMA_BASE_URL": "ollama_base_url",
-        "ELLY_OLLAMA_TIMEOUT_SECONDS": "ollama_timeout_seconds",
         "ELLY_SPECIALIST_MANIFEST_DIR": "specialist_manifest_dir",
         "ELLY_SPECIALIST_PROVIDER": "specialist_provider",
         "ELLY_SPECIALIST_DEFAULT_MODEL_ID": "specialist_default_model_id",
@@ -596,7 +580,6 @@ def _from_env() -> dict[str, object]:
         "ELLY_MAX_CONCURRENCY": "max_concurrency",
         "ELLY_MAX_QUEUE_SIZE": "max_queue_size",
         "ELLY_MONTHLY_BUDGET_USD": "monthly_budget_usd",
-        "ELLY_PROVIDER_CALL_COST_USD": "remote_call_reservation_usd",
         "ELLY_REMOTE_CALL_RESERVATION_USD": "remote_call_reservation_usd",
         "ELLY_CONSENT_MAX_COST_USD": "consent_max_cost_usd",
         "ELLY_RESEARCH_PROVIDER": "research_provider",
@@ -613,6 +596,18 @@ def _from_env() -> dict[str, object]:
     for env_name, key in env_map.items():
         if env_name in os.environ:
             out[key] = os.environ[env_name]
+    legacy_profile: dict[str, object] = {}
+    for env_name, field_name in (
+        ("ELLY_GENERALIST_MODEL_ID", "model_id"),
+        ("ELLY_GENERALIST_PROVIDER", "provider"),
+        ("ELLY_GENERALIST_MAX_OUTPUT_TOKENS", "max_output_tokens"),
+        ("ELLY_OLLAMA_BASE_URL", "base_url"),
+        ("ELLY_OLLAMA_TIMEOUT_SECONDS", "timeout_seconds"),
+    ):
+        if env_name in os.environ:
+            legacy_profile[field_name] = os.environ[env_name]
+    if legacy_profile:
+        out["_legacy_local_profile"] = legacy_profile
     legacy_names = {
         "ELLY_GENERALIST_MODEL_ID",
         "ELLY_GENERALIST_PROVIDER",
@@ -621,11 +616,19 @@ def _from_env() -> dict[str, object]:
         "ELLY_OLLAMA_TIMEOUT_SECONDS",
     }
     out["_legacy_generalist_configured"] = bool(legacy_names.intersection(os.environ))
+    if "ELLY_PROVIDER_CALL_COST_USD" in os.environ:
+        if "ELLY_REMOTE_CALL_RESERVATION_USD" in os.environ:
+            raise ConfigInvalidError(
+                "configure only ELLY_REMOTE_CALL_RESERVATION_USD or its deprecated "
+                "ELLY_PROVIDER_CALL_COST_USD alias"
+            )
+        out["remote_call_reservation_usd"] = os.environ["ELLY_PROVIDER_CALL_COST_USD"]
+        out["_legacy_pricing_configured"] = True
 
     role_bindings: list[tuple[str, object]] = []
     role_limits: list[tuple[str, object]] = []
-    # ``synthesis`` is retained only as an explicit migration alias.  Read
-    # both spellings so old deployments can move without source changes.
+    # ``synthesis`` is retained only as an explicit migration alias at this
+    # input boundary.  Effective configuration exposes response_composer.
     env_roles = _LOCAL_MODEL_ROLES + ("synthesis",)
     for role in env_roles:
         upper_role = role.upper()
@@ -656,6 +659,10 @@ def _from_env() -> dict[str, object]:
         out["_local_model_role_env"] = tuple(role_bindings)
     if role_limits:
         out["_local_model_role_limit_env"] = tuple(role_limits)
+    if any(role == "synthesis" for role, _value in role_bindings) or any(
+        key.startswith("synthesis") for key, _value in role_limits
+    ):
+        out["_legacy_role_alias_configured"] = True
 
     profile_env: dict[str, dict[str, object]] = {}
     profile_fields = {
@@ -730,7 +737,7 @@ def _apply_role_bindings(
     bindings: dict[str, str], entries: tuple[tuple[str, object], ...], source: str
 ) -> None:
     for role, profile_name in entries:
-        canonical_role = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
+        canonical_role = _LEGACY_LOCAL_MODEL_ROLE_ALIASES.get(role, role)
         if canonical_role not in _LOCAL_MODEL_ROLES:
             raise ConfigInvalidError(f"{source} contains an unsupported local model role: {role}")
         if not isinstance(profile_name, str) or not profile_name.strip():
@@ -743,7 +750,7 @@ def _apply_role_limits(
 ) -> None:
     for key, value in entries:
         role = key.removesuffix("_max_output_tokens")
-        role = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
+        role = _LEGACY_LOCAL_MODEL_ROLE_ALIASES.get(role, role)
         if role not in _LOCAL_MODEL_ROLES:
             raise ConfigInvalidError(f"{source} contains an unsupported role limit: {key}")
         limits[role] = value
@@ -763,11 +770,7 @@ def _reject_role_alias_conflicts(
     seen: dict[str, set[str]] = {}
     for entries in entry_sets:
         for role, _value in _pairs(entries, "local model role entries"):
-            if role == "synthesis":
-                logging.getLogger("elly.config").warning(
-                    "local model role 'synthesis' is deprecated; use 'response_composer'"
-                )
-            canonical = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
+            canonical = _LEGACY_LOCAL_MODEL_ROLE_ALIASES.get(role, role)
             spellings = seen.setdefault(canonical, set())
             if spellings and role not in spellings:
                 raise ConfigInvalidError(
@@ -789,12 +792,7 @@ def _reject_role_limit_alias_conflicts(
     for entries in entry_sets:
         for key, _value in _pairs(entries, "local model role limit entries"):
             role = key.removesuffix("_max_output_tokens")
-            if role == "synthesis":
-                logging.getLogger("elly.config").warning(
-                    "role limit 'synthesis_max_output_tokens' is deprecated; use "
-                    "'response_composer_max_output_tokens'"
-                )
-            canonical = _LOCAL_MODEL_ROLE_ALIASES.get(role, role)
+            canonical = _LEGACY_LOCAL_MODEL_ROLE_ALIASES.get(role, role)
             spellings = seen.setdefault(canonical, set())
             if spellings and role not in spellings:
                 raise ConfigInvalidError(
@@ -821,19 +819,22 @@ def _build_local_roles(
         )
     )
 
-    if legacy:
-        logging.getLogger("elly.config").warning(
-            "legacy generalist configuration is deprecated; use "
-            "[local_models.profiles] and [local_models.roles]"
-        )
-
     if legacy and not new_configuration:
+        legacy_profile: dict[str, object] = dict(_DEFAULT_LOCAL_PROFILE)
+        for values in (
+            toml_values.get("_legacy_local_profile"),
+            env_values.get("_legacy_local_profile"),
+        ):
+            if values is not None and not isinstance(values, dict):
+                raise ConfigInvalidError("legacy local-model configuration is invalid")
+            if isinstance(values, dict):
+                legacy_profile.update(values)
         profiles: dict[str, dict[str, object]] = {
             "v2_generalist": {
-                "provider": merged["generalist_provider"],
-                "model_id": merged["generalist_model_id"],
-                "base_url": merged["ollama_base_url"],
-                "timeout_seconds": merged["ollama_timeout_seconds"],
+                "provider": legacy_profile["provider"],
+                "model_id": legacy_profile["model_id"],
+                "base_url": legacy_profile["base_url"],
+                "timeout_seconds": legacy_profile["timeout_seconds"],
             }
         }
         role_bindings = {role: "v2_generalist" for role in _LOCAL_MODEL_ROLES}
@@ -873,7 +874,9 @@ def _build_local_roles(
 
     role_limits: dict[str, object] = dict(_DEFAULT_LOCAL_ROLE_LIMITS)
     if legacy and not new_configuration:
-        role_limits["conversation"] = merged["generalist_max_output_tokens"]
+        role_limits["conversation"] = legacy_profile.get(
+            "max_output_tokens", _DEFAULT_LOCAL_ROLE_LIMITS["conversation"]
+        )
     else:
         _reject_role_limit_alias_conflicts(
             toml_values.get("_local_model_role_limits"),
@@ -929,10 +932,51 @@ def _raise_unknown_profile(name: str) -> NoReturn:
     raise ConfigInvalidError(f"unknown local model profile: {name}")
 
 
+def _warn_legacy_configuration(
+    toml_values: dict[str, object], env_values: dict[str, object]
+) -> None:
+    """Emit one bounded warning for any accepted migration-era input."""
+
+    if any(
+        bool(values.get(marker))
+        for values in (toml_values, env_values)
+        for marker in (
+            "_legacy_generalist_configured",
+            "_legacy_pricing_configured",
+            "_legacy_role_alias_configured",
+        )
+    ):
+        logging.getLogger("elly.config").warning(
+            "deprecated configuration aliases were accepted; migrate to canonical "
+            "local_models roles/profiles and remote_call_reservation_usd settings"
+        )
+
+
+def _reject_cross_source_pricing_conflict(
+    toml_values: dict[str, object], env_values: dict[str, object]
+) -> None:
+    if toml_values.get("_legacy_pricing_configured") and (
+        "remote_call_reservation_usd" in env_values
+    ):
+        raise ConfigInvalidError(
+            "configure only one remote_call_reservation_usd source when using the "
+            "deprecated provider_call_cost_usd alias"
+        )
+    if env_values.get("_legacy_pricing_configured") and (
+        "remote_call_reservation_usd" in toml_values
+    ):
+        raise ConfigInvalidError(
+            "configure only one remote_call_reservation_usd source when using the "
+            "deprecated provider_call_cost_usd alias"
+        )
+
+
 def load_config(toml_path: str | None = None) -> Config:
     """Return validated settings with independent local-model role bindings."""
     toml_values = _from_toml(toml_path) if toml_path else {}
     env_values = _from_env()
+    _reject_cross_source_pricing_conflict(toml_values, env_values)
+    _warn_legacy_configuration(toml_values, env_values)
     merged: dict[str, object] = dict(_DEFAULTS)
     merged.update(toml_values)
     merged.update(env_values)

@@ -25,7 +25,7 @@ from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.execution import CancellationToken
 from elly.application.plan_builder import PlanBuilder
-from elly.application.plan_executor import PlanExecutionRequest, PlanExecutor
+from elly.application.task_execution import PlanExecutionRequest, TaskExecutionService
 from elly.application.routing_contracts import (
     CapabilityKind,
     CapabilityRoutingDescriptor,
@@ -472,7 +472,7 @@ class EnvelopePersistenceTests(unittest.TestCase):
             "persisted", repository.get_step_result(plan.plan_id, plan.steps[0].step_id).answer
         )  # type: ignore[union-attr]
 
-    def test_plan_executor_returns_and_persists_typed_envelope(self) -> None:
+    def test_task_execution_returns_and_persists_typed_envelope(self) -> None:
         repository = SqliteSessionRepository(":memory:")
         self.addCleanup(repository.close)
         repository.apply_migrations()
@@ -497,7 +497,7 @@ class EnvelopePersistenceTests(unittest.TestCase):
                 clock=clock, repository=repository, audit=StructuredAuditLog()
             ),
         )
-        execution = PlanExecutor(
+        execution = TaskExecutionService(
             repository=repository,
             capability_registry=registry,
             capability_workflow=workflow,

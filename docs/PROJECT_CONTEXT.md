@@ -2,10 +2,10 @@
 
 **Project:** Elly Research Assistant (local-first personal AI assistant prototype)
 **Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
-**Generated:** 2026-08-17
+**Generated:** 2026-08-18
 **Branch:** `main`
-**Commit represented:** `bdcaa860f7f4f0c1c4cce019609d64e01bbdfe09` (clean Revised Phase 8 baseline) plus the Revised Phase 9 routing-contract implementation and documentation in the working tree
-**Working tree:** contains the Revised Phase 9 implementation, focused characterization coverage, and documentation; inspect `git status` before handoff.
+**Commit represented:** `b0a33d881a78d27219fd40724efcb01abb3f9a6c` (clean Revised Phase 9 commit)
+**Working tree:** contains the Revised Phase 10 configuration-canonicalization and internal-compatibility implementation, focused coverage, and documentation; inspect `git status` before handoff.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -146,9 +146,9 @@ legacy synthesis role and persisted finalization values remain readable only
 through documented migration behavior. See
 [`docs/v3.5/IMPLEMENTATION.md`](v3.5/IMPLEMENTATION.md).
 
-**Architecture consolidation status:** Phases 0–6, Revised Phase 7, Revised Phase 8, and
-Revised Phase 9 are
-implemented. The canonical
+**Architecture consolidation status:** Phases 0–6, Revised Phase 7, Revised Phase 8,
+Revised Phase 9, and the Revised Phase 10 implementation in the current working
+tree are implemented. The canonical
 request path is Public API → `AssistantRuntime` → `PlanningService` → validated
 `ExecutionPlan` → `TaskExecutionService` → application-owned `CapabilityRegistry`
 → `ResponseCompositionService` → `TaskResult`. `AssistantRuntime` owns outer
@@ -157,22 +157,24 @@ authorization decision and continuation lifecycle. `composition.py` is the
 dependency/startup/operational wiring boundary. `PlanningService` remains the
 planning authority and `TaskExecutionService` remains the validated DAG execution
 authority. Compatibility delegates in `composition.Application`,
-`_ConversationCompatibilityFacade`, `PlanOrchestrator`, and the `plan_executor`
-name remain non-authoritative. The API retains only interface async maps for future
-publication; it no longer stores pending authorization/request maps or performs
-task lifecycle writes.
+the `orchestrator` attribute, `PlanOrchestrator`, and the `plan_executor` name
+are retired. The API retains only interface async maps for future publication; it
+no longer stores pending authorization/request maps or performs task lifecycle
+writes.
 
 Revised Phase 7 physically decomposes execution into
 `application/task_execution/{contracts,service,plan_runner,step_runner,finalizer,legacy}.py`.
-`application/plan_executor.py` is now a documented compatibility re-export
-boundary; `PlanExecutor` and `PlanRunResult` remain aliases for established
-callers. `PlanOrchestrator` remains a non-authoritative façade, and
-`manage_task_lifecycle` remains only for direct/legacy callers because the
-canonical runtime path preserves `AssistantRuntime` as the normal lifecycle
-owner. `LOCAL_SYNTHESIS` execution is retained for persisted-plan/test
-compatibility, while synthesis-named repository methods remain the intentional
-stored-record/response-composition persistence boundary. Current planning uses
-post-aggregation response composition.
+`application/plan_executor.py`, `PlanExecutor`, `PlanRunResult`,
+`PlanOrchestrator`, and `PlanExecutionResult.results` are retired internal
+aliases. `manage_task_lifecycle` remains only for direct/legacy execution
+callers because the canonical runtime path preserves `AssistantRuntime` as the
+normal lifecycle owner. `LOCAL_SYNTHESIS` execution is retained for persisted
+plan compatibility, while synthesis-named repository methods remain the
+intentional stored-record/response-composition persistence boundary. Current
+planning uses post-aggregation response composition; the obsolete model-
+generating synthesis modules are no longer present. The direct
+`ConversationOrchestrator` module is isolated for historical routing callers and
+tests and is not used by composition or the public API.
 
 Revised Phase 8 decomposes the SQLite implementation behind the stable
 `elly.adapters.sqlite_repository.SqliteSessionRepository` import path. The
@@ -212,6 +214,21 @@ routing/planning/API/persistence characterization set passed; Ruff, strict
 MyPy across 142 source files, compileall, and `git diff --check` passed. The
 localhost Ollama characterization was run outside the restricted sandbox.
 
+**Revised Phase 10 — Configuration Canonicalization and Internal Compatibility
+Retirement:** effective `Config` now exposes only canonical local roles,
+remote provider/model, pricing, and `execution_plan_limits()` names. Old
+generalist/Ollama, synthesis-role, and provider-call-cost names remain only as
+loader input compatibility with one warning and fail-closed old/new conflicts;
+the examples advertise canonical names only. `composition.Application` is a
+process-level wiring/operations container, and the public API calls
+`AssistantRuntime` directly. Public V2 routing DTOs, historical routes, SQLite
+schema 7/V1–V7, old plans/results, `LOCAL_SYNTHESIS`, and `synthesis_results`
+remain compatible. Normal new execution has one response-composition path and
+does not invoke legacy synthesis generation or `ConversationOrchestrator`.
+The unrestricted deterministic gate for the current implementation passed 497
+tests; compileall and `git diff --check` passed. Ruff and MyPy were not
+installed in this environment.
+
 Consent/action continuation across process restart is not supported: task and plan
 records are durable, but authorization-ID mappings and retained request context are
 process-local. Revised Phase 6 preserves this existing boundary and adds no SQLite
@@ -233,7 +250,7 @@ Primary use cases are UC-01 local conversation, UC-02 current research, UC-03 co
 
 ### Local conversation
 
-**Trigger/input:** non-empty text. **Validation:** NFC normalization and input ceiling before orchestration. **Path:** create `TaskRequest`; load bounded recent context and confirmed profile context; route to `local_conversation`; call the configured local generalist under guardrails; validate output; persist permitted turns; return `TaskResult` and render route/status. **State:** SQLite with retention, or no message bodies for `/new --no-store`. **Failures:** typed provider/config/storage/timeout/cancellation failures become blocked, partial, or cancelled; no cloud fallback. Relevant AT-01/02/07/13/14.
+**Trigger/input:** non-empty text. **Validation:** NFC normalization and input ceiling before orchestration. **Path:** create `TaskRequest`; `AssistantRuntime` loads bounded context, calls `PlanningService` for a deterministic one-step local capability plan, executes it through `TaskExecutionService`, and passes validated output to `ResponseCompositionService`; persist permitted turns; return `TaskResult` and render route/status. **State:** SQLite with retention, or no message bodies for `/new --no-store`. **Failures:** typed provider/config/storage/timeout/cancellation failures become blocked, partial, or cancelled; no cloud fallback. Relevant AT-01/02/07/13/14.
 
 ### Current research
 
@@ -246,17 +263,20 @@ The router selects only a validated manifest capability. The application builds 
 ```mermaid
 flowchart LR
   CLI[CLI input] --> V[normalize and validate]
-  V --> O[ConversationOrchestrator]
-  O --> R{deterministic route}
-  R --> L[Ollama local generalist]
+  V --> O[AssistantRuntime]
+  O --> P0[PlanningService]
+  P0 --> P[validated ExecutionPlan]
+  P --> R[TaskExecutionService]
+  R --> L[local conversation capability]
   R --> W[OpenAI hosted web_search]
   R --> S[OpenAI tool-free specialist]
-  W --> P[citation/privacy/evidence policy]
-  S --> P
+  W --> Q[citation/privacy/evidence policy]
+  S --> Q
   L --> G[guardrails and result validation]
-  P --> G
-  G --> DB[(SQLite / no-store boundary)]
-  G --> OUT[rendered TaskResult]
+  Q --> G
+  G --> C[ResponseCompositionService]
+  C --> DB[(SQLite / no-store boundary)]
+  C --> OUT[rendered TaskResult]
 ```
 
 ## 7. Architecture Overview
@@ -269,7 +289,7 @@ flowchart LR
 | application runtime | outer request/context/plan/task/result/message lifecycle | validated requests | outcomes/consent | planning, execution, ports, guardrails | Implemented/Tested | [runtime.py](../src/elly/application/runtime.py) |
 | composition | adapters, registries, services, startup/operations/shutdown wiring | config | composed application/runtime | adapters and application services | Implemented/Tested | [composition.py](../src/elly/composition.py) |
 | planning | deterministic/LLM strategies and validated plans | route request/catalog | execution plan | live capability registry | Implemented/Tested | [planning_service.py](../src/elly/application/planning_service.py) |
-| execution | validated DAG scheduling, step state, cancellation/recovery | execution plan | plan execution result | capability registry/repository | Implemented/Tested | [plan_executor.py](../src/elly/application/plan_executor.py) |
+| execution | validated DAG scheduling, step state, cancellation/recovery | execution plan | plan execution result | capability registry/repository | Implemented/Tested | [task_execution](../src/elly/application/task_execution/) |
 | domain | models, enums, transitions, errors | value objects | typed contracts | stdlib | Implemented/Tested | [models.py](../src/elly/domain/models.py) |
 | ports | replaceable boundaries | DTOs | protocol results | domain | Implemented | [CONTRACTS.md](v1/CONTRACTS.md) |
 | adapters | Ollama/OpenAI/SQLite/audit/clock | port DTOs | normalized results | network/filesystem | Implemented; smoke/partial verification | [adapters](../src/elly/adapters/) |
@@ -367,14 +387,17 @@ Authoritative defaults are `config.example.toml`, `.env.example`, and [config.py
 | `[app]` db_path | data/elly.db; :memory: in tests | local state |
 | `[storage]` retention/backup_dir | sessions 30d, evidence 7d, audit 90d | sensitive lifecycle |
 | `[limits]` input/context/steps/calls/retries/timeouts/concurrency/queue/output | defaults in TOML | application ceilings |
-| `[generalist]` migration keys, `[research]`, `[specialists]`, `[log]` | legacy endpoint/time/output, research limits, manifests, redacted level | compatibility and logging boundaries |
+| `[research]`, `[specialists]`, `[log]` | research limits, manifests, redacted level | operational configuration |
+| `[generalist]`, `[providers].generalist`, `[models].generalist`, and `[limits].provider_call_cost_usd` | loader-only migration inputs; translated to canonical local profiles/pricing with one warning | retained input compatibility; not effective Config fields |
 | `OPENAI_API_KEY` | only for authorized hosted calls | secret; never log/commit |
 | `ELLY_DB_PATH`, `ELLY_LOG_LEVEL` | deployment overrides | local path/log |
-| `ELLY_LOCAL_CONVERSATION_PROFILE`, `ELLY_LOCAL_PLANNER_PROFILE`, `ELLY_LOCAL_RESPONSE_COMPOSER_PROFILE`, plus temporary `ELLY_LOCAL_SYNTHESIS_PROFILE`, `ELLY_LOCAL_MODELS_<PROFILE>_{PROVIDER,MODEL_ID,BASE_URL,TIMEOUT_SECONDS}`, and role output-limit overrides | independent local role/profile overrides; TOML precedence is lower | exact localhost validation; legacy generalist env keys remain migration-compatible |
+| `ELLY_LOCAL_CONVERSATION_PROFILE`, `ELLY_LOCAL_PLANNER_PROFILE`, `ELLY_LOCAL_RESPONSE_COMPOSER_PROFILE`, `ELLY_LOCAL_MODELS_<PROFILE>_{PROVIDER,MODEL_ID,BASE_URL,TIMEOUT_SECONDS}`, and canonical role output-limit overrides | independent local role/profile overrides; TOML precedence is lower | exact localhost validation |
+| `ELLY_GENERALIST_*`, `ELLY_OLLAMA_*`, and `ELLY_LOCAL(_MODELS)_SYNTHESIS_*` | loader-only migration inputs | one warning; canonical roles are effective |
 | `ELLY_SPECIALIST_PROVIDER`, `ELLY_SPECIALIST_DEFAULT_MODEL_ID`, `ELLY_SPECIALIST_MANIFEST_DIR` | specialist overrides | manifests grant no tools |
 | `ELLY_RESEARCH_PROVIDER`, `ELLY_RESEARCH_MODEL_ID`, `ELLY_RESEARCH_MAX_RESULTS`, `ELLY_RESEARCH_MAX_OUTPUT_TOKENS`, `ELLY_RESEARCH_TIMEOUT_SECONDS` | research overrides | hosted boundary |
 | `ELLY_MAX_INPUT_CHARS`, `ELLY_CONTEXT_WINDOW_MESSAGES`, `ELLY_MAX_STEPS`, `ELLY_MAX_PROVIDER_CALLS`, `ELLY_MAX_RETRIES`, `ELLY_TOOL_TIMEOUT_SECONDS`, `ELLY_TOTAL_TIMEOUT_SECONDS`, `ELLY_MAX_CONCURRENCY`, `ELLY_MAX_QUEUE_SIZE` | guardrail overrides | do not weaken silently |
-| `ELLY_MONTHLY_BUDGET_USD`, `ELLY_PROVIDER_CALL_COST_USD`, `ELLY_REMOTE_CALL_RESERVATION_USD`, `ELLY_CONSENT_MAX_COST_USD` | cost overrides | current price source unresolved |
+| `ELLY_MONTHLY_BUDGET_USD`, `ELLY_REMOTE_CALL_RESERVATION_USD`, `ELLY_CONSENT_MAX_COST_USD` | canonical cost overrides | reservation and consent ceilings |
+| `ELLY_PROVIDER_CALL_COST_USD` | loader-only deprecated pricing input | conflicts with canonical reservation input; not advertised |
 | `ELLY_SESSION_RETENTION_DAYS`, `ELLY_EVIDENCE_RETENTION_DAYS`, `ELLY_AUDIT_RETENTION_DAYS`, `ELLY_BACKUP_DIR` | lifecycle overrides | local sensitive state |
 | `ELLY_BACKUP_KEY` | backup/restore and daily checks | secret; prototype envelope |
 
@@ -560,7 +583,7 @@ ensure endpoint/model availability and restart. See [config.py](../src/elly/conf
 
 **Which model is configured?** Local default `qwen3:8b`; opt-in `qwen3:14b`; hosted defaults `gpt-5.6-luna`. Availability must be checked, not inferred from IDs.
 
-**Where does execution begin?** `src/elly/__main__.py:main`, then `composition.build`, `Cli.run`, and `ConversationOrchestrator.handle`.
+**Where does execution begin?** `src/elly/__main__.py:main`, then `composition.build`, `Cli.run`, `EllyApplication`, and `AssistantRuntime.handle`.
 
 **Is data persisted?** Normal SQLite state is retained by policy; `/new --no-store` prevents message-body reconstruction. See [sqlite_repository.py](../src/elly/adapters/sqlite_repository.py).
 

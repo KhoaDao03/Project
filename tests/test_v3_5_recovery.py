@@ -14,7 +14,7 @@ from elly.application.capabilities import CapabilityRegistry
 from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.plan_builder import PlanBuilder
-from elly.application.plan_executor import PlanExecutionRequest, PlanExecutor
+from elly.application.task_execution import PlanExecutionRequest, TaskExecutionService
 from elly.domain.enums import CloudMode, PersistenceMode, TaskStatus
 from elly.domain.models import ContextManifest, SessionRecord, TaskRequest
 from elly.planning.contracts import (
@@ -103,8 +103,8 @@ class V35RecoveryTests(unittest.TestCase):
             context_manifest=ContextManifest((), {}, 16, 0),
         )
 
-        def executor() -> PlanExecutor:
-            return PlanExecutor(
+        def executor() -> TaskExecutionService:
+            return TaskExecutionService(
                 repository=repository,
                 capability_registry=registry,
                 capability_workflow=workflow,

@@ -44,7 +44,7 @@ from .context_builder import ContextBuilder
 from .execution import CancellationToken
 from .local_conversation import LocalConversationUseCase
 from .local_conversation_capability import LOCAL_CONVERSATION_CAPABILITY_ID
-from .plan_executor import PlanExecutionResult, TaskExecutionService
+from .task_execution import PlanExecutionResult, TaskExecutionService
 from .planning_service import PlanningService
 from .recovery import RecoveryReport
 from .replan import ReplanRequest, ReplanResult, ReplanTrigger

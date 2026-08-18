@@ -20,13 +20,13 @@ class CliDispatchTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["ELLY_DB_PATH"] = os.path.join(self._tmp.name, "elly.db")
         os.environ["ELLY_LOG_LEVEL"] = "WARNING"
-        os.environ["ELLY_GENERALIST_PROVIDER"] = "fake"
-        os.environ["ELLY_GENERALIST_MODEL_ID"] = "fake-generalist-v1"
+        os.environ["ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER"] = "fake"
+        os.environ["ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID"] = "fake-generalist-v1"
         self.addCleanup(self._tmp.cleanup)
         self.addCleanup(os.environ.pop, "ELLY_DB_PATH", None)
         self.addCleanup(os.environ.pop, "ELLY_LOG_LEVEL", None)
-        self.addCleanup(os.environ.pop, "ELLY_GENERALIST_PROVIDER", None)
-        self.addCleanup(os.environ.pop, "ELLY_GENERALIST_MODEL_ID", None)
+        self.addCleanup(os.environ.pop, "ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER", None)
+        self.addCleanup(os.environ.pop, "ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID", None)
         self.cli = Cli.start(build(None))
         self.addCleanup(self.cli.app.close)
 

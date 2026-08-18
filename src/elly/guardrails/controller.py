@@ -25,7 +25,7 @@ class GuardrailController:
         policy: LimitPolicy,
         tool_timeout_seconds: float,
         total_timeout_seconds: float,
-        provider_call_cost_usd: float = 0.0,
+        remote_call_reservation_usd: float = 0.0,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         _cost: FakeCostLedger | None = None,
@@ -38,7 +38,7 @@ class GuardrailController:
         self.circuit = _circuit or CircuitBreaker()
         self.tool_timeout_seconds = tool_timeout_seconds
         self.total_timeout_seconds = total_timeout_seconds
-        self.provider_call_cost_usd = provider_call_cost_usd
+        self.remote_call_reservation_usd = remote_call_reservation_usd
         self._sleep = sleep
         self._clock = clock
         self.retry_count = 0
@@ -50,7 +50,7 @@ class GuardrailController:
             policy=self.policy,
             tool_timeout_seconds=self.tool_timeout_seconds,
             total_timeout_seconds=self.total_timeout_seconds,
-            provider_call_cost_usd=self.provider_call_cost_usd,
+            remote_call_reservation_usd=self.remote_call_reservation_usd,
             sleep=self._sleep,
             clock=self._clock,
             _cost=self.cost,
@@ -72,7 +72,9 @@ class GuardrailController:
         reservation mechanic without charging local inference as cloud spend.
         """
         reservation = self.ledger.reserve(steps=1, concurrency=1, output_tokens=output_tokens)
-        reserved_cost = self.provider_call_cost_usd if cost_usd is None else cost_usd
+        reserved_cost = (
+            self.remote_call_reservation_usd if cost_usd is None else cost_usd
+        )
         try:
             self.circuit.allow(self._clock())
             started = self._clock()

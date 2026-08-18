@@ -580,8 +580,8 @@ class ResearchCliTests(unittest.TestCase):
             for name in (
                 "ELLY_DB_PATH",
                 "ELLY_LOG_LEVEL",
-                "ELLY_GENERALIST_PROVIDER",
-                "ELLY_GENERALIST_MODEL_ID",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID",
                 "ELLY_RESEARCH_PROVIDER",
             )
         }
@@ -589,8 +589,8 @@ class ResearchCliTests(unittest.TestCase):
             {
                 "ELLY_DB_PATH": os.path.join(self.tmp.name, "elly.db"),
                 "ELLY_LOG_LEVEL": "WARNING",
-                "ELLY_GENERALIST_PROVIDER": "fake",
-                "ELLY_GENERALIST_MODEL_ID": "fake-generalist-v1",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_PROVIDER": "fake",
+                "ELLY_LOCAL_MODELS_QWEN_DEFAULT_MODEL_ID": "fake-generalist-v1",
                 "ELLY_RESEARCH_PROVIDER": "fixtures",
             }
         )

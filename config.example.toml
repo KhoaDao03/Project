@@ -7,7 +7,7 @@
 
 # Remote provider, model, and price selection lives in these tables. Local
 # conversation, planning, and response-composer selection is defined in
-# [local_models].  The old `synthesis` spelling remains a temporary alias only.
+# [local_models].
 [providers]
 research = "openai_web_search"       # "openai_web_search" or "fixtures"
 specialists = "openai"               # "openai" or "fake"

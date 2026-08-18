@@ -53,10 +53,10 @@ class V3Phase1LocalModelRoleTests(unittest.TestCase):
             ("qwen_default",),
         )
         self.assertIs(config.conversation_role.profile, config.planner_role.profile)
-        self.assertIs(config.planner_role.profile, config.synthesis_role.profile)
+        self.assertIs(config.planner_role.profile, config.response_composer_role.profile)
         self.assertEqual(config.conversation_role.model_id, "qwen3:8b")
         self.assertEqual(config.planner_role.max_output_tokens, 1200)
-        self.assertEqual(config.synthesis_role.max_output_tokens, 1600)
+        self.assertEqual(config.response_composer_role.max_output_tokens, 1600)
         self.assertEqual(config.max_provider_calls, 3)
         self.assertEqual(config.max_concurrency, 2)
 
@@ -90,10 +90,10 @@ class V3Phase1LocalModelRoleTests(unittest.TestCase):
 
         self.assertEqual(config.conversation_role.model_id, "conversation-v1")
         self.assertEqual(config.planner_role.model_id, "planner-v2")
-        self.assertEqual(config.synthesis_role.model_id, "conversation-v1")
+        self.assertEqual(config.response_composer_role.model_id, "conversation-v1")
         self.assertEqual(config.conversation_role.max_output_tokens, 400)
         self.assertEqual(config.planner_role.max_output_tokens, 1400)
-        self.assertEqual(config.synthesis_role.max_output_tokens, 1800)
+        self.assertEqual(config.response_composer_role.max_output_tokens, 1800)
         self.assertEqual(config.planner_role.timeout_seconds, 180.0)
 
     def test_environment_role_and_profile_overrides_have_precedence(self) -> None:
@@ -122,7 +122,7 @@ class V3Phase1LocalModelRoleTests(unittest.TestCase):
         config = load_config(path)
 
         self.assertEqual(config.conversation_role.model_id, "env-conversation")
-        self.assertEqual(config.synthesis_role.model_id, "env-conversation")
+        self.assertEqual(config.response_composer_role.model_id, "env-conversation")
         self.assertEqual(config.planner_role.model_id, "toml-planner")
         self.assertEqual(config.planner_role.timeout_seconds, 240.0)
 
@@ -146,7 +146,7 @@ class V3Phase1LocalModelRoleTests(unittest.TestCase):
         for role in (
             config.conversation_role,
             config.planner_role,
-            config.synthesis_role,
+            config.response_composer_role,
         ):
             self.assertEqual(role.profile_name, "v2_generalist")
             self.assertEqual(role.provider, "fake")

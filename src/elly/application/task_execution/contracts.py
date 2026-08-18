@@ -110,12 +110,6 @@ class PlanExecutionResult:
         return MappingProxyType({step.step_id: step.state for step in self.plan.steps})
 
     @property
-    def results(self) -> Mapping[str, TaskResult]:
-        """Compatibility alias for callers that use the shorter result name."""
-
-        return self.step_results
-
-    @property
     def envelopes(self) -> Mapping[str, StepResultEnvelope]:
         """Typed result envelopes available to downstream plan consumers."""
 
@@ -138,8 +132,4 @@ class PlanExecutionResult:
         """Explicit specialist disagreements, if aggregation was completed."""
 
         return self.aggregation.disagreements if self.aggregation is not None else ()
-
-
-PlanRunResult = PlanExecutionResult
-
 
