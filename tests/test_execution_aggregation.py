@@ -267,6 +267,36 @@ class Phase6AggregationTests(unittest.TestCase):
         self.assertEqual(TaskStatus.CANCELLED, result.task_status)
         self.assertIn("cancelled", result.answer)
 
+    def test_cancelled_step_preserves_partial_work_without_promoting_output(self) -> None:
+        step = _step("cancelled")
+        plan = _plan(step)
+        cancelled = TaskResult(
+            task_id=plan.task_id,
+            task_status=TaskStatus.CANCELLED,
+            epistemic_status=EpistemicStatus.BLOCKED,
+            validation_status=ValidationStatus.REJECTED,
+            answer="untrusted cancelled answer",
+            route_summary=Route.REGISTERED_CAPABILITY,
+            claims=("untrusted cancelled claim",),
+            citations=("https://example.invalid/cancelled",),
+            partial_work=("received prefix",),
+            outcome_code=OutcomeCode.CANCELLED,
+        )
+
+        aggregation = aggregate_plan_results(
+            plan,
+            step_results={step.step_id: cancelled},
+            states={step.step_id: StepState.CANCELLED},
+        )
+        result = TemplateFinalizer().finalize(aggregation)
+
+        self.assertEqual((), aggregation.eligible_step_ids)
+        self.assertEqual(TaskStatus.CANCELLED, result.task_status)
+        self.assertIn("received prefix", result.partial_work)
+        self.assertNotIn("untrusted cancelled claim", result.claims)
+        self.assertNotIn("https://example.invalid/cancelled", result.citations)
+        self.assertNotEqual(TaskStatus.COMPLETED, result.task_status)
+
     def test_template_renders_verified_action_receipt_without_rewriting(self) -> None:
         step = _step("action")
         plan = _plan(step, finalization=FinalizationStrategy.TEMPLATE)

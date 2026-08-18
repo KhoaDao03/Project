@@ -4,8 +4,8 @@
 **Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
 **Generated:** 2026-08-18
 **Branch:** `main`
-**Commit represented:** `6a294645a94eadc3458b6801e13849475195c270` (Revised Phase 10 baseline)
-**Working tree:** contains the uncommitted Revised Phase 11 canonical-test consolidation, legacy conversation retirement, and repository-hygiene changes; inspect `git status` before handoff.
+**Commit represented:** `76fa8929eeb72159c2480cc6cea4048b5fca129a` (Revised Phase 11 baseline; the closure patch may be newer)
+**Working tree:** architecture consolidation through Revised Phase 11 is implemented and committed on `main`. Consult `git history` and `git status` for the exact current repository state.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -147,8 +147,8 @@ through documented migration behavior. See
 [`docs/v3.5/IMPLEMENTATION.md`](v3.5/IMPLEMENTATION.md).
 
 **Architecture consolidation status:** Phases 0–6, Revised Phase 7, Revised Phase 8,
-Revised Phase 9, and the Revised Phase 10 implementation in the current working
-tree are implemented. The canonical
+Revised Phase 9, Revised Phase 10, and Revised Phase 11 are implemented and
+committed on `main`. The canonical
 request path is Public API → `AssistantRuntime` → `PlanningService` → validated
 `ExecutionPlan` → `TaskExecutionService` → application-owned `CapabilityRegistry`
 → `ResponseCompositionService` → `TaskResult`. `AssistantRuntime` owns outer
@@ -232,7 +232,7 @@ that Phase 10 environment; Revised Phase 11 closed that verification
 precondition with a clean Ruff/MyPy gate before test consolidation.
 
 **Revised Phase 11 — Canonical Test Architecture and Repository Hygiene:** the
-current working tree migrates all direct legacy conversation test callers to
+committed Phase 11 implementation migrates all direct legacy conversation test callers to
 `AssistantRuntime`, deletes `src/elly/application/conversation.py`, and records
 the complete pre-cleanup inventory and required behavior matrix in
 `docs/refactor/PHASE11_TEST_INVENTORY.md`, with final deletion/rename evidence
@@ -241,8 +241,9 @@ they protect public, security, concurrency, recovery, or persisted-data
 compatibility; duplicate specialist-result assertions were moved into the
 current response-composition owner, and persisted `LOCAL_SYNTHESIS` coverage was
 renamed to its compatibility purpose. Tracked `src/elly.egg-info` metadata is
-removed and generated egg-info is ignored. The implementation remains
-uncommitted at this handoff.
+removed and generated egg-info is ignored. See
+[`docs/refactor/ARCHITECTURE_CONSOLIDATION_CLOSURE.md`](refactor/ARCHITECTURE_CONSOLIDATION_CLOSURE.md)
+for the final closure record.
 
 Consent/action continuation across process restart is not supported: task and plan
 records are durable, but authorization-ID mappings and retained request context are

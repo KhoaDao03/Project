@@ -159,8 +159,8 @@ class RuntimeConversationTests(unittest.TestCase):
         )
 
         self.assertIs(outcome.result.task_status, TaskStatus.CANCELLED)
-        self.assertTrue(outcome.result.partial_work)
-        self.assertIn("cancel", outcome.result.partial_work[0])
+        self.assertIn("received prefix", outcome.result.partial_work)
+        self.assertNotEqual(TaskStatus.COMPLETED, outcome.result.task_status)
         self.assertFalse(
             any(
                 event.task_status is TaskStatus.COMPLETED
@@ -233,7 +233,7 @@ class RuntimeConversationTests(unittest.TestCase):
             )
         )
 
-    def test_permanent_failure_keeps_user_turn_without_assistant_turn(self) -> None:
+    def test_permanent_failure_persists_user_and_safe_blocked_assistant_turn(self) -> None:
         application, repository, _audit, session_id = _application(
             failure=FailureMode.PERMANENT,
             persistence=PersistenceMode.STORE_WITH_RETENTION,

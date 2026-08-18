@@ -831,6 +831,10 @@ def _partial_work_lines(aggregation: PlanAggregation) -> tuple[str, ...]:
         state = aggregation.step_states[step.step_id]
         if state not in STEP_ELIGIBLE_STATES:
             lines.append(f"{step.step_id}: {state.value}")
+            if state is StepState.CANCELLED:
+                result = aggregation.step_results.get(step.step_id)
+                if result is not None:
+                    lines.extend(result.partial_work)
     lines.extend(f"Warning: {item}" for item in aggregation.warnings)
     return _dedupe_items(lines)
 
