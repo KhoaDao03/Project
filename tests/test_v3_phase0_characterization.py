@@ -34,10 +34,9 @@ from elly.application.capabilities import (
     FreshnessSupport,
     OperationIntentContract,
 )
-from elly.application.conversation import ConversationOrchestrator
-from elly.application.local_conversation import LocalConversationUseCase
 from elly.application.routing import RoutingPolicy
-from elly.composition import build_application
+from elly.composition import Application, build_application
+from elly.config import load_config
 from elly.domain.enums import (
     ActionCategory,
     CloudMode,
@@ -119,14 +118,14 @@ class V3Phase0BoundaryTests(unittest.TestCase):
     def test_current_configuration_and_orchestration_owners_are_explicit(self) -> None:
         composition = (ROOT / "src/elly/composition.py").read_text(encoding="utf-8")
         config = (ROOT / "src/elly/config.py").read_text(encoding="utf-8")
-        conversation = (ROOT / "src/elly/application/conversation.py").read_text(encoding="utf-8")
+        conversation = ROOT / "src/elly/application/conversation.py"
 
         self.assertIn("from .config import Config, load_config", composition)
+        self.assertIn("AssistantRuntime", composition)
         self.assertIn("OllamaGeneralist", composition)
         self.assertIn("def load_config", config)
-        self.assertNotIn("OllamaGeneralist", conversation)
-        self.assertNotIn("OpenAI", conversation)
-        self.assertNotIn("SqliteSessionRepository", conversation)
+        self.assertFalse(conversation.exists())
+        self.assertNotIn("ConversationOrchestrator", composition)
 
     def test_generic_routing_has_no_provider_or_storage_boundary(self) -> None:
         for filename in ("routing.py", "catalog_routing.py"):
@@ -253,18 +252,17 @@ class V3Phase0PersistenceTests(unittest.TestCase):
             self.assertIs(historical.route_summary, Route.REGISTERED_CAPABILITY)
             self.assertEqual("security_review", historical.capability_id)
 
-            orchestrator = ConversationOrchestrator(
+            application = Application(
+                config=load_config(None),
                 clock=FixedClock(UTC),
+                generalist=FakeGeneralist(),
                 repository=repository,
                 audit=StructuredAuditLog(repository=repository),
-                context_window=10,
-                local_conversation=LocalConversationUseCase(
-                    generalist=FakeGeneralist(),
-                    model_id="fake-generalist-v1",
-                    max_output_tokens=64,
-                ),
             )
-            outcome = orchestrator.handle(_task_request("v6-fixture-session", "v3-phase0-new"))
+            self.addCleanup(application.close)
+            outcome = application.runtime.handle(
+                _task_request("v6-fixture-session", "v3-phase0-new")
+            )
 
             self.assertIs(outcome.result.task_status, TaskStatus.COMPLETED)
             self.assertIs(outcome.result.route_summary, Route.LOCAL_CONVERSATION)
@@ -286,19 +284,16 @@ class V3Phase0PersistenceTests(unittest.TestCase):
                 UTC,
             )
         )
-        orchestrator = ConversationOrchestrator(
+        application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC),
+            generalist=FakeGeneralist(),
             repository=repository,
             audit=StructuredAuditLog(repository=repository),
-            context_window=10,
-            local_conversation=LocalConversationUseCase(
-                generalist=FakeGeneralist(),
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
+        self.addCleanup(application.close)
 
-        outcome = orchestrator.handle(
+        outcome = application.runtime.handle(
             _task_request("v3-phase0-no-store", "v3-phase0-no-store-request")
         )
         loaded = repository.get_task_result("task-v3-phase0-no-store-request")
@@ -339,26 +334,25 @@ class V3Phase0CancellationTests(unittest.TestCase):
                 self.cancelled.set()
 
         provider = BlockingGeneralist()
-        orchestrator = ConversationOrchestrator(
+        application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC),
+            generalist=provider,
             repository=repository,
             audit=StructuredAuditLog(repository=repository),
-            context_window=10,
-            local_conversation=LocalConversationUseCase(
-                generalist=provider,
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
+        self.addCleanup(application.close)
         outcomes = []
         worker = threading.Thread(
             target=lambda: outcomes.append(
-                orchestrator.handle(_task_request("v3-phase0-cancel", "v3-phase0-cancel-request"))
+                application.runtime.handle(
+                    _task_request("v3-phase0-cancel", "v3-phase0-cancel-request")
+                )
             )
         )
         worker.start()
         self.assertTrue(provider.started.wait(timeout=1))
-        self.assertTrue(orchestrator.cancel_task("task-v3-phase0-cancel-request"))
+        self.assertTrue(application.runtime.cancel_task("task-v3-phase0-cancel-request"))
         worker.join(timeout=2)
 
         self.assertFalse(worker.is_alive())

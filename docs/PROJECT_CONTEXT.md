@@ -4,8 +4,8 @@
 **Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
 **Generated:** 2026-08-18
 **Branch:** `main`
-**Commit represented:** `b0a33d881a78d27219fd40724efcb01abb3f9a6c` (clean Revised Phase 9 commit)
-**Working tree:** contains the Revised Phase 10 configuration-canonicalization and internal-compatibility implementation, focused coverage, and documentation; inspect `git status` before handoff.
+**Commit represented:** `6a294645a94eadc3458b6801e13849475195c270` (Revised Phase 10 baseline)
+**Working tree:** contains the uncommitted Revised Phase 11 canonical-test consolidation, legacy conversation retirement, and repository-hygiene changes; inspect `git status` before handoff.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -172,9 +172,10 @@ normal lifecycle owner. `LOCAL_SYNTHESIS` execution is retained for persisted
 plan compatibility, while synthesis-named repository methods remain the
 intentional stored-record/response-composition persistence boundary. Current
 planning uses post-aggregation response composition; the obsolete model-
-generating synthesis modules are no longer present. The direct
-`ConversationOrchestrator` module is isolated for historical routing callers and
-tests and is not used by composition or the public API.
+generating synthesis modules are no longer present. The legacy
+`ConversationOrchestrator` module was deleted after repository-wide caller
+analysis found no supported production or public Python contract; historical
+routing documentation remains unchanged.
 
 Revised Phase 8 decomposes the SQLite implementation behind the stable
 `elly.adapters.sqlite_repository.SqliteSessionRepository` import path. The
@@ -225,9 +226,23 @@ process-level wiring/operations container, and the public API calls
 schema 7/V1–V7, old plans/results, `LOCAL_SYNTHESIS`, and `synthesis_results`
 remain compatible. Normal new execution has one response-composition path and
 does not invoke legacy synthesis generation or `ConversationOrchestrator`.
-The unrestricted deterministic gate for the current implementation passed 497
-tests; compileall and `git diff --check` passed. Ruff and MyPy were not
-installed in this environment.
+The unrestricted deterministic gate for the Phase 10 baseline passed 497 tests;
+compileall and `git diff --check` passed. Ruff and MyPy were not installed in
+that Phase 10 environment; Revised Phase 11 closed that verification
+precondition with a clean Ruff/MyPy gate before test consolidation.
+
+**Revised Phase 11 — Canonical Test Architecture and Repository Hygiene:** the
+current working tree migrates all direct legacy conversation test callers to
+`AssistantRuntime`, deletes `src/elly/application/conversation.py`, and records
+the complete pre-cleanup inventory and required behavior matrix in
+`docs/refactor/PHASE11_TEST_INVENTORY.md`, with final deletion/rename evidence
+in `docs/refactor/PHASE11_CONSOLIDATION_MATRIX.md`. Historical tests are retained where
+they protect public, security, concurrency, recovery, or persisted-data
+compatibility; duplicate specialist-result assertions were moved into the
+current response-composition owner, and persisted `LOCAL_SYNTHESIS` coverage was
+renamed to its compatibility purpose. Tracked `src/elly.egg-info` metadata is
+removed and generated egg-info is ignored. The implementation remains
+uncommitted at this handoff.
 
 Consent/action continuation across process restart is not supported: task and plan
 records are durable, but authorization-ID mappings and retained request context are
@@ -326,7 +341,7 @@ Trust boundaries are CLI input, model/provider output, hosted cloud, citation UR
 | `GeneralistPort` | bounded text generation/health | Ollama, fake | typed failures; output untrusted | AI-001/API-001 | [generalist.py](../src/elly/ports/generalist.py) |
 | `WebResearchProvider` | bounded search/citations | OpenAI, fixture | no citations is failure | API-003/004 | [web_research.py](../src/elly/ports/web_research.py) |
 | `SpecialistProviderPort` | structured execution | OpenAI, fake | no tools; strict result | API-002/AI-007/008 | [specialist.py](../src/elly/ports/specialist.py) |
-| `TaskRequest` | request boundary | orchestrator | nonempty IDs/text, UTC, modes | FR-001/AI-002 | [models.py](../src/elly/domain/models.py) |
+| `TaskRequest` | request boundary | `AssistantRuntime` | nonempty IDs/text, UTC, modes | FR-001/AI-002 | [models.py](../src/elly/domain/models.py) |
 | `TaskResult` | execution/epistemic/validation axes | composers/rendering | no fabricated success | AI-010/011/012 | [models.py](../src/elly/domain/models.py) |
 | `EvidenceObject`, `ClaimSupport` | provenance/support | research/rendering | metadata is not claim proof | DATA-003 | [models.py](../src/elly/domain/models.py) |
 | `SessionRepositoryPort` | state, messages, profile, source/audit | SQLite | transaction and no-store boundary | DATA/OPS | [repository.py](../src/elly/ports/repository.py) |
@@ -529,7 +544,7 @@ Unittest covers deterministic unit/contract/integration/security behavior; it do
 8. [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md), [M7_RELEASE_CHECKLIST.md](v1/M7_RELEASE_CHECKLIST.md), [M7_THRESHOLD_REVIEW.md](v1/M7_THRESHOLD_REVIEW.md), [M7_UAT_RECORD.md](v1/M7_UAT_RECORD.md) — V1 evidence and release state.
 9. [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md) — reasons for reopened V1 milestones and later-iteration boundaries.
 10. [IMPLEMENTATION_GUIDE.md](v1/IMPLEMENTATION_GUIDE.md) — V1 runtime walkthrough.
-10. [__main__.py](../src/elly/__main__.py), [composition.py](../src/elly/composition.py), [conversation.py](../src/elly/application/conversation.py) — entry and orchestration.
+10. [__main__.py](../src/elly/__main__.py), [composition.py](../src/elly/composition.py), [runtime.py](../src/elly/application/runtime.py) — entry and canonical request lifecycle.
 11. [models.py](../src/elly/domain/models.py), [ports](../src/elly/ports/), [adapters](../src/elly/adapters/) — contracts and providers.
 12. [privacy.py](../src/elly/privacy.py), [guardrails](../src/elly/guardrails/), [sqlite_repository.py](../src/elly/adapters/sqlite_repository.py) — security, limits, state.
 14. [tests](../tests/) and [run_release_gate.py](../scripts/run_release_gate.py) — executable evidence.
@@ -539,7 +554,7 @@ Unittest covers deterministic unit/contract/integration/security behavior; it do
 ```text
 src/elly/__main__.py          entry point
 src/elly/presentation/        CLI, validation, rendering
-src/elly/application/         conversation/research/specialist workflows
+src/elly/application/         runtime, planning, execution, and capability workflows
 src/elly/application/runtime.py outer request/task lifecycle coordinator
 src/elly/domain/              contracts, enums, state, errors
 src/elly/ports/               provider/storage/audit/clock contracts

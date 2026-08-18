@@ -1,18 +1,16 @@
-"""Context builder (AI-006, initial) — DESIGN §5.6.
+"""Context builder (AI-006) — DESIGN §5.6.
 
 Responsibility: select the smallest sufficient recent context for a model call and
 emit an auditable ContextManifest describing what was included/excluded and why.
 
-M1 scope (PAIR work — implemented here as a simple, reviewable baseline):
+Current bounded policy:
 - Include up to `window` most-recent messages plus the current user text (P0/P1).
 - Reserve output tokens before packing.
 - Exclude older messages with reason "budget".
-There is NO evidence/RAG ranking here — that is P2+ and lands in M4. Secrets/
-profile handling arrive in M5/M6.
+There is no evidence/RAG ranking here; research capabilities own evidence policy.
+Profile handling is supplied by the application context boundary.
 
-OWNER REVIEW: this is the "context builder + manifest" pair item in the M1 plan.
 The token estimate is a deliberately crude word-count proxy; refining the budget
-policy is a good place to extend once real limits are set (OQ-05/M0).
 
 Non-responsibilities: does not call the model, does not persist anything.
 """

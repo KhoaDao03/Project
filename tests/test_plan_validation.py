@@ -1,4 +1,4 @@
-"""Pure V3 Phase 3 plan construction, DAG, and redundancy tests."""
+"""Execution-plan construction, limits, and DAG validation tests."""
 
 from __future__ import annotations
 

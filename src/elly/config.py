@@ -268,8 +268,8 @@ _DEFAULTS: dict[str, object] = {
     "max_provider_calls": 3,
     "max_retries": 1,
     "tool_timeout_seconds": 60.0,
-    # Supports the required research -> specialist -> local synthesis critical
-    # path at the default 60-second per-step ceiling.
+    # Supports the bounded research -> specialist -> finalization path at the
+    # default 60-second per-step ceiling.
     "total_timeout_seconds": 180.0,
     "max_concurrency": 2,
     "max_queue_size": 1,

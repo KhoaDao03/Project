@@ -19,7 +19,7 @@ from elly.ports.local_response_composer import (
     ResponseCompositionDraft,
     ResponseSection,
 )
-from tests.test_v3_phase6_aggregation import _envelope, _plan, _step
+from tests.test_execution_aggregation import _envelope, _plan, _step
 
 UTC = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
 

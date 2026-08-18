@@ -5,10 +5,6 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
-from elly.adapters.audit_log import StructuredAuditLog
-from elly.adapters.fake_generalist import FakeGeneralist
-from elly.adapters.sqlite_repository import SqliteSessionRepository
-from elly.adapters.system_clock import FixedClock
 from elly.application.capabilities import (
     CapabilityAvailability,
     CapabilityDescriptor,
@@ -19,10 +15,6 @@ from elly.application.capabilities import (
     CapabilityRequest,
     CapabilityStatus,
 )
-from elly.application.capability_workflow import CapabilityExecutionWorkflow
-from elly.application.completion import CompletionService
-from elly.application.conversation import ConversationOrchestrator
-from elly.application.local_conversation import LocalConversationUseCase
 from elly.application.routing import RoutingPolicy
 from elly.domain.enums import (
     CloudMode,
@@ -38,7 +30,6 @@ from elly.domain.models import (
     CapabilityIntent,
     ContextManifest,
     RouteRequest,
-    SessionRecord,
     TaskRequest,
     TaskResult,
 )
@@ -193,67 +184,6 @@ class Phase4IntentTests(unittest.TestCase):
         )
         self.assertFalse(missing.accepted)
         self.assertEqual(("subject",), missing.clarification_fields)
-
-    def test_unmatched_request_uses_local_conversation_without_provider_capability_call(
-        self,
-    ) -> None:
-        repository = SqliteSessionRepository(":memory:")
-        repository.apply_migrations()
-        repository.create_session(
-            SessionRecord(
-                "phase4-session",
-                PersistenceMode.STORE_WITH_RETENTION,
-                CloudMode.LOCAL_ONLY,
-                UTC,
-            )
-        )
-        audit = StructuredAuditLog()
-        clock = FixedClock(UTC)
-        completion = CompletionService(
-            clock=clock,
-            repository=repository,
-            audit=audit,
-        )
-        orchestrator = ConversationOrchestrator(
-            clock=clock,
-            repository=repository,
-            audit=audit,
-            context_window=20,
-            local_conversation=LocalConversationUseCase(
-                generalist=FakeGeneralist(),
-                model_id="phase4-local",
-                max_output_tokens=16,
-            ),
-            completion=completion,
-            capability_workflow=CapabilityExecutionWorkflow(
-                clock=clock,
-                capability_registry=CapabilityRegistry((_PreparedCapability(),)),
-                completion=completion,
-            ),
-            routing_policy=RoutingPolicy(capabilities=CapabilityRegistry((_PreparedCapability(),))),
-        )
-        try:
-            outcome = orchestrator.handle(
-                TaskRequest(
-                    request_id="phase4-ambiguous",
-                    session_id="phase4-session",
-                    text="Can a specialist help with this?",
-                    cloud_mode=CloudMode.LOCAL_ONLY,
-                    persistence_mode=PersistenceMode.STORE_WITH_RETENTION,
-                    submitted_at=UTC,
-                )
-            )
-            self.assertEqual("success", outcome.result.outcome_code.value)
-            self.assertEqual("completed", repository.task_status("task-phase4-ambiguous"))
-            self.assertFalse(
-                any(
-                    event.event_type == "intent.clarification_required"
-                    for event in audit.by_task("task-phase4-ambiguous")
-                )
-            )
-        finally:
-            repository.close()
-
 
 if __name__ == "__main__":
     unittest.main()

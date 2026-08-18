@@ -954,10 +954,10 @@ Public V2 API
 its request delegates and `orchestrator`, `plan_executor`, and
 `plan_orchestrator` attributes are retired. `PlanExecutor`, `PlanRunResult`,
 `PlanOrchestrator`, and `PlanExecutionResult.results` are no longer internal
-compatibility exports. The direct `ConversationOrchestrator` module is isolated
-for established legacy routing callers/tests and is not constructed by the
-composition root or public API; its retirement condition is migration of those
-callers with equivalent routing, cancellation, privacy, and persistence tests.
+compatibility exports. The direct `ConversationOrchestrator` module was deleted
+in Revised Phase 11 after all repository callers migrated to the canonical
+runtime or lower-level capability contracts. Historical routing/data
+compatibility remains at its explicit DTO and persistence boundaries.
 
 The obsolete model-generating V3 synthesis modules are removed from the active
 codebase. Normal plans use response composition. Persisted `LOCAL_SYNTHESIS`

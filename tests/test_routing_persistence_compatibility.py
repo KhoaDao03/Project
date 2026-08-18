@@ -1,4 +1,4 @@
-"""V2.5 Phase 5 generic-route and additive persistence coverage."""
+"""Generic-route and additive routing-persistence compatibility coverage."""
 
 from __future__ import annotations
 

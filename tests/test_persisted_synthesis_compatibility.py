@@ -21,12 +21,12 @@ from elly.application.capabilities import (
 from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.plan_builder import PlanBuilder
-from elly.application.task_execution import PlanExecutionRequest, TaskExecutionService
 from elly.application.routing_contracts import (
     CapabilityKind,
     CapabilityRoutingDescriptor,
     OperationIntentContract,
 )
+from elly.application.task_execution import PlanExecutionRequest, TaskExecutionService
 from elly.domain.enums import (
     ActionCategory,
     CloudMode,

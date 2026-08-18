@@ -1,19 +1,19 @@
 """FakeGeneralist — DETERMINISTIC FAKE generalist adapter (test support).
 
 ⚠️ THIS IS A TEST/DEVELOPMENT FAKE, NOT A PRODUCTION CAPABILITY. It does no
-inference and no network I/O. It exists so the M1 walking skeleton can exercise
-the full path (CLI -> orchestrator -> port -> storage/audit) without depending on
-Ollama. The real Ollama adapter implements the same
+inference and no network I/O. It exercises the full path (CLI -> runtime ->
+capability -> port -> storage/audit) without depending on Ollama. The real
+Ollama adapter implements the same
 `GeneralistPort` and replace this via the composition root + config.
 
 Determinism: given the same GeneralistRequest, `generate` returns the same
 GeneralistResponse (no randomness, no clock use, no hidden mutable global state).
 
 Failure injection: construct with a `FailureMode` to make `generate` deterministically
-raise a typed provider error or return malformed output, so the orchestrator's
-failure mapping (FR-006/NFR-002) is testable before any real provider exists.
+raise a typed provider error or return malformed output, so failure mapping
+(FR-006/NFR-002) is testable before any real provider exists.
 
-Security: returns plain text only, treated by the orchestrator as an untrusted
+Security: returns plain text only, treated by the local capability as an untrusted
 PROPOSAL (SEC-003/SEC-005). Holds no secrets.
 
 Related: AI-001 (interface only; capability is fake), API-001, NFR-002, NFR-006.
@@ -83,7 +83,7 @@ class FakeGeneralist:
         if self._failure is FailureMode.PERMANENT:
             raise PermanentProviderError("fake permanent failure")
         if self._failure is FailureMode.MALFORMED:
-            # Empty output violates the contract; orchestrator must reject it.
+            # Empty output violates the contract; the capability must reject it.
             raise MalformedResultError("fake produced empty output")
 
         # Deterministic, obviously-synthetic reply. Echoes a bounded slice of the

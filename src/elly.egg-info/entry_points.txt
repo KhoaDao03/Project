@@ -1,2 +1,0 @@
-[console_scripts]
-elly = elly.__main__:main

@@ -1,4 +1,4 @@
-"""M6 acceptance tests: confirmed memory, durable trace, retention, backup."""
+"""Confirmed memory, durable trace, retention, and backup controls."""
 
 import unittest
 from datetime import datetime, timedelta, timezone

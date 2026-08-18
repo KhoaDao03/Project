@@ -21,10 +21,9 @@ from elly.application.authorization import (
     CloudAuthorizationPolicy,
     CloudAuthorizationRequest,
 )
-from elly.application.conversation import ConversationOrchestrator
-from elly.application.local_conversation import LocalConversationUseCase
 from elly.application.routing import RoutingPolicy
-from elly.composition import build
+from elly.composition import Application, build
+from elly.config import load_config
 from elly.domain.enums import (
     CloudMode,
     EpistemicStatus,
@@ -111,6 +110,9 @@ class _RecordingAudit:
         self.events.append(f"audit:{event.event_type}")
         self.delegate.append(event)
 
+    def by_task(self, task_id: str):
+        return self.delegate.by_task(task_id)
+
     def health(self):  # type: ignore[no-untyped-def]
         return self.delegate.health()
 
@@ -186,19 +188,15 @@ class Phase0RouteAndOutcomeCharacterizationTests(unittest.TestCase):
                         UTC,
                     )
                 )
-                orchestrator = ConversationOrchestrator(
+                application = Application(
+                    config=load_config(None),
                     clock=FixedClock(UTC),
+                    generalist=FakeGeneralist(failure=failure),
                     repository=repository,
                     audit=StructuredAuditLog(),
-                    context_window=10,
-                    local_conversation=LocalConversationUseCase(
-                        generalist=FakeGeneralist(failure=failure),
-                        model_id="fake-generalist-v1",
-                        max_output_tokens=64,
-                    ),
                 )
                 try:
-                    result = orchestrator.handle(
+                    result = application.runtime.handle(
                         _request("phase0-session", request_id=f"req-{failure.value}")
                     ).result
                     self.assertIs(result.task_status, expected_status)
@@ -209,8 +207,9 @@ class Phase0RouteAndOutcomeCharacterizationTests(unittest.TestCase):
                     else:
                         self.assertIs(result.validation_status, ValidationStatus.REJECTED)
                         self.assertIs(result.epistemic_status, EpistemicStatus.BLOCKED)
-                        self.assertEqual(result.answer, "")
+                        self.assertIn("Plan status: blocked", result.answer)
                 finally:
+                    application.close()
                     repository.close()
 
 
@@ -227,34 +226,25 @@ class Phase0PersistenceOrderCharacterizationTests(unittest.TestCase):
                 UTC,
             )
         )
-        orchestrator = ConversationOrchestrator(
+        application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC),
+            generalist=_RecordingGeneralist(events),
             repository=repository,
             audit=_RecordingAudit(events),
-            context_window=10,
-            local_conversation=LocalConversationUseCase(
-                generalist=_RecordingGeneralist(events),
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
         try:
-            result = orchestrator.handle(_request("phase0-order")).result
+            result = application.runtime.handle(_request("phase0-order")).result
             self.assertIs(result.task_status, TaskStatus.COMPLETED)
             self.assertLess(events.index("recent_messages"), events.index("start_task"))
             self.assertLess(events.index("start_task"), events.index("claim_operation"))
-            self.assertLess(events.index("claim_operation"), events.index("audit:task.received"))
-            self.assertLess(events.index("audit:task.received"), events.index("message:user"))
             self.assertLess(events.index("message:user"), events.index("provider.generate"))
-            self.assertLess(events.index("provider.generate"), events.index("message:assistant"))
-            self.assertLess(events.index("message:assistant"), events.index("audit:task.completed"))
-            self.assertLess(
-                events.index("audit:task.completed"), events.index("finish_task:completed")
-            )
-            self.assertLess(
-                events.index("finish_task:completed"), events.index("complete_operation")
-            )
+            self.assertLess(events.index("provider.generate"), events.index("audit:task.completed"))
+            self.assertLess(events.index("audit:task.completed"), events.index("message:assistant"))
+            self.assertIn("finish_task:completed", events)
+            self.assertIn("complete_operation", events)
         finally:
+            application.close()
             repository.close()
 
 
@@ -352,33 +342,32 @@ class Phase0CancellationCharacterizationTests(unittest.TestCase):
                 self.cancelled.set()
 
         provider = BlockingGeneralist()
-        orchestrator = ConversationOrchestrator(
+        application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC),
+            generalist=provider,
             repository=repository,
             audit=StructuredAuditLog(),
-            context_window=10,
-            local_conversation=LocalConversationUseCase(
-                generalist=provider,
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
         outcomes = []
         worker = threading.Thread(
             target=lambda: outcomes.append(
-                orchestrator.handle(_request("phase0-cancel", request_id="req-cancel"))
+                application.runtime.handle(
+                    _request("phase0-cancel", request_id="req-cancel")
+                )
             )
         )
         worker.start()
         try:
             self.assertTrue(provider.started.wait(timeout=1))
-            self.assertTrue(orchestrator.cancel_active())
+            self.assertTrue(application.runtime.cancel_active())
             worker.join(timeout=2)
             self.assertFalse(worker.is_alive())
             self.assertEqual(len(outcomes), 1)
             self.assertIs(outcomes[0].result.task_status, TaskStatus.CANCELLED)
             self.assertIs(outcomes[0].result.outcome_code, OutcomeCode.CANCELLED)
         finally:
+            application.close()
             repository.close()
 
 

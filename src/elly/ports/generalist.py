@@ -15,7 +15,8 @@ Contract:
 - inputs: GeneralistRequest (bounded prompt + model_id + max_output_tokens).
 - outputs: GeneralistResponse (normalized text + usage). Text is UNTRUSTED
   model output and must be treated as a proposal, never an instruction
-  (SEC-003/SEC-005). Validation is the orchestrator's job, not the adapter's.
+  (SEC-003/SEC-005). Validation is the application capability's job, not the
+  adapter's.
 - failures: typed EllyError subclasses only (TransientProviderError,
   PermanentProviderError, MalformedResultError). Provider-specific exceptions
   must NOT cross this boundary.

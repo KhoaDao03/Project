@@ -6,9 +6,8 @@ add any.
 
 Contract:
 - append: store one AuditEvent. Audit-write failure must be surfaced, not
-  swallowed (DATA-004): raise StorageFailureError. In later milestones a failed
-  audit write blocks high-impact actions; M1 has none, but the surface is fixed
-  here so that rule has somewhere to attach.
+  swallowed (DATA-004): raise StorageFailureError. High-impact workflows may
+  fail closed when their audit boundary is unavailable.
 - by_task: return events for a task_id in chronological order (UC-11 initial).
 
 Related: DATA-004, SEC-007, OPS-001.

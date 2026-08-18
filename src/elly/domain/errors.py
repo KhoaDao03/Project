@@ -1,7 +1,7 @@
 """Explicit domain errors for Elly (DESIGN §6.8 error taxonomy).
 
 Responsibility: give every failure a typed class carrying an `ErrorClass`, so the
-orchestrator and audit layer map failures deterministically instead of leaking
+application runtime and audit boundaries map failures deterministically instead of leaking
 provider-specific exceptions upward (NFR-002, NFR-006).
 
 Security/privacy: error messages must be SAFE FOR DISPLAY/LOG — never include

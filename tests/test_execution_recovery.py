@@ -1,4 +1,4 @@
-"""Restart, exactly-once, and legacy-plan recovery tests for V3.5."""
+"""Restart, exactly-once, and legacy-plan execution recovery tests."""
 
 from __future__ import annotations
 
@@ -27,12 +27,12 @@ from elly.planning.contracts import (
     ProposedStep,
     StepState,
 )
-from tests.test_v3_phase7_synthesis import _Capability
+from tests.test_persisted_synthesis_compatibility import _Capability
 
 UTC = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
 
 
-class V35RecoveryTests(unittest.TestCase):
+class ExecutionRecoveryTests(unittest.TestCase):
     def _fixture(
         self,
         persistence_mode: PersistenceMode,

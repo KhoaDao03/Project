@@ -1,4 +1,4 @@
-"""Confirmed-profile and retention services (M6, DATA-002/005)."""
+"""Confirmed-profile and retention services (DATA-002/005)."""
 
 from __future__ import annotations
 

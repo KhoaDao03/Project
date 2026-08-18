@@ -251,7 +251,7 @@ _CASES = (
         "Correct/delete profile, then run no-store.",
         "correction used; deletion and no-store honored",
         "deterministic",
-        "tests.test_m6_data_controls",
+        "tests.test_data_controls",
     ),
     (
         "030",

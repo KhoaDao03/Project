@@ -1,4 +1,4 @@
-"""Phase 2 proposal contracts, planner adapters, and safe interpretation."""
+"""Planning contracts, catalog validation, and deterministic fallback behavior."""
 
 from __future__ import annotations
 

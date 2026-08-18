@@ -1,4 +1,4 @@
-"""V3 Phase 3 schema-v7 and atomic validated-plan persistence tests."""
+"""Schema-v7 and atomic validated-plan persistence tests."""
 
 from __future__ import annotations
 

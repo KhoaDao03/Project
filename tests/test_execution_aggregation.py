@@ -1,4 +1,4 @@
-"""V3 Phase 6 status aggregation and deterministic finalization tests."""
+"""Execution truth aggregation and finalization tests."""
 
 from __future__ import annotations
 

@@ -1,14 +1,14 @@
-"""Response rendering (UX-001 initial) — DESIGN §6.1 response layout.
+"""Response rendering (UX-001) — DESIGN §6.1 response layout.
 
-Renders the compact regions that apply in M1:
+Renders the compact regions for one application task result:
   1. Outcome (answer or direct status first)
   2. Evidence state (Known/Inferred/Unknown/Blocked) when material
-  3. Route (local in M1)
+  3. Route
   4. Sources (validated provenance for research)
   5. Limit/failure/next step (only when present, separated from facts)
 
-Never renders chain-of-thought. Sources are always empty here because M1 has no
-retrieval; the region is intentionally omitted rather than faked.
+Never renders chain-of-thought. Sources are rendered only when validated
+provenance is present.
 """
 
 from __future__ import annotations

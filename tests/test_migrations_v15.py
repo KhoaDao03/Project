@@ -12,8 +12,8 @@ from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_generalist import FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
-from elly.application.conversation import ConversationOrchestrator
-from elly.application.local_conversation import LocalConversationUseCase
+from elly.composition import Application
+from elly.config import load_config
 from elly.domain.enums import CloudMode, PersistenceMode, TaskStatus
 from elly.domain.errors import StorageFailureError
 from elly.domain.models import Message, TaskRequest
@@ -65,19 +65,16 @@ class V15MigrationTests(unittest.TestCase):
 
     def test_complete_new_task_runs_on_the_migrated_database(self) -> None:
         self.repository.apply_migrations()
-        orchestrator = ConversationOrchestrator(
+        application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC, step_seconds=1),
+            generalist=FakeGeneralist(),
             repository=self.repository,
             audit=StructuredAuditLog(repository=self.repository),
-            context_window=20,
-            local_conversation=LocalConversationUseCase(
-                generalist=FakeGeneralist(),
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
+        self.addCleanup(application.close)
 
-        outcome = orchestrator.handle(
+        outcome = application.runtime.handle(
             TaskRequest(
                 request_id="migrated-request",
                 session_id="legacy-session",

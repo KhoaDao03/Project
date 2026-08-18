@@ -1,18 +1,17 @@
 # Elly Research Assistant — project configuration
 #
-# Version 1 local prototype configuration.
-# Status: M0–M2 closed; M3–M6 reopened by independent verification; M7 open.
+# Runtime dependencies are intentionally stdlib-only. The application runs on
+# Python 3.11+ with optional provider integrations configured at the composition
+# boundary.
 #
-# RUNTIME DEPENDENCIES: none. The M1 skeleton runs on the Python 3.11+ standard
+# RUNTIME DEPENDENCIES: none. The application runs on the Python 3.11+ standard
 # library only (dataclasses, sqlite3, tomllib, logging, argparse, unicodedata).
-# This is deliberate: it keeps the skeleton offline, reviewable, and free of the
-# supply-chain surface that SEC-004/SEC-007 care about. Real providers (Ollama,
-# OpenAI, Brave) and their SDKs arrive in later milestones (M2/M4/M5), not here.
+# This keeps the core offline, reviewable, and free of unnecessary supply-chain
+# surface. Provider adapters remain optional runtime integrations.
 #
 # DEV dependencies are OPTIONAL. Tests are written with the stdlib `unittest`
-# framework and run with zero installs:  PYTHONPATH=src python -m unittest
-# The [dev] extra only pins the formatter/linter/type-checker/pytest that the
-# team may choose to install later; nothing in M1 requires them.
+# framework and run with zero installs: `PYTHONPATH=src python -m unittest`.
+# The [dev] extra pins optional linting, type-checking, and test tooling.
 
 [project]
 name = "elly"

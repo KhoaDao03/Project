@@ -732,7 +732,8 @@ class GeneralistResponse:
     """Normalized generalist output (DESIGN §6.7).
 
     `text` is untrusted model output treated as a PROPOSAL, never an instruction
-    (SEC-003/SEC-005). Validation happens in the orchestrator, not here.
+    (SEC-003/SEC-005). Validation happens at the local conversation capability
+    boundary, not here.
     """
 
     text: str
@@ -750,7 +751,7 @@ class HealthReport:
 
 @dataclass(frozen=True, slots=True)
 class ConversationOutcome:
-    """What the orchestrator returns to the presentation layer.
+    """What the application runtime returns to the presentation layer.
 
     Bundles the user-facing `result` with the `manifest` used, so the CLI can
     render the response and (later) traces without reaching into internals.

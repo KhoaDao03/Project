@@ -1,9 +1,7 @@
-"""Dependency wiring + structural smoke path (M1).
+"""Dependency wiring and canonical runtime smoke tests.
 
-Proves the architecture CONNECTS end-to-end EXCEPT the orchestrator's `handle`,
-which is the owner exercise. This is deliberately NOT a full-conversation test —
-it verifies structural readiness (composition, ports, adapters, persistence,
-audit) so a green run here does not imply the milestone's behavior is complete.
+Proves the composition boundary, ports, adapters, persistence, audit, and the
+canonical runtime path without reaching into provider or repository internals.
 """
 
 from __future__ import annotations
@@ -50,9 +48,9 @@ class CompositionTests(unittest.TestCase):
         got = self.app.repository.get_session(rec.session_id)
         self.assertIsNotNone(got)
 
-    def test_structural_smoke_path_without_orchestrator(self) -> None:
-        # CLI -> orchestrator is exercised elsewhere; here we prove the lower
-        # boundary composes: model port -> repository -> audit.
+    def test_structural_smoke_path_without_bypassing_runtime(self) -> None:
+        # The full request path is covered below; this checks the lower port
+        # boundary without pretending direct adapter use is a user request.
         session = self.app.runtime.new_session()
         response = self.app.generalist.generate(
             GeneralistRequest(

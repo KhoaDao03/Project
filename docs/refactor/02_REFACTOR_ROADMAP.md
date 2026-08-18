@@ -776,10 +776,10 @@ The obsolete model-generating V3 synthesis stack is removed. Normal new plans
 use response composition. `LOCAL_SYNTHESIS`, old finalization values,
 `task_execution/legacy.py`, `synthesis_results`, old plan/result decoding, and
 schema 7 remain as isolated persisted-data compatibility. The direct
-`ConversationOrchestrator` boundary remains isolated for established legacy
-routing callers and tests only; it is not constructed by composition or the
-public V2 path. Its retirement requires those direct callers to migrate while
-retaining equivalent routing, privacy, cancellation, and persistence coverage.
+`ConversationOrchestrator` boundary was retired in Revised Phase 11 after all
+direct callers migrated while retaining equivalent routing, privacy,
+cancellation, and persistence coverage. Historical route/data compatibility is
+now isolated in its explicit compatibility modules.
 
 ## Acceptance criteria
 
@@ -814,6 +814,21 @@ Keep behavior safety while reducing milestone-era architectural fossilization.
 - Test intent is easier to understand.
 - Generated artifacts are not committed.
 - Static/test suite passes.
+
+## Revised Phase 11 final state
+
+The final consolidation preserves the modular-monolith runtime graph above and
+does not add a second request architecture. The pre-cleanup 66-file/497-case
+test inventory and required behavior matrix are recorded in
+`PHASE11_TEST_INVENTORY.md`; the final deletion/rename evidence and actual
+current owners are in `PHASE11_CONSOLIDATION_MATRIX.md`. Direct legacy
+conversation tests now exercise
+`AssistantRuntime` or the appropriate lower-level contract; no normal test or
+production import requires `ConversationOrchestrator`, and
+`src/elly/application/conversation.py` is deleted. Historical tests remain
+where they protect public API, routing, configuration-input, security, recovery,
+or persisted-data compatibility. Generated `src/elly.egg-info` metadata is not
+tracked and `*.egg-info/` is ignored.
 
 ---
 

@@ -1,4 +1,4 @@
-"""Phase 9 tests for the composed public planner-to-plan workflow."""
+"""Public planning/execution and mixed-capability end-to-end tests."""
 
 from __future__ import annotations
 

@@ -21,7 +21,12 @@ from ..domain.enums import (
     RouteReasonCode,
     TaskStatus,
 )
-from ..domain.errors import ConfigInvalidError, InputInvalidError, PermissionDeniedError
+from ..domain.errors import (
+    ConfigInvalidError,
+    InputInvalidError,
+    PermissionDeniedError,
+    StorageFailureError,
+)
 from ..domain.models import (
     ActionConfirmationProposal,
     ContextManifest,
@@ -44,7 +49,6 @@ from .context_builder import ContextBuilder
 from .execution import CancellationToken
 from .local_conversation import LocalConversationUseCase
 from .local_conversation_capability import LOCAL_CONVERSATION_CAPABILITY_ID
-from .task_execution import PlanExecutionResult, TaskExecutionService
 from .planning_service import PlanningService
 from .recovery import RecoveryReport
 from .replan import ReplanRequest, ReplanResult, ReplanTrigger
@@ -52,10 +56,12 @@ from .response_composer import (
     compose_blocked,
     compose_cancelled,
     compose_clarification,
+    compose_partial,
     compose_possible_duplicate,
 )
 from .response_pipeline import ResponseCompositionService
 from .route_compatibility import enrich_task_result, inherit_route_metadata
+from .task_execution import PlanExecutionResult, TaskExecutionService
 
 
 @dataclass(frozen=True, slots=True)
@@ -809,29 +815,57 @@ class AssistantRuntime:
         if final_result is None:
             raise ConfigInvalidError("plan execution returned no final result")
         final_result = enrich_task_result(final_result, route_decision)
-        self._completion.record_sources(plan.task_id, final_result.citations)
-        self._completion.record_provenance(plan.task_id, final_result.provenance)
-        self._completion.persist_result(final_result)
-        self._completion.finish_task(plan.task_id, final_result.task_status)
-        if len(plan.steps) == 1:
-            self._emit_single_step_completion(
-                request,
-                plan,
-                execution,
-                final_result,
-                route_decision,
-                request_guardrails,
-                started,
-            )
         assistant_message: Message | None = None
-        if (
-            final_result.answer_retained
-            and final_result.answer
-            and final_result.task_status.value
-            not in {"awaiting_consent", "awaiting_confirmation"}
-        ):
-            assistant_message = Message("assistant", final_result.answer, self._clock.now())
-            self._repository.append_message(request.session_id, assistant_message)
+        try:
+            self._completion.record_sources(plan.task_id, final_result.citations)
+            self._completion.record_provenance(plan.task_id, final_result.provenance)
+            self._completion.persist_result(final_result)
+            self._completion.finish_task(plan.task_id, final_result.task_status)
+            if len(plan.steps) == 1:
+                self._emit_single_step_completion(
+                    request,
+                    plan,
+                    execution,
+                    final_result,
+                    route_decision,
+                    request_guardrails,
+                    started,
+                )
+            if (
+                final_result.answer_retained
+                and final_result.answer
+                and final_result.task_status.value
+                not in {"awaiting_consent", "awaiting_confirmation"}
+            ):
+                assistant_message = Message("assistant", final_result.answer, self._clock.now())
+                self._repository.append_message(request.session_id, assistant_message)
+        except StorageFailureError as exc:
+            # A generated result is useful work, but durable completion is not
+            # success until its result, task state, audit, and assistant turn
+            # have crossed their storage boundaries. Preserve the answer as
+            # partial work and never let a persistence failure escape as a
+            # second provider execution.
+            partial_result = enrich_task_result(
+                compose_partial(
+                    task_id=plan.task_id,
+                    reason=exc.summary,
+                    route=route_decision.generic_route,
+                    answer=final_result.answer,
+                    partial_work=(
+                        "generated output was produced but durable completion was incomplete",
+                    ),
+                ),
+                route_decision,
+            )
+            try:
+                self._completion.persist_result(partial_result)
+            except StorageFailureError:
+                pass
+            self._completion.best_effort_finish_task(plan.task_id, TaskStatus.PARTIAL)
+            return ConversationOutcome(
+                result=partial_result,
+                manifest=context_manifest,
+            )
         self._update_continuation(plan, request, execution)
         return ConversationOutcome(
             result=final_result,

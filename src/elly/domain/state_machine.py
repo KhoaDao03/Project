@@ -1,12 +1,11 @@
 """Task lifecycle state machine (DESIGN §5.4).
 
 Responsibility: define and enforce the ALLOWED task-status transitions so the
-orchestrator cannot drive a task into an illegal state (e.g., completed -> running
+runtime cannot drive a task into an illegal state (e.g., completed -> running
 or a false success after failure). This is deterministic domain logic with no I/O.
 
-Status: Implemented + Tested. Used by `AssistantRuntime` and the isolated legacy
-direct-conversation boundary to guard every task transition. Later milestones
-drive the remaining edges (AWAITING_CONSENT, CANCELLED, and PARTIAL).
+Status: Implemented + Tested. Used by `AssistantRuntime` to guard every task
+transition, including authorization pauses, cancellation, and partial completion.
 
 Requirements: AI-002 (deterministic control), FR-006 (no false success).
 Non-responsibilities: does not perform the work of a state; only guards moves.

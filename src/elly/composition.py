@@ -5,7 +5,7 @@ the FakeGeneralist for the real Ollama adapter in M2 happens HERE plus config â€
 nothing in domain/application changes (NFR-006). Keeping wiring isolated is what
 makes the ports/adapters boundary real rather than decorative.
 
-Status: Implemented + Tested (M6).
+Status: Implemented + Tested.
 """
 
 from __future__ import annotations
@@ -58,6 +58,7 @@ from .application.routing import RoutingPolicy
 from .application.runtime import AssistantRuntime
 from .application.specialist_policy import SpecialistExecutionPolicy
 from .application.specialists import SpecialistWorkflow
+from .application.task_execution import TaskExecutionService
 from .config import Config, load_config
 from .domain.enums import HealthState
 from .domain.errors import ConfigInvalidError
@@ -65,7 +66,6 @@ from .domain.models import HealthReport
 from .guardrails import BoundedTaskExecutor, GuardrailController, LimitPolicy
 from .memory import ProfileService
 from .operations import BackupService
-from .application.task_execution import TaskExecutionService
 from .ports.audit import AuditPort
 from .ports.clock import ClockPort
 from .ports.generalist import GeneralistPort
@@ -117,7 +117,7 @@ def _specialist_capability_handlers(
 
 
 class Application:
-    """Wired M6 application container.
+    """Wired application container.
 
     Holds the composed collaborators and exposes the small surface the CLI needs.
     Construct via `build()`.
@@ -387,7 +387,7 @@ class Application:
         return reports
 
 def build(toml_path: str | None = None) -> Application:
-    """Build the fully-wired M6 application.
+    """Build the fully-wired application.
 
     Real vs fake in this wiring:
       - generalist: configured fake or real localhost Ollama.

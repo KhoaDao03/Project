@@ -1,4 +1,4 @@
-"""V3 Phase 8 bounded replanning, recovery, and provenance tests."""
+"""Bounded replanning, recovery, and provenance tests."""
 
 from __future__ import annotations
 

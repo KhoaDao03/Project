@@ -1,4 +1,4 @@
-"""M6 backup/restore and retention operations (OPS-004)."""
+"""Backup, restore, and retention operations (OPS-004)."""
 
 from __future__ import annotations
 

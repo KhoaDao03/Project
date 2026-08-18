@@ -150,7 +150,7 @@ class CapabilityExecutionWorkflow:
         self._response_pipeline = response_pipeline
 
     def execute(self, command: CapabilityExecutionCommand) -> CapabilityExecutionOutcome:
-        """Execute one selected optional capability without invoking the orchestrator."""
+        """Execute one selected optional capability behind the runtime boundary."""
         if is_local_route(command.route):
             raise ConfigInvalidError("local conversation must not use capability workflow")
 

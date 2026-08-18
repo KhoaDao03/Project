@@ -1,4 +1,4 @@
-"""Phase 6 modular command registry and public-API CLI tests."""
+"""Command registry and public-API CLI contract tests."""
 
 from __future__ import annotations
 

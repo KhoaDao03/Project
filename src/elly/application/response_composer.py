@@ -1,15 +1,16 @@
-"""Response composer (PAIR work, M1) — builds the user-facing TaskResult.
+"""Result composition helpers for the response pipeline.
 
 Responsibility: turn validated generalist text + routing/status decisions into the
-frozen three-axis TaskResult (DESIGN §6.2). Keeps composition in one tested place
-so the orchestrator stays focused on sequencing.
+frozen three-axis TaskResult (DESIGN §6.2). The surrounding
+``ResponseCompositionService`` owns presentation policy while these helpers keep
+typed result construction deterministic.
 
-M1 mapping rules:
+Mapping rules:
 - successful validated local answer -> task COMPLETED, epistemic KNOWN? No:
-  a bare conversational reply is not an evidence-backed factual claim, so M1 maps
-  ordinary local answers to epistemic INFERRED (reasoned, not evidence-verified),
-  reserving KNOWN for evidence-backed research (M4). This is a conservative,
-  reviewable default — OWNER REVIEW invited (see M1 status doc).
+  a bare conversational reply is not an evidence-backed factual claim, so local
+  ordinary answers map to epistemic INFERRED (reasoned, not evidence-verified),
+  reserving KNOWN for evidence-backed research. This is a conservative,
+  reviewable default.
 - rejected/empty output -> task BLOCKED, epistemic BLOCKED, validation REJECTED.
 
 Non-responsibilities: does not persist, does not decide routing.

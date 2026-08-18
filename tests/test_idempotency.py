@@ -9,8 +9,8 @@ from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_generalist import FailureMode, FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
-from elly.application.conversation import ConversationOrchestrator
-from elly.application.local_conversation import LocalConversationUseCase
+from elly.composition import Application
+from elly.config import load_config
 from elly.domain.enums import CloudMode, OutcomeCode, PersistenceMode, TaskStatus
 from elly.domain.errors import StorageFailureError
 from elly.domain.models import SessionRecord, TaskRequest
@@ -91,23 +91,20 @@ class OperationLedgerTests(unittest.TestCase):
         self.assertTrue(uncertain_retry.possible_duplicate)
 
 
-class OrchestratorIdempotencyTests(unittest.TestCase):
+class RuntimeIdempotencyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repo = SqliteSessionRepository(":memory:")
         self.repo.apply_migrations()
         self.session_id = _session(self.repo)
-        self.provider = FakeGeneralist()
-        self.orchestrator = ConversationOrchestrator(
+        self.provider = _CountingGeneralist()
+        self.application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC, step_seconds=1),
+            generalist=self.provider,
             repository=self.repo,
             audit=StructuredAuditLog(),
-            context_window=20,
-            local_conversation=LocalConversationUseCase(
-                generalist=self.provider,
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
+        self.addCleanup(self.application.close)
 
     def tearDown(self) -> None:
         self.repo.close()
@@ -123,8 +120,8 @@ class OrchestratorIdempotencyTests(unittest.TestCase):
         )
 
     def test_repeated_completed_request_does_not_append_or_generate_again(self) -> None:
-        first = self.orchestrator.handle(self._request())
-        second = self.orchestrator.handle(self._request())
+        first = self.application.runtime.handle(self._request())
+        second = self.application.runtime.handle(self._request())
 
         self.assertIs(first.result.task_status, TaskStatus.COMPLETED)
         self.assertIs(second.result.task_status, TaskStatus.PARTIAL)
@@ -132,23 +129,22 @@ class OrchestratorIdempotencyTests(unittest.TestCase):
         messages = self.repo.recent_messages(self.session_id, 10)
         self.assertEqual([message.role for message in messages], ["user", "assistant"])
 
-    def test_failed_request_can_retry_without_duplicate_user_turn(self) -> None:
-        failing = ConversationOrchestrator(
+    def test_uncertain_failed_request_is_not_redispatched_or_duplicated(self) -> None:
+        failing = Application(
+            config=load_config(None),
             clock=FixedClock(UTC, step_seconds=1),
+            generalist=FakeGeneralist(failure=FailureMode.TRANSIENT),
             repository=self.repo,
             audit=StructuredAuditLog(),
-            context_window=20,
-            local_conversation=LocalConversationUseCase(
-                generalist=FakeGeneralist(failure=FailureMode.TRANSIENT),
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
-        first = failing.handle(self._request())
+        self.addCleanup(failing.close)
+        first = failing.runtime.handle(self._request())
         self.assertIs(first.result.task_status, TaskStatus.BLOCKED)
 
-        second = self.orchestrator.handle(self._request())
-        self.assertIs(second.result.task_status, TaskStatus.COMPLETED)
+        second = self.application.runtime.handle(self._request())
+        self.assertIs(second.result.task_status, TaskStatus.PARTIAL)
+        self.assertIs(second.result.outcome_code, OutcomeCode.POSSIBLE_DUPLICATE_EXECUTION)
+        self.assertEqual(0, self.provider.calls)
         messages = self.repo.recent_messages(self.session_id, 10)
         self.assertEqual([message.role for message in messages], ["user", "assistant"])
 
@@ -173,8 +169,12 @@ class _FailingCompletionAudit:
 
 
 class _FailingInitialAudit(_FailingCompletionAudit):
+    def __init__(self) -> None:
+        self._failed = False
+
     def append(self, event):  # type: ignore[no-untyped-def]
-        if event.event_type == "task.received":
+        if not self._failed:
+            self._failed = True
             raise StorageFailureError("initial audit unavailable")
 
 
@@ -203,20 +203,16 @@ class ReliabilityOutcomeTests(unittest.TestCase):
         repo = _FailingAssistantRepository(":memory:")
         repo.apply_migrations()
         session_id = _session(repo)
-        self.addCleanup(repo.close)
-        orchestrator = ConversationOrchestrator(
+        application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC),
+            generalist=FakeGeneralist(),
             repository=repo,
             audit=StructuredAuditLog(),
-            context_window=20,
-            local_conversation=LocalConversationUseCase(
-                generalist=FakeGeneralist(),
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
+        self.addCleanup(application.close)
 
-        outcome = orchestrator.handle(self._request(session_id))
+        outcome = application.runtime.handle(self._request(session_id))
 
         self.assertIs(outcome.result.task_status, TaskStatus.PARTIAL)
         self.assertIs(outcome.result.outcome_code, OutcomeCode.PARTIAL)
@@ -227,44 +223,36 @@ class ReliabilityOutcomeTests(unittest.TestCase):
         repo = SqliteSessionRepository(":memory:")
         repo.apply_migrations()
         session_id = _session(repo)
-        self.addCleanup(repo.close)
         provider = _CountingGeneralist()
-        orchestrator = ConversationOrchestrator(
+        application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC),
+            generalist=provider,
             repository=repo,
             audit=_FailingInitialAudit(),
-            context_window=20,
-            local_conversation=LocalConversationUseCase(
-                generalist=provider,
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
+        self.addCleanup(application.close)
 
-        outcome = orchestrator.handle(self._request(session_id))
+        outcome = application.runtime.handle(self._request(session_id))
 
         self.assertIs(outcome.result.task_status, TaskStatus.FAILED)
-        self.assertIn("initial audit unavailable", outcome.result.failures)
+        self.assertTrue(any("initial audit unavailable" in failure for failure in outcome.result.failures))
         self.assertEqual(0, provider.calls)
 
     def test_completion_audit_failure_is_partial_not_success(self) -> None:
         repo = SqliteSessionRepository(":memory:")
         repo.apply_migrations()
         session_id = _session(repo)
-        self.addCleanup(repo.close)
-        orchestrator = ConversationOrchestrator(
+        application = Application(
+            config=load_config(None),
             clock=FixedClock(UTC),
+            generalist=FakeGeneralist(),
             repository=repo,
             audit=_FailingCompletionAudit(),
-            context_window=20,
-            local_conversation=LocalConversationUseCase(
-                generalist=FakeGeneralist(),
-                model_id="fake-generalist-v1",
-                max_output_tokens=64,
-            ),
         )
+        self.addCleanup(application.close)
 
-        outcome = orchestrator.handle(self._request(session_id))
+        outcome = application.runtime.handle(self._request(session_id))
 
         self.assertIs(outcome.result.task_status, TaskStatus.PARTIAL)
         self.assertIs(outcome.result.outcome_code, OutcomeCode.PARTIAL)

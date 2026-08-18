@@ -1,6 +1,7 @@
 # Elly — ignore local runtime artifacts and secrets.
 __pycache__/
 *.pyc
+*.egg-info/
 .venv/
 venv/
 .mypy_cache/

@@ -1,4 +1,4 @@
-"""Phase 1 public application API contract tests."""
+"""Public application API contract tests."""
 
 from __future__ import annotations
 

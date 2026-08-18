@@ -208,6 +208,16 @@ class CapabilityWorkflowFailureMatrixTests(unittest.TestCase):
             )
         )
 
+    def test_registered_capability_completes_through_the_workflow_contract(self) -> None:
+        capability = _MatrixCapability()
+
+        outcome = self._execute(capability)
+
+        self.assertEqual(TaskStatus.COMPLETED, outcome.result.task_status)
+        self.assertEqual("matrix output", outcome.result.answer)
+        self.assertEqual(1, capability.calls)
+        self.assertEqual("completed", outcome.result.task_status.value)
+
     def test_lookup_unavailable_and_invalid_input_fail_without_execution(self) -> None:
         for capability, expected in (
             (None, OutcomeCode.UNAVAILABLE),

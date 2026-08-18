@@ -1,4 +1,4 @@
-"""V3 Phase 5 execution-time authorization and typed-result contracts."""
+"""Execution-time authorization, typed results, and boundary tests."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.execution import CancellationToken
 from elly.application.plan_builder import PlanBuilder
-from elly.application.task_execution import PlanExecutionRequest, TaskExecutionService
 from elly.application.routing_contracts import (
     CapabilityKind,
     CapabilityRoutingDescriptor,
@@ -39,6 +38,7 @@ from elly.application.step_results import (
     StepUsage,
     normalize_step_result,
 )
+from elly.application.task_execution import PlanExecutionRequest, TaskExecutionService
 from elly.domain.enums import (
     ActionCategory,
     ActionDataSensitivity,

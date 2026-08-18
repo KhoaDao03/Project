@@ -1,4 +1,4 @@
-"""V3 Phase 4 bounded plan scheduler tests."""
+"""Bounded plan scheduling, execution, and concurrency tests."""
 
 from __future__ import annotations
 
@@ -23,12 +23,12 @@ from elly.application.capability_workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
 from elly.application.execution import CancellationToken
 from elly.application.plan_builder import PlanBuilder
-from elly.application.task_execution import TaskExecutionService
 from elly.application.routing_contracts import (
     CapabilityKind,
     CapabilityRoutingDescriptor,
     OperationIntentContract,
 )
+from elly.application.task_execution import TaskExecutionService
 from elly.domain.enums import (
     ActionCategory,
     CloudMode,
@@ -254,11 +254,11 @@ class Phase4SchedulerTests(unittest.TestCase):
 
     def test_one_step_execution_persists_transitions_and_uses_registry(self) -> None:
         handler = _Capability("alpha", events=self.events)
-        orchestrator, registry = self._runtime((handler,))
+        executor, registry = self._runtime((handler,))
         plan = self._plan(registry, _proposal((_step("alpha-step", "alpha"),)), "task-phase4-one")
         self.repository.save_plan(plan, at=UTC)
 
-        result = self._execute(plan, orchestrator)
+        result = self._execute(plan, executor)
 
         self.assertEqual(TaskStatus.COMPLETED, result.step_results["alpha-step"].task_status)
         self.assertEqual("completed", result.status.value)
@@ -276,7 +276,7 @@ class Phase4SchedulerTests(unittest.TestCase):
     def test_dependencies_execute_in_order_and_receive_declared_result(self) -> None:
         first = _Capability("first", events=self.events)
         second = _Capability("second", events=self.events)
-        orchestrator, registry = self._runtime((first, second))
+        executor, registry = self._runtime((first, second))
         plan = self._plan(
             registry,
             _proposal(
@@ -294,7 +294,7 @@ class Phase4SchedulerTests(unittest.TestCase):
         )
         self.repository.save_plan(plan, at=UTC)
 
-        result = self._execute(plan, orchestrator, "phase4-linear")
+        result = self._execute(plan, executor, "phase4-linear")
 
         self.assertEqual(TaskStatus.COMPLETED, result.status)
         self.assertEqual(
@@ -304,7 +304,7 @@ class Phase4SchedulerTests(unittest.TestCase):
     def test_independent_ready_steps_are_bounded_and_parallel(self) -> None:
         left = _Capability("left", delay=0.12, events=self.events)
         right = _Capability("right", delay=0.12, events=self.events)
-        orchestrator, registry = self._runtime((left, right))
+        executor, registry = self._runtime((left, right))
         plan = self._plan(
             registry,
             _proposal((_step("left-step", "left"), _step("right-step", "right"))),
@@ -314,7 +314,7 @@ class Phase4SchedulerTests(unittest.TestCase):
         self.repository.save_plan(plan, at=UTC)
         started = time.monotonic()
 
-        result = self._execute(plan, orchestrator, "phase4-parallel")
+        result = self._execute(plan, executor, "phase4-parallel")
 
         self.assertEqual(TaskStatus.COMPLETED, result.status)
         self.assertLess(time.monotonic() - started, 0.22)
@@ -323,7 +323,7 @@ class Phase4SchedulerTests(unittest.TestCase):
     def test_mandatory_failure_skips_descendant(self) -> None:
         failing = _Capability("failing", failure=True, events=self.events)
         dependent = _Capability("dependent", events=self.events)
-        orchestrator, registry = self._runtime((failing, dependent))
+        executor, registry = self._runtime((failing, dependent))
         plan = self._plan(
             registry,
             _proposal(
@@ -341,7 +341,7 @@ class Phase4SchedulerTests(unittest.TestCase):
         )
         self.repository.save_plan(plan, at=UTC)
 
-        result = self._execute(plan, orchestrator, "phase4-failure")
+        result = self._execute(plan, executor, "phase4-failure")
 
         self.assertEqual("failed", result.status.value)
         stored = self.repository.get_plan(plan.plan_id)
@@ -351,7 +351,7 @@ class Phase4SchedulerTests(unittest.TestCase):
     def test_optional_failure_keeps_independent_work_and_returns_partial(self) -> None:
         optional = _Capability("optional", failure=True, events=self.events)
         required = _Capability("required", events=self.events)
-        orchestrator, registry = self._runtime((optional, required))
+        executor, registry = self._runtime((optional, required))
         plan = self._plan(
             registry,
             _proposal(
@@ -365,7 +365,7 @@ class Phase4SchedulerTests(unittest.TestCase):
         )
         self.repository.save_plan(plan, at=UTC)
 
-        result = self._execute(plan, orchestrator, "phase4-optional")
+        result = self._execute(plan, executor, "phase4-optional")
 
         self.assertEqual("partial", result.status.value)
         self.assertEqual(TaskStatus.COMPLETED, result.step_results["required-step"].task_status)
@@ -374,7 +374,7 @@ class Phase4SchedulerTests(unittest.TestCase):
         started = threading.Event()
         running = _Capability("running", delay=1.0, events=self.events, started=started)
         queued = _Capability("queued", events=self.events)
-        orchestrator, registry = self._runtime((running, queued))
+        executor, registry = self._runtime((running, queued))
         plan = self._plan(
             registry,
             _proposal(
@@ -401,7 +401,7 @@ class Phase4SchedulerTests(unittest.TestCase):
 
         thread = threading.Thread(
             target=lambda: outcome.append(
-                self._execute(plan, orchestrator, "phase4-cancel", token)
+                self._execute(plan, executor, "phase4-cancel", token)
             ),
             daemon=True,
         )
@@ -417,7 +417,7 @@ class Phase4SchedulerTests(unittest.TestCase):
 
     def test_timeout_is_bounded_and_does_not_wait_for_a_late_worker(self) -> None:
         handler = _Capability("slow", delay=0.3, events=self.events)
-        orchestrator, registry = self._runtime((handler,))
+        executor, registry = self._runtime((handler,))
         plan = self._plan(
             registry,
             _proposal((_step("slow-step", "slow"),)),
@@ -430,7 +430,7 @@ class Phase4SchedulerTests(unittest.TestCase):
         self.repository.save_plan(plan, at=UTC)
         started = time.monotonic()
 
-        result = self._execute(plan, orchestrator, "phase4-timeout")
+        result = self._execute(plan, executor, "phase4-timeout")
 
         self.assertLess(time.monotonic() - started, 0.18)
         self.assertEqual("failed", result.status.value)
@@ -438,7 +438,7 @@ class Phase4SchedulerTests(unittest.TestCase):
 
     def test_external_authorization_denial_blocks_without_dispatch(self) -> None:
         handler = _Capability("cloud", external=True, events=self.events)
-        orchestrator, registry = self._runtime((handler,))
+        executor, registry = self._runtime((handler,))
         plan = self._plan(
             registry,
             _proposal((_step("cloud-step", "cloud"),)),
@@ -446,7 +446,7 @@ class Phase4SchedulerTests(unittest.TestCase):
         )
         self.repository.save_plan(plan, at=UTC)
 
-        result = self._execute(plan, orchestrator, "phase4-auth")
+        result = self._execute(plan, executor, "phase4-auth")
 
         self.assertEqual("blocked", result.status.value)
         self.assertEqual(StepState.BLOCKED, result.plan.steps[0].state)
