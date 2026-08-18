@@ -272,6 +272,9 @@ class TaskRequest:
     persistence_mode: PersistenceMode
     submitted_at: datetime
     approval_id: str | None = None
+    # Historical routing hints retained for compatibility callers. The
+    # canonical AssistantRuntime path deliberately does not forward these to
+    # PlanningService; they do not grant routing or execution authority.
     route_proposal: "RouteProposal | None" = None
     capability_intent: "CapabilityIntent | None" = None
     action_confirmation_id: str | None = None

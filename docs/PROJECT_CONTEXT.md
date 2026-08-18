@@ -4,8 +4,8 @@
 **Purpose:** reusable AI-agent and engineer handoff; this snapshot does not replace the specifications.
 **Generated:** 2026-08-17
 **Branch:** `main`
-**Commit represented:** `60c9285dcf3b9182c9ced0008873399f06d11f3c` plus the uncommitted Revised Phase 8 SQLite persistence decomposition and documentation
-**Working tree:** contains the Revised Phase 8 SQLite implementation, characterization test, and documentation; inspect `git status` before handoff.
+**Commit represented:** `bdcaa860f7f4f0c1c4cce019609d64e01bbdfe09` (clean Revised Phase 8 baseline) plus the Revised Phase 9 routing-contract implementation and documentation in the working tree
+**Working tree:** contains the Revised Phase 9 implementation, focused characterization coverage, and documentation; inspect `git status` before handoff.
 **Repository instructions:** no repository-level `AGENTS.md` or `CONTRIBUTING.md` was found.
 
 Important requirements and decisions must be checked against the authoritative files linked below. This document can become stale after repository changes.
@@ -146,7 +146,8 @@ legacy synthesis role and persisted finalization values remain readable only
 through documented migration behavior. See
 [`docs/v3.5/IMPLEMENTATION.md`](v3.5/IMPLEMENTATION.md).
 
-**Architecture consolidation status:** Phases 0–6, Revised Phase 7, and Revised Phase 8 are
+**Architecture consolidation status:** Phases 0–6, Revised Phase 7, Revised Phase 8, and
+Revised Phase 9 are
 implemented. The canonical
 request path is Public API → `AssistantRuntime` → `PlanningService` → validated
 `ExecutionPlan` → `TaskExecutionService` → application-owned `CapabilityRegistry`
@@ -186,8 +187,30 @@ preserved.
 **Revised Phase 8 verification:** 497 tests passed in the final deterministic
 run; Ruff, strict MyPy across 142 source files, compilation, and
 `git diff --check` passed. The localhost Ollama test server was run outside
-the restricted sandbox as part of that gate; no Phase 9 routing/configuration
-cleanup was performed.
+the restricted sandbox as part of that gate. Revised Phase 9 preserves this
+baseline and adds canonical routing-contract isolation; no Phase 10
+configuration cleanup was performed.
+
+**Revised Phase 9 — Canonical Planning Contracts and Legacy Routing Compatibility
+Isolation:** the canonical planning path is `RouteRequest` → capability-neutral
+`TaskIntent` → untrusted `CapabilitySelectionProposal` (where needed) →
+untrusted `ExecutionProposal` → validated `ExecutionPlan`. `RoutingPolicy`
+retains a compatibility-facing `decide()` wrapper, but one
+`_decide_canonical()` method owns catalog/local decision behavior. The existing
+`route_compatibility.py` boundary translates legacy `RouteProposal` and
+`CapabilityIntent` inputs once; it does not execute capabilities or become a
+second router. `TaskRequest.route_proposal` and
+`TaskRequest.capability_intent` remain typed public/internal compatibility
+fields, while canonical `AssistantRuntime` deliberately does not forward them
+to `PlanningService`, so client hints do not gain new authority. New results
+use generic routes plus `capability_id` and `operation`; historical route enum
+values remain readable. Routing contract versions and SQLite schema version 7
+are unchanged.
+
+**Revised Phase 9 verification:** 500 deterministic tests passed; the focused
+routing/planning/API/persistence characterization set passed; Ruff, strict
+MyPy across 142 source files, compileall, and `git diff --check` passed. The
+localhost Ollama characterization was run outside the restricted sandbox.
 
 Consent/action continuation across process restart is not supported: task and plan
 records are durable, but authorization-ID mappings and retained request context are

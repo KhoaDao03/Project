@@ -838,6 +838,86 @@ Avoid simultaneously maintaining several semantically equivalent objects such as
 
 Compatibility aliases should have explicit retirement conditions.
 
+## 7.1 Revised Phase 9 — Canonical Planning Contracts and Legacy Routing Compatibility Isolation
+
+The implemented planning vocabulary is intentionally layered rather than
+collapsed:
+
+```text
+RouteRequest
+    |
+    v
+TaskIntent                         capability-neutral meaning
+    |
+    v
+CapabilitySelectionProposal        capability-specific, untrusted proposal
+    |
+    v
+ExecutionProposal                  untrusted proposed work graph
+    |
+    v  application validation
+ExecutionPlan                       executable graph
+```
+
+The normal request lifecycle remains:
+
+```text
+Public API / CLI
+ -> AssistantRuntime
+ -> PlanningService
+ -> validated ExecutionPlan
+ -> TaskExecutionService / PlanRunner / StepRunner
+ -> CapabilityRegistry
+ -> StepResults
+ -> ResponseCompositionService
+ -> TaskResult
+```
+
+`PlanningService` is still the single application planning boundary. Its
+deterministic and local-LLM strategies may use different depths of the routing
+sequence, but both converge on the same validated plan contract. A route
+decision, route metadata, or selection proposal never directly dispatches a
+handler or provider.
+
+### Contract ownership and compatibility
+
+| Contract | Meaning/status | Translation or authority |
+|---|---|---|
+| `RouteRequest` | canonical bounded planning input | `AssistantRuntime` constructs it |
+| `TaskIntent` | canonical capability-neutral interpretation | catalog interpreter and planner validator |
+| `CapabilitySelectionProposal` | canonical capability-specific untrusted proposal | selector/planner output; live catalog validation |
+| `ExecutionProposal` | untrusted proposed work | `PlanInterpreter`; no executable objects |
+| `ExecutionPlan` | validated executable work | `PlanBuilder`/`PlanningService`; execution input |
+| `RouteProposal` / `RouteProposalInput` | historical public/internal compatibility | one-time boundary adapter, then live validation |
+| `CapabilityIntent` / `CapabilityIntentInput` | historical public routing hint plus internal handler preparation contract | selected hints adapt to selection; handler preparation remains typed separately |
+| `RouteDecision` | routing metadata | reason, identity, availability, and evidence only |
+| `TaskResult` routing fields | persisted/public diagnostic metadata | `route_compatibility.py` and SQLite codecs |
+
+The compatibility adapters are deliberately small and live in the existing
+`application/route_compatibility.py` boundary. Route proposal route/schema/
+capability checks remain in `RoutingPolicy` because they require a fresh
+registry. `RoutingPolicy.decide()` retains its old compatibility-facing
+arguments for established callers, translates them once, and delegates to one
+canonical `_decide_canonical(RouteRequest, *, task_intent, selection)` method.
+The canonical method contains the existing deterministic catalog algorithm and
+accepts no historical routing representations.
+
+`TaskRequest.route_proposal` and `TaskRequest.capability_intent` remain typed
+compatibility fields because public V2 DTOs and direct legacy orchestrator/test
+callers still construct them. The canonical `AssistantRuntime` deliberately
+does not forward them to `PlanningService`; client hints therefore cannot gain
+new routing or execution authority. Their eventual retirement requires all
+supported boundary callers to migrate and historical persistence/API reads to
+remain covered.
+
+New routing uses generic `LOCAL_CONVERSATION` or `REGISTERED_CAPABILITY` plus
+`capability_id` and `operation`. Historical `LOCAL_GENERALIST`,
+`WEB_RESEARCH`, `RESEARCH_SPECIALIST`, and `CODING_SPECIALIST` enum values are
+retained for old rows, views, audit records, and compatibility tests. Normal
+planning/execution does not use those historical values as capability identity.
+`ROUTING_CONTRACT_VERSION` remains `v2.5-routing-v1`, the legacy value remains
+`v2-legacy`, and SQLite schema version 7 is unchanged.
+
 ---
 
 # 8. Ownership rules

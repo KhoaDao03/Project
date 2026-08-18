@@ -204,6 +204,10 @@ class EllyApplication:
                 submitted_at=self._scope.clock.now(),
                 approval_id=request.approval_id,
                 action_confirmation_id=request.action_confirmation_id,
+                # These public V2 fields remain accepted and typed for
+                # compatibility. AssistantRuntime intentionally constructs its
+                # own bounded RouteRequest and does not treat client hints as
+                # canonical planning authority.
                 route_proposal=_route_proposal(request.route_proposal),
                 capability_intent=_capability_intent(request.capability_intent),
             )

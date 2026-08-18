@@ -11,6 +11,10 @@ from .catalog_routing import (
     CatalogIntentInterpreter,
     CatalogSelectionResult,
 )
+from .route_compatibility import (
+    legacy_capability_intent_to_selection,
+    legacy_route_proposal_to_selection,
+)
 from .routing_contracts import (
     CandidateMatch,
     CapabilitySelectionProposal,
@@ -83,7 +87,14 @@ class RoutingPolicy:
         task_intent: TaskIntent | None = None,
         selection: CapabilitySelectionProposal | None = None,
     ) -> RouteDecision:
-        """Interpret and validate one request against the live registry catalog."""
+        """Route one request through the canonical branch.
+
+        ``proposal`` and ``intent`` are retained only as compatibility inputs
+        for callers that have not moved to the typed planning contracts. They
+        are translated here, once, before the canonical decision method runs.
+        Canonical callers should provide only ``task_intent`` and/or
+        ``selection``.
+        """
         if isinstance(intent, TaskIntent):
             if task_intent is not None:
                 return self._catalog_rejected("DUPLICATE_TASK_INTENT", intent=task_intent)
@@ -104,26 +115,37 @@ class RoutingPolicy:
                     clarification_fields=("capability", "operation"),
                 )
             if intent.proposed_capability_id is None:
-                return self._local_default(operation=intent.operation, intent=intent)
-            selection = CapabilitySelectionProposal(
-                capability_id=intent.proposed_capability_id,
-                operation_id=intent.operation,
-                arguments=intent.arguments,
-                entities=intent.entities,
-                confidence=intent.confidence,
-                ambiguity=intent.ambiguity,
-                rationale_code=intent.rationale_code,
-            )
+                return self._legacy_local_default(operation=intent.operation, intent=intent)
+            selection = legacy_capability_intent_to_selection(intent)
             intent = None
 
         if proposal is not None:
             if selection is not None or task_intent is not None:
                 return self._catalog_rejected("DUPLICATE_SELECTION_INPUT")
-            proposal_selection = self._selection_from_route_proposal(request, proposal)
+            proposal_selection = self._translate_legacy_route_proposal(request, proposal)
             if isinstance(proposal_selection, RouteDecision):
                 return proposal_selection
             selection = proposal_selection
 
+        return self._decide_canonical(
+            request,
+            task_intent=task_intent,
+            selection=selection,
+        )
+
+    def _decide_canonical(
+        self,
+        request: RouteRequest,
+        *,
+        task_intent: TaskIntent | None = None,
+        selection: CapabilitySelectionProposal | None = None,
+    ) -> RouteDecision:
+        """Make the one canonical catalog/local routing decision.
+
+        The method intentionally accepts only the semantic interpretation and
+        the capability-specific proposal. Neither historical routing input can
+        enter this branch, and neither object grants execution authority.
+        """
         if selection is not None or task_intent is not None:
             catalog_decision = self._decide_from_catalog(
                 request,
@@ -138,9 +160,10 @@ class RoutingPolicy:
         catalog_decision = self._decide_from_catalog(request)
         return catalog_decision if catalog_decision is not None else self._local_default()
 
-    def _selection_from_route_proposal(
+    def _translate_legacy_route_proposal(
         self, request: RouteRequest, proposal: RouteProposal
     ) -> CapabilitySelectionProposal | RouteDecision:
+        """Validate one historical route hint before adapting it."""
         if proposal.route not in {None, Route.REGISTERED_CAPABILITY}:
             return self._catalog_rejected("LEGACY_ROUTE_UNSUPPORTED")
         if proposal.capability_id is None or self._capabilities is None:
@@ -163,19 +186,29 @@ class RoutingPolicy:
                 clarification_required=True,
                 clarification_fields=("operation",),
             )
-        return CapabilitySelectionProposal(
-            capability_id=proposal.capability_id,
+        return legacy_route_proposal_to_selection(
+            request,
+            proposal,
             operation_id=descriptor.operations[0],
-            arguments={"subject": request.text},
-            confidence=1.0,
-            ambiguity=IntentAmbiguity.CLEAR,
-            rationale_code="EXPLICIT_CAPABILITY_PROPOSAL",
         )
 
     @staticmethod
     def _local_default(
-        *, operation: str = "conversation.respond", intent: CapabilityIntent | None = None
+        *, operation: str = "conversation.respond", intent: TaskIntent | None = None
     ) -> RouteDecision:
+        return RouteDecision(
+            Route.LOCAL_CONVERSATION,
+            RouteReasonCode.LOCAL_DEFAULT,
+            operation=operation,
+            intent=intent,
+        )
+
+    @staticmethod
+    def _legacy_local_default(
+        *, operation: str, intent: CapabilityIntent
+    ) -> RouteDecision:
+        """Preserve the historical no-capability hint result at the boundary."""
+
         return RouteDecision(
             Route.LOCAL_CONVERSATION,
             RouteReasonCode.LOCAL_DEFAULT,

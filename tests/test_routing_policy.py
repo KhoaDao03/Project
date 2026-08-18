@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from elly.application.capabilities import (
@@ -15,6 +16,7 @@ from elly.application.capabilities import (
     CapabilityStatus,
 )
 from elly.application.routing import RoutingPolicy
+from elly.application.routing_contracts import TaskIntent
 from elly.domain.enums import CloudMode, IntentAmbiguity, Route, RouteReasonCode
 from elly.domain.models import CapabilityIntent, RouteProposal, RouteRequest
 
@@ -60,6 +62,54 @@ def _request(text: str, contextual_text: str | None = None) -> RouteRequest:
 
 
 class RoutingPolicyTests(unittest.TestCase):
+    def test_canonical_decision_branch_has_only_canonical_inputs(self) -> None:
+        parameters = tuple(inspect.signature(RoutingPolicy._decide_canonical).parameters)
+        self.assertEqual(
+            ("self", "request", "task_intent", "selection"),
+            parameters,
+        )
+
+    def test_legacy_capability_intent_is_translated_to_selection(self) -> None:
+        registry = CapabilityRegistry(
+            (_AvailableCapability("test_capability", Route.REGISTERED_CAPABILITY),)
+        )
+        decision = RoutingPolicy(capabilities=registry).decide(
+            _request("run the test capability"),
+            intent=CapabilityIntent(
+                proposed_capability_id="test_capability",
+                operation="test.execute",
+                arguments={"subject": "run the test capability"},
+                confidence=1.0,
+                ambiguity=IntentAmbiguity.CLEAR,
+                rationale_code="LEGACY_TEST_HINT",
+            ),
+        )
+
+        self.assertEqual(Route.REGISTERED_CAPABILITY, decision.route)
+        self.assertIsNotNone(decision.selection)
+        assert decision.selection is not None
+        self.assertEqual("test_capability", decision.selection.capability_id)
+        self.assertEqual("test.execute", decision.selection.operation_id)
+        self.assertIsInstance(decision.intent, TaskIntent)
+
+    def test_legacy_route_proposal_is_revalidated_before_canonical_decision(self) -> None:
+        registry = CapabilityRegistry(
+            (_AvailableCapability("test_capability", Route.REGISTERED_CAPABILITY),)
+        )
+        decision = RoutingPolicy(capabilities=registry).decide(
+            _request("run the test capability"),
+            proposal=RouteProposal(
+                route=Route.REGISTERED_CAPABILITY,
+                capability_id="test_capability",
+                request_schema="test_capability-v1",
+            ),
+        )
+
+        self.assertEqual(Route.REGISTERED_CAPABILITY, decision.route)
+        self.assertIsNotNone(decision.selection)
+        assert decision.selection is not None
+        self.assertEqual("test.execute", decision.selection.operation_id)
+
     def test_without_catalog_evidence_uses_generic_local_route(self) -> None:
         policy = RoutingPolicy()
         for text in (

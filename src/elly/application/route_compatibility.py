@@ -1,15 +1,76 @@
-"""Generic routing metadata plus read-only handling of historical route values."""
+"""Routing metadata and explicit adapters for historical routing inputs."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 
-from ..domain.enums import Route
-from ..domain.models import RouteDecision, TaskResult
-from .routing_contracts import CandidateMatch, FreshnessRequirement, TaskIntent
+from ..domain.enums import IntentAmbiguity, Route
+from ..domain.errors import InputInvalidError
+from ..domain.models import (
+    CapabilityIntent,
+    RouteDecision,
+    RouteProposal,
+    RouteRequest,
+    TaskResult,
+)
+from .routing_contracts import (
+    CandidateMatch,
+    CapabilitySelectionProposal,
+    FreshnessRequirement,
+    TaskIntent,
+)
 
 ROUTING_CONTRACT_VERSION = "v2.5-routing-v1"
 LEGACY_ROUTING_CONTRACT_VERSION = "v2-legacy"
+
+
+def legacy_capability_intent_to_selection(
+    intent: CapabilityIntent,
+) -> CapabilitySelectionProposal:
+    """Translate one historical capability hint into the canonical proposal.
+
+    This is deliberately a data-only adapter.  The resulting proposal remains
+    untrusted until ``RoutingPolicy`` validates it against the live catalog.
+    ``CapabilityIntent`` is also used by capability handlers as an internal
+    preparation contract, so this translation does not replace that type.
+    """
+
+    if intent.proposed_capability_id is None:
+        raise InputInvalidError("legacy capability intent must name a capability")
+    return CapabilitySelectionProposal(
+        capability_id=intent.proposed_capability_id,
+        operation_id=intent.operation,
+        arguments=intent.arguments,
+        entities=intent.entities,
+        confidence=intent.confidence,
+        ambiguity=intent.ambiguity,
+        rationale_code=intent.rationale_code,
+    )
+
+
+def legacy_route_proposal_to_selection(
+    request: RouteRequest,
+    proposal: RouteProposal,
+    *,
+    operation_id: str,
+) -> CapabilitySelectionProposal:
+    """Translate a validated historical route hint into a selection proposal.
+
+    Route/capability/schema validation belongs to the routing boundary because
+    it requires the live registry.  This helper only maps the already-validated
+    historical payload into the canonical, still-untrusted selection shape.
+    """
+
+    if proposal.capability_id is None:
+        raise InputInvalidError("legacy route proposal must name a capability")
+    return CapabilitySelectionProposal(
+        capability_id=proposal.capability_id,
+        operation_id=operation_id,
+        arguments={"subject": request.text},
+        confidence=1.0,
+        ambiguity=IntentAmbiguity.CLEAR,
+        rationale_code="EXPLICIT_CAPABILITY_PROPOSAL",
+    )
 
 
 def is_local_route(route: Route) -> bool:
@@ -107,4 +168,6 @@ __all__ = [
     "inherit_route_metadata",
     "is_generic_route",
     "is_local_route",
+    "legacy_capability_intent_to_selection",
+    "legacy_route_proposal_to_selection",
 ]

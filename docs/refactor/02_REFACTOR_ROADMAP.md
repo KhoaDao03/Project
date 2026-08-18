@@ -540,7 +540,7 @@ changing persistence behavior, schema, repository contracts, or transaction
 authority.
 
 **Status: COMPLETE.** Revised Phase 8 was implemented from the clean `main`
-baseline at commit `60c9285dcf3b9182c9ced0008873399f06d11f3c`. The public
+baseline at commit `bdcaa860f7f4f0c1c4cce019609d64e01bbdfe09`. The public
 `elly.adapters.sqlite_repository.SqliteSessionRepository` façade remains the
 only constructed repository and the only public SQLite repository type.
 The final deterministic gate runs 497 tests with Ruff, strict MyPy, compileall,
@@ -595,45 +595,134 @@ profile tombstones, and operation leases. Schema setup has one owner in
 
 ---
 
-# 13. Phase 9 — Consolidate routing and contract vocabulary
+# 13. Revised Phase 9 — Canonical Planning Contracts and Legacy Routing Compatibility Isolation
 
 ## Objective
 
-Remove duplicate representations accumulated across versions.
+Make the planning vocabulary explicit without changing the established planning,
+execution, safety, API, or SQLite behavior. This phase narrows the canonical
+routing decision surface and isolates historical routing inputs at compatibility
+boundaries; it is not a wholesale contract rename or deletion exercise.
 
-## Direction
+**Status: COMPLETE.** The implementation was verified from the clean Revised
+Phase 8 baseline at `bdcaa860f7f4f0c1c4cce019609d64e01bbdfe09`. The final gate
+passed 500 deterministic tests, Ruff, strict MyPy, compileall, and
+`git diff --check`. Changes remain uncommitted for review.
 
-Prefer a conceptual flow like:
+## Canonical pipeline
+
+The normal application path remains:
 
 ```text
-UserRequest
- -> TaskIntent
- -> ExecutionPlan / capability selections
- -> StepResult
+Public API / CLI
+ -> AssistantRuntime
+ -> PlanningService
+ -> ExecutionProposal (untrusted)
+ -> PlanBuilder / validation
+ -> ExecutionPlan (executable)
+ -> TaskExecutionService / PlanRunner / StepRunner
+ -> CapabilityRegistry
+ -> StepResults
+ -> ResponseCompositionService
  -> TaskResult
- -> ResponseCompositionInput
 ```
 
-## Work
+Within routing/planning, the canonical semantic sequence is:
 
-- inventory route proposal / capability intent / task intent / selection proposal types;
-- identify semantic duplicates;
-- select canonical types;
-- adapt at compatibility boundaries;
-- remove internal aliases once no longer needed.
+```text
+RouteRequest
+ -> TaskIntent (capability-neutral)
+ -> CapabilitySelectionProposal (capability-specific, untrusted)
+ -> ExecutionProposal (untrusted work graph)
+ -> ExecutionPlan (validated executable graph)
+```
 
-## Important
+Deterministic local requests may use a validated one-step shortcut, and local
+LLM planning may construct a multi-step proposal directly. Both paths converge
+on the same validated `ExecutionPlan`; routing metadata never executes work.
 
-Do this **after** the main execution architecture is stable.
+## Compatibility contract matrix
 
-Renaming contracts early creates large diffs with little immediate architectural value.
+| Contract | Phase 9 classification | Boundary/owner | Policy |
+|---|---|---|---|
+| `RouteRequest` | Canonical | `AssistantRuntime` → `PlanningService` | bounded input; no execution authority |
+| `TaskIntent` | Canonical | catalog interpreter/planner validator | capability-neutral interpretation |
+| `CapabilitySelectionProposal` | Canonical | catalog selector/planner validator | capability-specific, untrusted; live-catalog validation required |
+| `ExecutionProposal` | Canonical untrusted | planner/`PlanInterpreter` | proposed work only; no handlers/providers |
+| `ExecutionPlan` | Canonical executable | `PlanBuilder`/`PlanningService` | validated graph consumed by execution |
+| `RouteProposal` / `RouteProposalInput` | Public and internal compatibility | API DTO conversion and legacy `ConversationOrchestrator` boundary | translate once to a selection, then revalidate; never direct execution |
+| `CapabilityIntent` / `CapabilityIntentInput` | Public/internal compatibility | API DTO conversion, legacy routing boundary, and capability-handler preparation | do not rename to `TaskIntent`; selected legacy hints adapt to a selection |
+| `RouteDecision` | Canonical routing metadata with legacy readability | `RoutingPolicy`/completion | route/reason/evidence only; not executable work |
+| `TaskResult` routing fields | Persisted/public compatibility | `route_compatibility.py` and SQLite codecs | additive metadata; stored values unchanged |
+
+`CandidateMatch`, `OperationIntentContract`, `FreshnessRequirement`, and
+`FreshnessSupport` remain distinct typed contracts. Selection aliases remain
+only where existing callers require them and are not expanded into another
+routing engine.
+
+## RoutingPolicy boundary
+
+`RoutingPolicy.decide()` remains the compatibility-facing entry point for old
+callers, but it now translates `RouteProposal` and `CapabilityIntent` once and
+delegates to one `_decide_canonical(RouteRequest, *, task_intent, selection)`
+branch. Canonical callers use only `TaskIntent` and/or
+`CapabilitySelectionProposal`; the branch owns the existing deterministic
+catalog selection, live registry validation, availability, freshness, entity,
+operation, and action/effect checks.
+
+The pure data adapters live in `application/route_compatibility.py`. Route
+proposal route/schema/capability checks remain at the routing boundary because
+they require a fresh live registry snapshot. This preserves the rule:
+
+```text
+compatibility translates
+RoutingPolicy decides
+PlanningService plans
+TaskExecutionService executes
+```
+
+## Legacy fields and historical routes
+
+`TaskRequest.route_proposal` and `TaskRequest.capability_intent` remain typed
+compatibility state because public V2 DTOs and direct legacy orchestrator/tests
+still construct them. The canonical `AssistantRuntime` path intentionally
+builds `RouteRequest` from request text, bounded context, request ID, and session
+mode; it does not forward client routing hints into `PlanningService`. This
+prevents an ignored/deprecated hint from becoming new client-controlled
+execution authority. Direct legacy callers retain their characterized boundary
+behavior through `RoutingPolicy` translation and live catalog validation.
+
+New results use generic `Route.LOCAL_CONVERSATION` or
+`Route.REGISTERED_CAPABILITY` plus `capability_id` and `operation`. Historical
+`LOCAL_GENERALIST`, `WEB_RESEARCH`, `RESEARCH_SPECIALIST`, and
+`CODING_SPECIALIST` values remain readable for old API/audit/database records;
+normal planning and execution do not branch on them as capability identity.
+
+## Persistence and retirement conditions
+
+`ROUTING_CONTRACT_VERSION` remains `v2.5-routing-v1`, the legacy value remains
+`v2-legacy`, and SQLite schema version 7/V1–V7 decoding are unchanged. No new
+route enum values or schema migration are needed. `TaskResult` routing metadata
+continues to be diagnostic/persistence output rather than authority.
+
+The next compatibility-removal phase may retire the legacy routing fields and
+their public DTOs only after supported API consumers and direct legacy
+orchestrator callers have migrated, persisted historical rows remain readable,
+and equivalent boundary characterization coverage is retained. Phase 9 does
+not perform that removal, configuration cleanup, synthesis cleanup, old façade
+deletion, or test-suite consolidation.
 
 ## Acceptance criteria
 
-- Fewer semantically equivalent contract types.
-- Compatibility adaptation occurs at boundaries, not throughout the core.
-- No loss of type safety.
-- Full suite passes.
+- one canonical `RoutingPolicy` decision branch with materially fewer semantic
+  inputs than the compatibility façade;
+- `TaskIntent`, `CapabilitySelectionProposal`, `ExecutionProposal`, and
+  `ExecutionPlan` retain separate trust/meaning boundaries;
+- legacy route/capability inputs remain safe, explicit, and non-authoritative;
+- generic route plus capability identity is used for new results;
+- live catalog/provider-identifier/planner validation and DAG behavior remain;
+- public/API and SQLite compatibility remain unchanged;
+- the complete deterministic quality gate passes.
 
 ---
 
