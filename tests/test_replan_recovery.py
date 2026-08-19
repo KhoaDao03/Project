@@ -9,17 +9,17 @@ from datetime import datetime, timezone
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.api.application import _plan_trace_view, _plan_view
-from elly.application.plan_builder import PlanBuilder
-from elly.application.recovery import PlanRecovery
-from elly.application.replan import (
+from elly.application.plan_management.builder import PlanBuilder
+from elly.application.routing.contracts import (
+    CapabilityRoutingDescriptor,
+    OperationIntentContract,
+)
+from elly.application.task_execution.recovery import PlanRecovery
+from elly.application.task_execution.replan import (
     ReplanPolicy,
     ReplanRequest,
     ReplanService,
     ReplanTrigger,
-)
-from elly.application.routing_contracts import (
-    CapabilityRoutingDescriptor,
-    OperationIntentContract,
 )
 from elly.domain.enums import (
     ActionCategory,

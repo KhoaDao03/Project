@@ -8,27 +8,27 @@ from datetime import datetime, timezone
 from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
-from elly.application.authorization import (
+from elly.application.authorization.consent import (
     CloudAuthorizationPolicy,
     CloudAuthorizationRequest,
 )
-from elly.application.capabilities import CapabilityRegistry
-from elly.application.capability_handlers import (
+from elly.application.capabilities.handlers import (
     ResearchCapabilityHandler,
     SpecialistCapabilityHandler,
 )
-from elly.application.capability_workflow import (
+from elly.application.capabilities.registry import CapabilityRegistry
+from elly.application.capabilities.research import ResearchPipeline
+from elly.application.capabilities.specialists import SpecialistWorkflow
+from elly.application.capabilities.workflow import (
     CapabilityExecutionCommand,
     CapabilityExecutionWorkflow,
 )
 from elly.application.completion import CompletionService
-from elly.application.execution import CancellationToken
-from elly.application.research import ResearchPipeline
-from elly.application.specialist_policy import (
+from elly.application.plan_management.specialist_policy import (
     SpecialistExecutionPolicy,
     SpecialistPolicyRequest,
 )
-from elly.application.specialists import SpecialistWorkflow
+from elly.application.task_execution.cancellation import CancellationToken
 from elly.domain.enums import (
     CloudMode,
     PersistenceMode,

@@ -9,18 +9,18 @@ from dataclasses import dataclass, replace
 from threading import RLock
 from typing import cast
 
-from elly.application.capabilities import CapabilityKind, CapabilityRegistry
-from elly.application.capability_workflow import CapabilityExecutionWorkflow
-from elly.application.execution import CancellationToken
-from elly.application.plan_results import (
+from elly.application.capabilities.registry import CapabilityKind, CapabilityRegistry
+from elly.application.capabilities.workflow import CapabilityExecutionWorkflow
+from elly.application.response.composer import compose_blocked, compose_cancelled, compose_failed
+from elly.application.response.pipeline import ResponseCompositionService
+from elly.application.results.plan import (
     aggregate_plan_results,
     derive_plan_status,
 )
-from elly.application.plan_state import STEP_ELIGIBLE_STATES, STEP_TERMINAL_STATES
-from elly.application.recovery import PlanRecovery
-from elly.application.response_composer import compose_blocked, compose_cancelled, compose_failed
-from elly.application.response_pipeline import ResponseCompositionService
-from elly.application.step_results import StepResultEnvelope, normalize_step_result
+from elly.application.results.plan_state import STEP_ELIGIBLE_STATES, STEP_TERMINAL_STATES
+from elly.application.results.step import StepResultEnvelope, normalize_step_result
+from elly.application.task_execution.cancellation import CancellationToken
+from elly.application.task_execution.recovery import PlanRecovery
 from elly.domain.enums import ActionCategory, OutcomeCode, Route, TaskStatus
 from elly.domain.errors import ConfigInvalidError, ConflictError, InputInvalidError
 from elly.domain.models import (

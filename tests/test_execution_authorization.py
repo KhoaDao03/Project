@@ -9,9 +9,12 @@ from datetime import datetime, timedelta, timezone
 from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
-from elly.application.action_authorization import normalized_action_digest
-from elly.application.authorization import CloudAuthorizationPolicy, CloudAuthorizationRequest
-from elly.application.capabilities import (
+from elly.application.authorization.actions import normalized_action_digest
+from elly.application.authorization.consent import (
+    CloudAuthorizationPolicy,
+    CloudAuthorizationRequest,
+)
+from elly.application.capabilities.registry import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityExecution,
@@ -21,16 +24,10 @@ from elly.application.capabilities import (
     CapabilityRequest,
     CapabilityStatus,
 )
-from elly.application.capability_workflow import CapabilityExecutionWorkflow
+from elly.application.capabilities.workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
-from elly.application.execution import CancellationToken
-from elly.application.plan_builder import PlanBuilder
-from elly.application.routing_contracts import (
-    CapabilityKind,
-    CapabilityRoutingDescriptor,
-    OperationIntentContract,
-)
-from elly.application.step_results import (
+from elly.application.plan_management.builder import PlanBuilder
+from elly.application.results.step import (
     ActionExecutionReceipt,
     EvidenceStatus,
     StepClaim,
@@ -38,7 +35,14 @@ from elly.application.step_results import (
     StepUsage,
     normalize_step_result,
 )
-from elly.application.task_execution import PlanExecutionRequest, TaskExecutionService
+from elly.application.routing.contracts import (
+    CapabilityKind,
+    CapabilityRoutingDescriptor,
+    OperationIntentContract,
+)
+from elly.application.task_execution.cancellation import CancellationToken
+from elly.application.task_execution.contracts import PlanExecutionRequest
+from elly.application.task_execution.service import TaskExecutionService
 from elly.domain.enums import (
     ActionCategory,
     ActionDataSensitivity,

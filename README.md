@@ -352,7 +352,7 @@ while quality or owner-UAT gates remain pending.
 
 ```text
 src/elly/domain/          contracts, state, validation, context resolution
-src/elly/application/     conversation, research, specialist orchestration
+src/elly/application/     lifecycle, routing, planning, capabilities, execution, results, response
 src/elly/ports/           provider and persistence boundaries
 src/elly/adapters/        Ollama, OpenAI, SQLite, audit adapters
 src/elly/research/        freshness, citation validation, source selection
@@ -363,6 +363,9 @@ tests/                    deterministic stdlib unittest suite
 scripts/                  smoke, benchmark, and release-evidence helpers
 docs/                     requirements, design, plans, reports, and evidence
 ```
+
+See the [application package layout](docs/APPLICATION_PACKAGE_LAYOUT.md) for
+the current responsibility-based tree and canonical module entry points.
 
 Start with [MILESTONE_PLAN.md](docs/MILESTONE_PLAN.md) for the roadmap and
 [CONVERSATION_IMPROVEMENT_LOG.md](docs/CONVERSATION_IMPROVEMENT_LOG.md) for the

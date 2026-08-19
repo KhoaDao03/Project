@@ -7,10 +7,10 @@ import unittest
 from datetime import datetime, timezone
 
 from elly.adapters.http_document_retriever import HttpDocumentRetriever
-from elly.application.execution import CancellationToken
-from elly.application.research import ResearchPipeline
-from elly.application.specialist_policy import SpecialistPolicyRequest
-from elly.application.specialists import SpecialistWorkflow
+from elly.application.capabilities.research import ResearchPipeline
+from elly.application.capabilities.specialists import SpecialistWorkflow
+from elly.application.plan_management.specialist_policy import SpecialistPolicyRequest
+from elly.application.task_execution.cancellation import CancellationToken
 from elly.domain.enums import HealthState
 from elly.domain.errors import CancelledError, TransientProviderError
 from elly.domain.models import EvidenceObject, HealthReport

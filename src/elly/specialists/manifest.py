@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from ..application.routing_contracts import (
+from ..application.routing.contracts import (
     OperationIntentContract,
 )
 from ..domain.enums import ActionCategory

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from elly.application.plan_results import TemplateFinalizer, legacy_source_aggregation
-from elly.application.step_results import StepResultEnvelope
+from elly.application.results.plan import TemplateFinalizer, legacy_source_aggregation
+from elly.application.results.step import StepResultEnvelope
 from elly.domain.models import TaskResult
 from elly.planning.contracts import ExecutionPlan, PlanStep
 

@@ -10,11 +10,12 @@ from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_response_composer import FakeResponseComposer
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
-from elly.application.capabilities import CapabilityRegistry
-from elly.application.capability_workflow import CapabilityExecutionWorkflow
+from elly.application.capabilities.registry import CapabilityRegistry
+from elly.application.capabilities.workflow import CapabilityExecutionWorkflow
 from elly.application.completion import CompletionService
-from elly.application.plan_builder import PlanBuilder
-from elly.application.task_execution import PlanExecutionRequest, TaskExecutionService
+from elly.application.plan_management.builder import PlanBuilder
+from elly.application.task_execution.contracts import PlanExecutionRequest
+from elly.application.task_execution.service import TaskExecutionService
 from elly.domain.enums import CloudMode, PersistenceMode, TaskStatus
 from elly.domain.models import ContextManifest, SessionRecord, TaskRequest
 from elly.planning.contracts import (

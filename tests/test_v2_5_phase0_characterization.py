@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from elly.application.capabilities import (
+from elly.application.capabilities.registry import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityMatch,
@@ -13,7 +13,7 @@ from elly.application.capabilities import (
     CapabilityRegistry,
     CapabilityStatus,
 )
-from elly.application.routing import RoutingPolicy
+from elly.application.routing.policy import RoutingPolicy
 from elly.domain.enums import (
     CloudMode,
     IntentAmbiguity,
@@ -66,7 +66,7 @@ class V25Phase0StaticCharacterizationTests(unittest.TestCase):
         self.assertFalse((ROOT / "src/elly/application/intent.py").exists())
 
     def test_fixed_route_map_is_removed_from_generic_policy(self) -> None:
-        source = (ROOT / "src/elly/application/routing.py").read_text(encoding="utf-8")
+        source = (ROOT / "src/elly/application/routing/policy.py").read_text(encoding="utf-8")
         self.assertNotIn('Route.WEB_RESEARCH: "web_research"', source)
         self.assertNotIn('Route.CODING_SPECIALIST: "coding"', source)
         self.assertNotIn('Route.RESEARCH_SPECIALIST: "research"', source)

@@ -17,11 +17,11 @@ from elly.adapters.fake_generalist import FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
 from elly.api.contracts import CreateSessionRequest, SubmitRequest, TraceQuery
-from elly.application.authorization import (
+from elly.application.authorization.consent import (
     CloudAuthorizationPolicy,
     CloudAuthorizationRequest,
 )
-from elly.application.capabilities import (
+from elly.application.capabilities.registry import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityExecution,
@@ -34,7 +34,7 @@ from elly.application.capabilities import (
     FreshnessSupport,
     OperationIntentContract,
 )
-from elly.application.routing import RoutingPolicy
+from elly.application.routing.policy import RoutingPolicy
 from elly.composition import Application, build_application
 from elly.config import load_config
 from elly.domain.enums import (
@@ -128,7 +128,7 @@ class V3Phase0BoundaryTests(unittest.TestCase):
         self.assertNotIn("ConversationOrchestrator", composition)
 
     def test_generic_routing_has_no_provider_or_storage_boundary(self) -> None:
-        for filename in ("routing.py", "catalog_routing.py"):
+        for filename in ("routing/policy.py", "routing/catalog.py"):
             tree = ast.parse((ROOT / "src/elly/application" / filename).read_text(encoding="utf-8"))
             imported: list[str] = []
             for node in ast.walk(tree):

@@ -26,9 +26,9 @@ from ..guardrails.controller import GuardrailController
 from ..ports.audit import AuditPort
 from ..ports.clock import ClockPort
 from ..ports.repository import SessionRepositoryPort
-from .action_authorization import safe_action_target_reference
-from .capabilities import CapabilityDescriptor
-from .route_compatibility import enrich_task_result
+from .authorization.actions import safe_action_target_reference
+from .capabilities.registry import CapabilityDescriptor
+from .routing.compatibility import enrich_task_result
 
 
 class CompletionService:

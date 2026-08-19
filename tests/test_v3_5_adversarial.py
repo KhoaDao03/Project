@@ -7,10 +7,10 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from elly.adapters.fake_response_composer import FakeResponseComposer
-from elly.application.plan_results import aggregate_plan_results
-from elly.application.response_composer import compose_success
-from elly.application.response_pipeline import ResponseCompositionService
-from elly.application.step_results import ActionExecutionReceipt, StepResultEnvelope
+from elly.application.response.composer import compose_success
+from elly.application.response.pipeline import ResponseCompositionService
+from elly.application.results.plan import aggregate_plan_results
+from elly.application.results.step import ActionExecutionReceipt, StepResultEnvelope
 from elly.domain.enums import CloudMode, PersistenceMode, PresentationMode, TaskStatus
 from elly.domain.models import TaskRequest
 from elly.planning.contracts import StepState

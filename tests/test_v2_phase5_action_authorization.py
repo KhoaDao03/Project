@@ -19,13 +19,13 @@ from elly.api.contracts import (
     CreateSessionRequest,
     SubmitRequest,
 )
-from elly.application.action_authorization import (
+from elly.application.authorization.actions import (
     ActionAuthorizationPolicy,
     ActionAuthorizationRequest,
     ActionAuthorizationService,
     interpret_recommended_action,
 )
-from elly.application.capabilities import (
+from elly.application.capabilities.registry import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityExecution,
@@ -35,14 +35,14 @@ from elly.application.capabilities import (
     CapabilityRequest,
     CapabilityStatus,
 )
-from elly.application.capability_workflow import (
+from elly.application.capabilities.specialists import SpecialistWorkflow
+from elly.application.capabilities.workflow import (
     CapabilityExecutionCommand,
     CapabilityExecutionWorkflow,
 )
 from elly.application.completion import CompletionService
-from elly.application.execution import CancellationToken
-from elly.application.specialist_policy import SpecialistPolicyRequest
-from elly.application.specialists import SpecialistWorkflow
+from elly.application.plan_management.specialist_policy import SpecialistPolicyRequest
+from elly.application.task_execution.cancellation import CancellationToken
 from elly.composition import Application
 from elly.config import load_config
 from elly.domain.enums import (

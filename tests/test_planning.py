@@ -12,7 +12,7 @@ from unittest.mock import patch
 from elly.adapters.fake_planner import FakePlanner, PlannerFailureMode
 from elly.adapters.ollama_planner import OllamaPlanner
 from elly.adapters.recorded_planner import RecordedPlanner
-from elly.application.capabilities import (
+from elly.application.capabilities.registry import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityExecution,
@@ -25,8 +25,8 @@ from elly.application.capabilities import (
     FreshnessSupport,
     OperationIntentContract,
 )
-from elly.application.plan_interpreter import PlanInterpreter
-from elly.application.planning_service import PlanningService, PlanningStrategy
+from elly.application.plan_management.interpreter import PlanInterpreter
+from elly.application.plan_management.service import PlanningService, PlanningStrategy
 from elly.config import LocalModelProfile, LocalModelRoleConfig
 from elly.domain.enums import CloudMode, Route, RouteReasonCode
 from elly.domain.errors import (

@@ -6,7 +6,7 @@ import json
 import sqlite3
 from datetime import datetime
 
-from elly.application.route_compatibility import ROUTING_CONTRACT_VERSION, generic_route_for
+from elly.application.routing.compatibility import ROUTING_CONTRACT_VERSION, generic_route_for
 from elly.domain.enums import (
     CloudMode,
     EpistemicStatus,

@@ -19,7 +19,7 @@ from elly.api.contracts import (
     CreateSessionRequest,
     SubmitRequest,
 )
-from elly.application.capabilities import (
+from elly.application.capabilities.registry import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityExecution,
@@ -28,7 +28,7 @@ from elly.application.capabilities import (
     CapabilityRegistry,
     CapabilityStatus,
 )
-from elly.application.routing_contracts import (
+from elly.application.routing.contracts import (
     CapabilityKind,
     CapabilityRoutingDescriptor,
     FreshnessSupport,

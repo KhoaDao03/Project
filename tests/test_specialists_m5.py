@@ -9,8 +9,8 @@ from io import BytesIO
 from unittest.mock import patch
 
 from elly.adapters.openai_specialist import OpenAISpecialistProvider
-from elly.application.specialist_policy import SpecialistPolicyRequest
-from elly.application.specialists import SpecialistWorkflow
+from elly.application.capabilities.specialists import SpecialistWorkflow
+from elly.application.plan_management.specialist_policy import SpecialistPolicyRequest
 from elly.domain.errors import (
     AuthenticationProviderError,
     ConfigInvalidError,

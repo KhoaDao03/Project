@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from elly.application.plan_builder import PlanBuilder
-from elly.application.redundancy_policy import redundancy_fingerprint
-from elly.application.routing_contracts import (
+from elly.application.plan_management.builder import PlanBuilder
+from elly.application.plan_management.redundancy_policy import redundancy_fingerprint
+from elly.application.routing.contracts import (
     CapabilityAvailability,
     CapabilityKind,
     CapabilityRoutingDescriptor,

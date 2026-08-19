@@ -486,8 +486,18 @@ src/elly/application/task_execution/
   plan_runner.py  DAG scheduler, bounds, transitions, cancellation
   step_runner.py  input resolution, live registry dispatch, leases, persistence
   finalizer.py    aggregation and response-composition handoff
+  cancellation.py request-scoped cancellation support
+  recovery.py     persisted-plan recovery policy
+  replan.py        bounded replanning policy
   legacy.py       isolated persisted LOCAL_SYNTHESIS compatibility
 ```
+
+The current application modules are physically grouped into the responsibility
+based packages `authorization/`, `routing/`, `plan_management/`,
+`capabilities/`, `results/`, and `response/`. This Level 1 package layout does
+not change the ownership or behavior described by this target architecture; the
+full current tree is recorded in
+[`docs/APPLICATION_PACKAGE_LAYOUT.md`](../APPLICATION_PACKAGE_LAYOUT.md).
 
 `src/elly/application/plan_executor.py` is intentionally a small compatibility
 re-export boundary. `PlanExecutor` remains an alias of `TaskExecutionService`
@@ -891,10 +901,10 @@ handler or provider.
 | `RouteProposal` / `RouteProposalInput` | historical public/internal compatibility | one-time boundary adapter, then live validation |
 | `CapabilityIntent` / `CapabilityIntentInput` | historical public routing hint plus internal handler preparation contract | selected hints adapt to selection; handler preparation remains typed separately |
 | `RouteDecision` | routing metadata | reason, identity, availability, and evidence only |
-| `TaskResult` routing fields | persisted/public diagnostic metadata | `route_compatibility.py` and SQLite codecs |
+| `TaskResult` routing fields | persisted/public diagnostic metadata | `routing/compatibility.py` and SQLite codecs |
 
 The compatibility adapters are deliberately small and live in the existing
-`application/route_compatibility.py` boundary. Route proposal route/schema/
+`application/routing/compatibility.py` boundary. Route proposal route/schema/
 capability checks remain in `RoutingPolicy` because they require a fresh
 registry. `RoutingPolicy.decide()` retains its old compatibility-facing
 arguments for established callers, translates them once, and delegates to one

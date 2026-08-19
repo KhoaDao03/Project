@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 
-from ..application.execution import CancellationToken
+from ..application.task_execution.cancellation import CancellationToken
 from ..domain.errors import CancelledError, EllyError
 from ..domain.models import EvidenceObject
 from ..ports.document_retrieval import DocumentRetrievalPort

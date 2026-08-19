@@ -17,11 +17,11 @@ from elly.adapters.audit_log import StructuredAuditLog
 from elly.adapters.fake_generalist import FailureMode, FakeGeneralist
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
-from elly.application.authorization import (
+from elly.application.authorization.consent import (
     CloudAuthorizationPolicy,
     CloudAuthorizationRequest,
 )
-from elly.application.routing import RoutingPolicy
+from elly.application.routing.policy import RoutingPolicy
 from elly.composition import Application, build
 from elly.config import load_config
 from elly.domain.enums import (

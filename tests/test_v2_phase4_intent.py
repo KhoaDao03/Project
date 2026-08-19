@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
-from elly.application.capabilities import (
+from elly.application.capabilities.registry import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityExecution,
@@ -15,7 +15,7 @@ from elly.application.capabilities import (
     CapabilityRequest,
     CapabilityStatus,
 )
-from elly.application.routing import RoutingPolicy
+from elly.application.routing.policy import RoutingPolicy
 from elly.domain.enums import (
     CloudMode,
     EpistemicStatus,

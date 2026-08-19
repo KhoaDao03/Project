@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..application.routing_contracts import FreshnessSupport, OperationIntentContract
+from ..application.routing.contracts import FreshnessSupport, OperationIntentContract
 from ..domain.enums import ActionCategory
 from ..domain.errors import ConfigInvalidError
 from .manifest import SpecialistManifest

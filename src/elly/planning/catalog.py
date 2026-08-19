@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from ..application.routing_contracts import (
+from ..application.routing.contracts import (
     CapabilityAvailability,
     CapabilityKind,
     CapabilityRoutingDescriptor,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
-from elly.application.authorization import (
+from elly.application.authorization.consent import (
     CloudAuthorizationPolicy,
     CloudAuthorizationRequest,
 )

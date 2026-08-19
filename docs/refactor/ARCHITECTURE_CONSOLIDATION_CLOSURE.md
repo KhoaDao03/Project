@@ -25,6 +25,16 @@ Public API / CLI
 
 `PlanRunner`, `StepRunner`, and `PlanFinalizer` remain execution internals.
 
+## Current physical package layout
+
+The consolidation remains closed. The current source tree applies a Level 1
+package-layout organization beneath `src/elly/application/` so developers can
+find authorization, routing, plan management, capabilities, results, response,
+and task-execution support by responsibility. This is a file-layout and import
+path change only; it is not a new architecture phase and does not alter runtime
+ownership or behavior. See
+[`docs/APPLICATION_PACKAGE_LAYOUT.md`](../APPLICATION_PACKAGE_LAYOUT.md).
+
 ## Retired Internal Architectures
 
 - `ConversationOrchestrator`

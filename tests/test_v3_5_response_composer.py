@@ -18,11 +18,7 @@ from elly.adapters.fake_response_composer import (
 from elly.adapters.ollama_response_composer import OllamaResponseComposer
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.adapters.system_clock import FixedClock
-from elly.application.presentation_policy import (
-    presentation_mode_for_finalization,
-    select_presentation_mode,
-)
-from elly.application.response_composer import (
+from elly.application.response.composer import (
     compose_blocked,
     compose_cancelled,
     compose_failed,
@@ -30,10 +26,14 @@ from elly.application.response_composer import (
     compose_specialist,
     compose_success,
 )
-from elly.application.response_pipeline import (
+from elly.application.response.pipeline import (
     ResponseCompositionService,
     build_task_response_composition_input,
     validate_response_composition_draft,
+)
+from elly.application.response.policy import (
+    presentation_mode_for_finalization,
+    select_presentation_mode,
 )
 from elly.composition import Application
 from elly.config import load_config

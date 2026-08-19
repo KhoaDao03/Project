@@ -9,8 +9,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from elly.application.plan_state import ensure_plan_transition, ensure_step_transition
-from elly.application.step_results import StepResultEnvelope
+from elly.application.results.plan_state import ensure_plan_transition, ensure_step_transition
+from elly.application.results.step import StepResultEnvelope
 from elly.domain.enums import ActionCategory, PersistenceMode
 from elly.domain.errors import (
     ConflictError,

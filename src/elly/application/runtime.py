@@ -8,7 +8,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from threading import RLock
 
-from ..application.action_authorization import (
+from ..application.authorization.actions import (
     ActionAuthorizationService,
     safe_action_target_reference,
 )
@@ -44,24 +44,25 @@ from ..ports.clock import ClockPort
 from ..ports.plan_repository import PlanRepositoryPort
 from ..ports.repository import SessionRepositoryPort
 from ..privacy import ConsentProposal, ConsentWorkflow
+from .capabilities.local_conversation import LocalConversationUseCase
+from .capabilities.local_conversation_handler import LOCAL_CONVERSATION_CAPABILITY_ID
 from .completion import CompletionService
 from .context_builder import ContextBuilder
-from .execution import CancellationToken
-from .local_conversation import LocalConversationUseCase
-from .local_conversation_capability import LOCAL_CONVERSATION_CAPABILITY_ID
-from .planning_service import PlanningService
-from .recovery import RecoveryReport
-from .replan import ReplanRequest, ReplanResult, ReplanTrigger
-from .response_composer import (
+from .plan_management.service import PlanningService
+from .response.composer import (
     compose_blocked,
     compose_cancelled,
     compose_clarification,
     compose_partial,
     compose_possible_duplicate,
 )
-from .response_pipeline import ResponseCompositionService
-from .route_compatibility import enrich_task_result, inherit_route_metadata
-from .task_execution import PlanExecutionResult, TaskExecutionService
+from .response.pipeline import ResponseCompositionService
+from .routing.compatibility import enrich_task_result, inherit_route_metadata
+from .task_execution.cancellation import CancellationToken
+from .task_execution.contracts import PlanExecutionResult
+from .task_execution.recovery import RecoveryReport
+from .task_execution.replan import ReplanRequest, ReplanResult, ReplanTrigger
+from .task_execution.service import TaskExecutionService
 
 
 @dataclass(frozen=True, slots=True)

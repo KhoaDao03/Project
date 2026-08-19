@@ -9,14 +9,14 @@ from types import SimpleNamespace
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.api.application import EllyApplication
 from elly.api.contracts import PlanQuery, PlanTraceQuery
-from elly.application.plan_results import (
+from elly.application.results.plan import (
     DirectFinalizer,
     PlanStatusPolicy,
     TemplateFinalizer,
     aggregate_plan_results,
     derive_plan_status,
 )
-from elly.application.step_results import ActionExecutionReceipt, StepClaim, StepResultEnvelope
+from elly.application.results.step import ActionExecutionReceipt, StepClaim, StepResultEnvelope
 from elly.domain.enums import (
     ActionCategory,
     EpistemicStatus,

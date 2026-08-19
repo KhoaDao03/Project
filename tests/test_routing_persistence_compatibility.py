@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from elly.adapters.sqlite_repository import SqliteSessionRepository
-from elly.application.route_compatibility import ROUTING_CONTRACT_VERSION
+from elly.application.routing.compatibility import ROUTING_CONTRACT_VERSION
 from elly.domain.enums import (
     CloudMode,
     EpistemicStatus,
@@ -56,7 +56,7 @@ class Phase5RouteCompatibilityTests(unittest.TestCase):
         self.assertFalse(hasattr(decision, "legacy_route"))
 
     def test_generic_routing_module_has_no_fixed_capability_route_map(self) -> None:
-        source = Path("src/elly/application/routing.py").read_text(encoding="utf-8")
+        source = Path("src/elly/application/routing/policy.py").read_text(encoding="utf-8")
         self.assertNotIn("_ROUTE_CAPABILITIES", source)
         self.assertNotIn('"web_research"', source)
         self.assertNotIn('"coding"', source)

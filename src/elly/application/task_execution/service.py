@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from threading import RLock
 
-from elly.application.capabilities import CapabilityRegistry
-from elly.application.capability_workflow import CapabilityExecutionWorkflow
-from elly.application.execution import CancellationToken
-from elly.application.recovery import PlanRecovery, RecoveryReport
-from elly.application.replan import ReplanRequest, ReplanResult, ReplanService, ReplanTrigger
-from elly.application.response_pipeline import ResponseCompositionService
+from elly.application.capabilities.registry import CapabilityRegistry
+from elly.application.capabilities.workflow import CapabilityExecutionWorkflow
+from elly.application.response.pipeline import ResponseCompositionService
+from elly.application.task_execution.cancellation import CancellationToken
+from elly.application.task_execution.recovery import PlanRecovery, RecoveryReport
+from elly.application.task_execution.replan import (
+    ReplanRequest,
+    ReplanResult,
+    ReplanService,
+    ReplanTrigger,
+)
 from elly.domain.enums import TaskStatus
 from elly.domain.errors import ConfigInvalidError, InputInvalidError
 from elly.domain.models import ContextManifest, TaskRequest

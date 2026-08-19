@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from elly.application.capabilities import (
+from elly.application.capabilities.registry import (
     CandidateMatch,
     CapabilityAvailability,
     CapabilityDescriptor,

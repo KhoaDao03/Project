@@ -14,7 +14,7 @@ class Phase6RoutingBoundaryTests(unittest.TestCase):
     def test_generic_interpreter_and_router_have_no_optional_capability_literals(self) -> None:
         sources = {
             name: (APPLICATION / name).read_text(encoding="utf-8")
-            for name in ("routing.py", "catalog_routing.py")
+            for name in ("routing/policy.py", "routing/catalog.py")
         }
         for name, source in sources.items():
             with self.subTest(module=name):
@@ -33,13 +33,13 @@ class Phase6RoutingBoundaryTests(unittest.TestCase):
                 self.assertNotIn("_LEGACY_OPERATIONS", source)
 
     def test_legacy_routing_modules_and_maps_are_removed(self) -> None:
-        compatibility_source = (APPLICATION / "route_compatibility.py").read_text(encoding="utf-8")
+        compatibility_source = (APPLICATION / "routing/compatibility.py").read_text(encoding="utf-8")
         self.assertFalse((APPLICATION / "legacy_routing.py").exists())
         self.assertFalse((APPLICATION / "intent.py").exists())
         self.assertNotIn("_LEGACY_ROUTE_BY_CAPABILITY", compatibility_source)
 
     def test_catalog_module_has_no_executable_or_storage_imports(self) -> None:
-        tree = ast.parse((APPLICATION / "catalog_routing.py").read_text(encoding="utf-8"))
+        tree = ast.parse((APPLICATION / "routing/catalog.py").read_text(encoding="utf-8"))
         imported = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):

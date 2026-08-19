@@ -12,8 +12,8 @@ import threading
 from concurrent.futures import Future
 from typing import cast
 
-from ..application.action_authorization import safe_action_target_reference
-from ..application.plan_results import aggregate_plan_results
+from ..application.authorization.actions import safe_action_target_reference
+from ..application.results.plan import aggregate_plan_results
 from ..composition import Application
 from ..domain.enums import (
     CloudMode,

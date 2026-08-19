@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 
 from elly.adapters.sqlite_repository import SqliteSessionRepository
 from elly.api.contracts import CreateSessionRequest, SubmitRequest
-from elly.application.route_compatibility import enrich_task_result
-from elly.application.routing_contracts import (
+from elly.application.routing.compatibility import enrich_task_result
+from elly.application.routing.contracts import (
     CandidateMatch,
     CapabilitySelectionProposal,
     FreshnessRequirement,

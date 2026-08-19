@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from elly.adapters.fake_generalist import FailureMode, FakeGeneralist
-from elly.application.local_conversation import LocalConversationUseCase
+from elly.application.capabilities.local_conversation import LocalConversationUseCase
 from elly.domain.errors import MalformedResultError, PermanentProviderError
 
 

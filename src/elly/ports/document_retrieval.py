@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from ..domain.models import EvidenceObject
 
 if TYPE_CHECKING:
-    from ..application.execution import CancellationToken
+    from ..application.task_execution.cancellation import CancellationToken
 
 
 @dataclass(frozen=True, slots=True)

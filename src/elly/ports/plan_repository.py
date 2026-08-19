@@ -17,7 +17,7 @@ from ..planning.contracts import (
 )
 
 if TYPE_CHECKING:
-    from ..application.step_results import StepResultEnvelope
+    from ..application.results.step import StepResultEnvelope
 
 
 @dataclass(frozen=True, slots=True)

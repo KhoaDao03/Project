@@ -7,19 +7,21 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import cast
 
-from elly.application.capabilities import CapabilityKind, CapabilityRegistry
-from elly.application.capability_workflow import (
+from elly.application.capabilities.local_conversation_handler import (
+    LOCAL_CONVERSATION_CAPABILITY_ID,
+)
+from elly.application.capabilities.registry import CapabilityKind, CapabilityRegistry
+from elly.application.capabilities.workflow import (
     CapabilityExecutionOutcome,
     CapabilityExecutionWorkflow,
 )
-from elly.application.execution import CancellationToken
-from elly.application.local_conversation_capability import LOCAL_CONVERSATION_CAPABILITY_ID
-from elly.application.response_composer import compose_cancelled, compose_failed
-from elly.application.step_results import (
+from elly.application.response.composer import compose_cancelled, compose_failed
+from elly.application.results.step import (
     RESULT_SCHEMA_VERSION,
     StepResultEnvelope,
     normalize_step_result,
 )
+from elly.application.task_execution.cancellation import CancellationToken
 from elly.domain.enums import ErrorClass, Route, TaskStatus
 from elly.domain.errors import CancelledError, EllyError
 from elly.domain.models import (

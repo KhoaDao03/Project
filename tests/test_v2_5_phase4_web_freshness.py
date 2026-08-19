@@ -6,12 +6,12 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from elly.adapters.system_clock import FixedClock
-from elly.application.capabilities import CapabilityRegistry
-from elly.application.capability_handlers import ResearchCapabilityHandler
-from elly.application.research import ResearchPipeline
-from elly.application.routing import RoutingPolicy
-from elly.application.routing_contracts import FreshnessSupport
-from elly.application.specialists import SpecialistWorkflow
+from elly.application.capabilities.handlers import ResearchCapabilityHandler
+from elly.application.capabilities.registry import CapabilityRegistry
+from elly.application.capabilities.research import ResearchPipeline
+from elly.application.capabilities.specialists import SpecialistWorkflow
+from elly.application.routing.contracts import FreshnessSupport
+from elly.application.routing.policy import RoutingPolicy
 from elly.composition import _specialist_capability_handlers
 from elly.domain.enums import CloudMode, IntentAmbiguity, Route, RouteReasonCode
 from elly.domain.models import CapabilityIntent, RouteRequest

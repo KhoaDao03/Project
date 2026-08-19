@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from elly.application.capabilities import CapabilityAvailability, CapabilityRegistry
-from elly.application.routing import RoutingPolicy
-from elly.application.specialists import SpecialistWorkflow
+from elly.application.capabilities.registry import CapabilityAvailability, CapabilityRegistry
+from elly.application.capabilities.specialists import SpecialistWorkflow
+from elly.application.routing.policy import RoutingPolicy
 from elly.composition import _specialist_capability_handlers
 from elly.domain.enums import CloudMode, Route, RouteReasonCode
 from elly.domain.errors import ConfigInvalidError

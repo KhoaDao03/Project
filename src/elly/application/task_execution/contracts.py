@@ -11,9 +11,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from elly.application.execution import CancellationToken
-from elly.application.plan_results import DisagreementRecord, PlanAggregation
-from elly.application.step_results import StepResultEnvelope
+from elly.application.results.plan import DisagreementRecord, PlanAggregation
+from elly.application.results.step import StepResultEnvelope
+from elly.application.task_execution.cancellation import CancellationToken
 from elly.domain.errors import InputInvalidError
 from elly.domain.models import (
     ActionConfirmationProposal,

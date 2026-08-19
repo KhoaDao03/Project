@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import SplitResult, urljoin, urlsplit, urlunsplit
 
-from ..application.execution import CancellationToken
+from ..application.task_execution.cancellation import CancellationToken
 from ..domain.errors import (
     CancelledError,
     PermanentProviderError,

@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 
-from elly.application.execution import CancellationToken
-from elly.application.plan_results import PlanAggregation, TemplateFinalizer
-from elly.application.response_pipeline import ResponseCompositionService, ResponsePipelineResult
+from elly.application.response.pipeline import ResponseCompositionService, ResponsePipelineResult
+from elly.application.results.plan import PlanAggregation, TemplateFinalizer
+from elly.application.task_execution.cancellation import CancellationToken
 from elly.domain.enums import PersistenceMode, PresentationMode
 from elly.domain.models import TaskResult
 from elly.planning.contracts import ExecutionPlan

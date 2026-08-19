@@ -177,6 +177,13 @@ generating synthesis modules are no longer present. The legacy
 analysis found no supported production or public Python contract; historical
 routing documentation remains unchanged.
 
+The current application tree also has a Level 1 physical package grouping for
+discoverability: authorization, routing, plan management, capabilities, results,
+response, and task-execution support live in responsibility-based subpackages;
+`runtime.py`, `completion.py`, and `context_builder.py` remain at the application
+root. This is a package-layout change only, not a new architecture phase or an
+ownership change. See [APPLICATION_PACKAGE_LAYOUT.md](APPLICATION_PACKAGE_LAYOUT.md).
+
 Revised Phase 8 decomposes the SQLite implementation behind the stable
 `elly.adapters.sqlite_repository.SqliteSessionRepository` import path. The
 façade owns exactly one `sqlite3.Connection`, one serialized wrapper, and one
@@ -200,7 +207,7 @@ Isolation:** the canonical planning path is `RouteRequest` → capability-neutra
 untrusted `ExecutionProposal` → validated `ExecutionPlan`. `RoutingPolicy`
 retains a compatibility-facing `decide()` wrapper, but one
 `_decide_canonical()` method owns catalog/local decision behavior. The existing
-`route_compatibility.py` boundary translates legacy `RouteProposal` and
+`routing/compatibility.py` boundary translates legacy `RouteProposal` and
 `CapabilityIntent` inputs once; it does not execute capabilities or become a
 second router. `TaskRequest.route_proposal` and
 `TaskRequest.capability_intent` remain typed public/internal compatibility
@@ -304,7 +311,7 @@ flowchart LR
 | presentation | CLI, validation, rendering | text/commands | result text | application/config | Implemented | [cli.py](../src/elly/presentation/cli.py) |
 | application runtime | outer request/context/plan/task/result/message lifecycle | validated requests | outcomes/consent | planning, execution, ports, guardrails | Implemented/Tested | [runtime.py](../src/elly/application/runtime.py) |
 | composition | adapters, registries, services, startup/operations/shutdown wiring | config | composed application/runtime | adapters and application services | Implemented/Tested | [composition.py](../src/elly/composition.py) |
-| planning | deterministic/LLM strategies and validated plans | route request/catalog | execution plan | live capability registry | Implemented/Tested | [planning_service.py](../src/elly/application/planning_service.py) |
+| planning | deterministic/LLM strategies and validated plans | route request/catalog | execution plan | live capability registry | Implemented/Tested | [plan_management/service.py](../src/elly/application/plan_management/service.py) |
 | execution | validated DAG scheduling, step state, cancellation/recovery | execution plan | plan execution result | capability registry/repository | Implemented/Tested | [task_execution](../src/elly/application/task_execution/) |
 | domain | models, enums, transitions, errors | value objects | typed contracts | stdlib | Implemented/Tested | [models.py](../src/elly/domain/models.py) |
 | ports | replaceable boundaries | DTOs | protocol results | domain | Implemented | [CONTRACTS.md](v1/CONTRACTS.md) |
@@ -545,18 +552,26 @@ Unittest covers deterministic unit/contract/integration/security behavior; it do
 8. [V1_VERIFICATION_REPORT.md](v1/V1_VERIFICATION_REPORT.md), [M7_RELEASE_CHECKLIST.md](v1/M7_RELEASE_CHECKLIST.md), [M7_THRESHOLD_REVIEW.md](v1/M7_THRESHOLD_REVIEW.md), [M7_UAT_RECORD.md](v1/M7_UAT_RECORD.md) — V1 evidence and release state.
 9. [DEFERRED_MILESTONE_GAPS.md](DEFERRED_MILESTONE_GAPS.md) — reasons for reopened V1 milestones and later-iteration boundaries.
 10. [IMPLEMENTATION_GUIDE.md](v1/IMPLEMENTATION_GUIDE.md) — V1 runtime walkthrough.
-10. [__main__.py](../src/elly/__main__.py), [composition.py](../src/elly/composition.py), [runtime.py](../src/elly/application/runtime.py) — entry and canonical request lifecycle.
-11. [models.py](../src/elly/domain/models.py), [ports](../src/elly/ports/), [adapters](../src/elly/adapters/) — contracts and providers.
-12. [privacy.py](../src/elly/privacy.py), [guardrails](../src/elly/guardrails/), [sqlite_repository.py](../src/elly/adapters/sqlite_repository.py) — security, limits, state.
-14. [tests](../tests/) and [run_release_gate.py](../scripts/run_release_gate.py) — executable evidence.
+11. [__main__.py](../src/elly/__main__.py), [composition.py](../src/elly/composition.py), [runtime.py](../src/elly/application/runtime.py) — entry and canonical request lifecycle.
+12. [APPLICATION_PACKAGE_LAYOUT.md](APPLICATION_PACKAGE_LAYOUT.md) — current application package responsibilities and entry points.
+13. [models.py](../src/elly/domain/models.py), [ports](../src/elly/ports/), [adapters](../src/elly/adapters/) — contracts and providers.
+14. [privacy.py](../src/elly/privacy.py), [guardrails](../src/elly/guardrails/), [sqlite_repository.py](../src/elly/adapters/sqlite_repository.py) — security, limits, state.
+15. [tests](../tests/) and [run_release_gate.py](../scripts/run_release_gate.py) — executable evidence.
 
 ## 26. Source-Tree Map
 
 ```text
 src/elly/__main__.py          entry point
 src/elly/presentation/        CLI, validation, rendering
-src/elly/application/         runtime, planning, execution, and capability workflows
+src/elly/application/         responsibility-based application package tree
 src/elly/application/runtime.py outer request/task lifecycle coordinator
+src/elly/application/authorization/ hosted consent and consequential-action authorization
+src/elly/application/routing/     capability-neutral routing policy and compatibility
+src/elly/application/plan_management/ plan construction, interpretation, and validation
+src/elly/application/capabilities/ executable application capability workflows
+src/elly/application/results/     execution truth and aggregation
+src/elly/application/response/    final response presentation
+src/elly/application/task_execution/ bounded plan execution and recovery
 src/elly/domain/              contracts, enums, state, errors
 src/elly/ports/               provider/storage/audit/clock contracts
 src/elly/adapters/            Ollama/OpenAI/SQLite/audit/clock implementations

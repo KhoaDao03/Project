@@ -4,7 +4,7 @@ import threading
 import time
 import unittest
 
-from elly.application.research import ResearchPipeline
+from elly.application.capabilities.research import ResearchPipeline
 from elly.domain.errors import (
     CircuitOpenError,
     LimitExceededError,

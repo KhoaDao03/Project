@@ -12,7 +12,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 from elly.adapters.openai_web_research import OpenAIHostedWebSearch
-from elly.application.research import ResearchPipeline
+from elly.application.capabilities.research import ResearchPipeline
 from elly.composition import build
 from elly.domain.enums import EpistemicStatus
 from elly.domain.errors import (

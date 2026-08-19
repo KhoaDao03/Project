@@ -48,7 +48,7 @@ from .errors import InputInvalidError
 IntentScalar: TypeAlias = str | int | float | bool | None
 
 if TYPE_CHECKING:
-    from ..application.routing_contracts import CapabilitySelectionProposal, TaskIntent
+    from ..application.routing.contracts import CapabilitySelectionProposal, TaskIntent
     from ..privacy import ConsentProposal
 
 
@@ -556,7 +556,7 @@ class RouteDecision:
         if self.intent is not None and not isinstance(self.intent, CapabilityIntent):
             # Import lazily to keep the domain model independent of the
             # application routing-contract module during module initialization.
-            from ..application.routing_contracts import TaskIntent
+            from ..application.routing.contracts import TaskIntent
 
             if not isinstance(self.intent, TaskIntent):
                 raise InputInvalidError("route decision intent has an invalid type")
@@ -569,7 +569,7 @@ class RouteDecision:
         if self.clarification_required and not self.clarification_fields:
             raise InputInvalidError("clarification-required route must name missing fields")
         if self.selection is not None:
-            from ..application.routing_contracts import CapabilitySelectionProposal
+            from ..application.routing.contracts import CapabilitySelectionProposal
 
             if not isinstance(self.selection, CapabilitySelectionProposal):
                 raise InputInvalidError("route decision selection has an invalid type")
@@ -602,7 +602,7 @@ class RouteDecision:
     def generic_route(self) -> Route:
         """Return the route category used for execution and persistence."""
 
-        from ..application.route_compatibility import generic_route_for
+        from ..application.routing.compatibility import generic_route_for
 
         return generic_route_for(self.route, self.capability_id)
 

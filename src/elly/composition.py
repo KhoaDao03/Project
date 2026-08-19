@@ -30,35 +30,35 @@ from .adapters.openai_specialist import OpenAISpecialistProvider
 from .adapters.openai_web_research import OpenAIHostedWebSearch
 from .adapters.sqlite_repository import SqliteSessionRepository
 from .adapters.system_clock import SystemClock
-from .application.action_authorization import ActionAuthorizationService
-from .application.authorization import CloudAuthorizationPolicy
-from .application.capabilities import CapabilityRegistry
-from .application.capability_handlers import (
+from .application.authorization.actions import ActionAuthorizationService
+from .application.authorization.consent import CloudAuthorizationPolicy
+from .application.capabilities.handlers import (
     ResearchCapabilityHandler,
     SpecialistCapabilityHandler,
 )
-from .application.capability_workflow import CapabilityExecutionWorkflow
-from .application.completion import CompletionService
-from .application.context_builder import ContextBuilder
-from .application.local_conversation import LocalConversationUseCase
-from .application.local_conversation_capability import (
+from .application.capabilities.local_conversation import LocalConversationUseCase
+from .application.capabilities.local_conversation_handler import (
     LOCAL_CONVERSATION_CAPABILITY_ID,
     LocalConversationCapabilityHandler,
 )
-from .application.plan_builder import PlanBuilder
-from .application.plan_interpreter import PlanInterpreter
-from .application.planning_service import PlanningService
-from .application.recovery import PlanRecovery
-from .application.replan import (
+from .application.capabilities.registry import CapabilityRegistry
+from .application.capabilities.research import ResearchPipeline
+from .application.capabilities.specialists import SpecialistWorkflow
+from .application.capabilities.workflow import CapabilityExecutionWorkflow
+from .application.completion import CompletionService
+from .application.context_builder import ContextBuilder
+from .application.plan_management.builder import PlanBuilder
+from .application.plan_management.interpreter import PlanInterpreter
+from .application.plan_management.service import PlanningService
+from .application.plan_management.specialist_policy import SpecialistExecutionPolicy
+from .application.response.pipeline import ResponseCompositionService
+from .application.routing.policy import RoutingPolicy
+from .application.runtime import AssistantRuntime
+from .application.task_execution.recovery import PlanRecovery
+from .application.task_execution.replan import (
     ReplanService,
 )
-from .application.research import ResearchPipeline
-from .application.response_pipeline import ResponseCompositionService
-from .application.routing import RoutingPolicy
-from .application.runtime import AssistantRuntime
-from .application.specialist_policy import SpecialistExecutionPolicy
-from .application.specialists import SpecialistWorkflow
-from .application.task_execution import TaskExecutionService
+from .application.task_execution.service import TaskExecutionService
 from .config import Config, load_config
 from .domain.enums import HealthState
 from .domain.errors import ConfigInvalidError

@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 import elly.adapters.sqlite_repository as sqlite_repository
 from elly.adapters.sqlite_repository import SqliteSessionRepository
-from elly.application.plan_builder import PlanBuilder
-from elly.application.routing_contracts import CapabilityRoutingDescriptor, OperationIntentContract
+from elly.application.plan_management.builder import PlanBuilder
+from elly.application.routing.contracts import CapabilityRoutingDescriptor, OperationIntentContract
 from elly.domain.enums import ActionCategory
 from elly.domain.errors import StorageFailureError
 from elly.planning.contracts import (

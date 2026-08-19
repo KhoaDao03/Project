@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from elly.application.capabilities import (
+from elly.application.capabilities.registry import (
     CapabilityAvailability,
     CapabilityDescriptor,
     CapabilityExecution,
@@ -15,8 +15,8 @@ from elly.application.capabilities import (
     CapabilityRequest,
     CapabilityStatus,
 )
-from elly.application.routing import RoutingPolicy
-from elly.application.routing_contracts import TaskIntent
+from elly.application.routing.contracts import TaskIntent
+from elly.application.routing.policy import RoutingPolicy
 from elly.domain.enums import CloudMode, IntentAmbiguity, Route, RouteReasonCode
 from elly.domain.models import CapabilityIntent, RouteProposal, RouteRequest
 
